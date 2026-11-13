@@ -23,7 +23,7 @@ import broker_daryagold as DG
 
 FA_B = {"bullish": "صعودی ⬆️", "bearish": "نزولی ⬇️", "neutral": "خنثی ↔️"}
 STALE_MIN = 10  # minutes, while the market is open
-DISCLAIMER = "_بدون مزیت آماری؛ اول دمو._"
+DISCLAIMER = ""  # owner (2026-11-13): no disclaimer line in the brief output
 
 def fmt(p):
     if p is None:
@@ -205,7 +205,6 @@ def main():
             "**تصمیم: NO TRADE**",
             f"**علت رد:** {q['fa']}",
             "تحلیل کامل تا به‌روز شدن داده متوقف شد.",
-            DISCLAIMER,
         ])
         _write(md, {
             "generated_at_tehran": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -295,7 +294,6 @@ def main():
                  + (" · ⛔ داده کهنه است" if meta.get("stale") else "")
                  + (" · ⚠️ این قیمت فیوچرز COMEX است نه اسپات؛ با بروکر چند دلار فرق دارد و اسپرد نامعلوم است." if meta.get("fallback")
                     else " · " + DG.price_convention_fa(cfg)))
-    lines.append(DISCLAIMER)
     md = "\n".join(lines)
     payload = {
         "generated_at_tehran": datetime.now(TEH).strftime("%Y-%m-%d %H:%M:%S"),

@@ -27,8 +27,6 @@ CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "11:44"), "pm": ("16:10", "16:44")}
-WARN = ("⚠️ سطح‌ها و جهت کلی تأیید نشده‌اند و مزیت آماری ثابت‌شده‌ای ندارند؛ هر دو روش معاملاتی در آزمون روی داده‌های جدید رد شدند. "
-        "پیش از معامله‌ی واقعی، روی حساب آزمایشی (دمو) امتحان کنید.")
 HELP = """**🤖 راهنمای بات طلای دریاگلد**
 
 /scan — بررسی کامل بازار؛ اگر ستاپی از همه‌ی کنترل‌ها بگذرد سیگنال می‌دهد، وگرنه «معامله نکنید» را با دلیلش می‌گوید.
@@ -344,7 +342,7 @@ def fa_polish(t):
 def head(b):
     return (b.get("evaluated_at_tehran") or b.get("generated_at_tehran") or now_teh().strftime("%Y-%m-%d %H:%M"))[:16]
 
-WARN_LINE = "~~بدون مزیت آماری؛ اول دمو.~~"
+WARN_LINE = ""  # owner (2026-11-13): no disclaimer/warning lines in Telegram messages
 
 def px1(p):
     """Compact DaryaGold price, one decimal."""
@@ -427,7 +425,7 @@ def sr_line(b):
 def short_brief(b, state, cfg, reasons=None, title=None):
     t = (head(b)[11:16] or now_teh().strftime("%H:%M"))
     if b.get("error") or b.get("price_bid") is None:
-        return "\n".join([f"**⛔️ معامله نکنید** · {t}", "دلیل: داده‌ی قیمت در دسترس نیست", WARN_LINE])
+        return "\n".join([f"**⛔️ معامله نکنید** · {t}", "دلیل: داده‌ی قیمت در دسترس نیست"])
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     side = dec.get("decision")
     trade = reasons is None and side in FA_SIDE
@@ -447,7 +445,6 @@ def short_brief(b, state, cfg, reasons=None, title=None):
     if nn:
         L.append(f"خبر بعدی: {nn}")
     L += friday_line()
-    L.append(WARN_LINE)
     return "\n".join(L)
 
 def second_target(b, plan):
@@ -491,7 +488,6 @@ def signal_msg(b, plan, sizing, state, cfg, title_prefix=""):
                  "اگر دریاگلد بستن بخشی از معامله را اجازه نمی‌دهد، فقط حد سود ۱ را بگذارید.")
     L.append(f"اعتبار تا: {exp:%H:%M}؛ اگر تا آن زمان سفارش پر نشد، لغو کنید.")
     L += friday_line()
-    L.append(WARN_LINE)
     return "\n".join(L)
 
 def sample_signal(b, cfg, state):
