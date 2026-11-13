@@ -98,7 +98,9 @@ def send(text):
     while text:
         part, text = text[:3900], text[3900:]
         r = tg("sendMessage", chat_id=CHAT, text=part, disable_web_page_preview="true")
-        ok = ok and bool(r and r.get("ok"))
+        good = bool(r and r.get("ok"))
+        print(f"telegram send: {'ok message_id=' + str(r['result']['message_id']) if good else 'FAILED ' + str((r or {}).get('description'))}")
+        ok = ok and good
     return ok
 
 def read_commands(state):
@@ -117,7 +119,10 @@ def read_commands(state):
             print("ignored a command from an unknown chat")
             continue
         parts = text.split()
-        cmds.append((parts[0].split("@")[0].lower(), parts[1:]))
+        c = (parts[0].split("@")[0].lower(), parts[1:])
+        if c[0] in ("/start", "/help", "/scan", "/brief", "/status") and any(x[0] == c[0] for x in cmds):
+            continue  # answer repeated read-only commands once per run
+        cmds.append(c)
     return cmds
 
 # ---------------- news calendar ----------------
@@ -166,6 +171,12 @@ def run_brief(state):
     p = subprocess.run([sys.executable, f"{ROOT}/tools/brief.py", "--equity", str(int(state["equity_toman"]))],
                        capture_output=True, text=True)
     print(f"brief rc={p.returncode} in {time.time() - t0:.1f}s")
+    try:
+        with open(f"{ROOT}/data/meta.json") as f:
+            m = json.load(f)
+        print(f"price source={m.get('source')} fallback={m.get('fallback')} as_of={m.get('as_of_tehran')} age={m.get('age_minutes')}")
+    except Exception:
+        pass
     if p.returncode not in (0, 2):
         print(p.stderr[-800:])
     try:
