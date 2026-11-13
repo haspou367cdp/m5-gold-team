@@ -42,34 +42,30 @@ def check(name, cond):
     print(("PASS " if cond else "FAIL ") + name)
     if not cond: fails.append(name)
 
+NEXT_ID = [1]
 def run(mode="scheduled", cmds=()):
+    """cmds = commands queued by the Cloudflare Worker (pending_cmds in the pulled state)."""
     SENT.clear()
-    for i, t in enumerate(cmds):
-        UPDATES.append({"update_id": 1000 + len(t) + i + int(CLOCK[0].timestamp()) % 100000 * 10,
-                        "message": {"chat": {"id": 111}, "text": t}})
+    if cmds:
+        s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
+        for c in cmds:
+            s.setdefault("pending_cmds", []).append({"id": NEXT_ID[0], "cmd": c}); NEXT_ID[0] += 1
+        os.makedirs(B.STATE_DIR, exist_ok=True); json.dump(s, open(B.STATE_JSON, "w"))
     sys.argv = ["bot.py", "--mode", mode]; B.main()
+    st = json.load(open(B.STATE_JSON))   # emulate the Worker's merge: done commands leave the queue
+    st["pending_cmds"] = [x for x in st.get("pending_cmds", []) if x["id"] not in st.get("done_cmds", [])]
+    json.dump(st, open(B.STATE_JSON, "w"))
     return list(SENT)
 
 def state():
     return json.load(open(B.STATE_JSON))
 
-# ---- (d) commands
-out = run("poll", ["/help"]); check("/help answered", len(out) == 1 and "راهنما" in out[0])
-out = run("poll", ["/balance ۲٬۰۸۵٬۶۰۰"]); check("/balance Persian digits", state()["equity_toman"] == 2085600 and "۲٬۰۸۵٬۶۰۰" in out[0])
-out = run("poll", ["/balance 2,085,600 تومان"]); check("/balance Latin+commas+word", state()["equity_toman"] == 2085600)
-for bad in ["/balance", "/balance -5", "/balance abc", "/balance nan", "/balance inf", "/balance 0", "/loss", "/loss -1", "/win 1e5x"]:
-    eq0, d0 = state()["equity_toman"], state()["day"]
-    out = run("poll", [bad])
-    check(f"invalid '{bad}' rejected", "چیزی ثبت نشد" in out[0] and state()["equity_toman"] == eq0 and state()["day"] == d0)
-out = run("poll", ["/loss ۱۵۰۰۰۰"]); check("/loss Persian digits", state()["day"]["losses"] == 1 and state()["day"]["loss_toman"] == 150000)
-out = run("poll", ["/win 150 000"]); check("/win with space", state()["day"]["win_toman"] == 150000)
-out = run("poll", ["/undo"]); check("/undo removes last (win)", state()["day"]["wins"] == 0 and state()["day"]["losses"] == 1)
-out = run("poll", ["/undo"]); out = run("poll", ["/undo"]); check("/undo on empty is safe", "چیزی برای حذف" in out[0])
-out = run("poll", ["/status"]); check("/status card", "وضعیت" in out[0] and out[0].startswith("\u200f"))
-out = run("poll", ["/foo"]); check("unknown command -> hint", "/help" in out[0])
-UPDATES.append({"update_id": 999999999, "message": {"chat": {"id": 222}, "text": "/balance 1"}})
-out = run("poll"); check("other chat ignored", out == [] and state()["equity_toman"] == 2085600)
-out = run("poll", ["/help", "/help", "/help"]); check("repeated read-only command answered once", len(out) == 1)
+# ---- (d) queued commands (all other commands are answered by the Worker; see worker/test.mjs)
+out = run("command", ["/scan"]); check("queued /scan answered once", len(out) == 1)
+check("done commands leave the queue", state().get("pending_cmds") == [])
+out = run("command"); check("nothing queued -> silent", out == [])
+out = run("command", ["/help"]); check("non-analysis command in queue ignored (Worker answers it)", out == [] and state()["pending_cmds"] == [])
+st = state(); st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
 
 # ---- (e) gating
 def gate(name, expect_ok, brief=None, news=True, setup=None):
@@ -109,14 +105,15 @@ check("scheduled: duplicate not resent", run("scheduled") == [])
 BRIEF[0] = mk_brief(entry=3875.0, sl=3876.6, tp=3871.0)
 CLOCK[0] = datetime(2026, 11, 11, 14, 30, tzinfo=B.TEH)
 check("1-position lock blocks a new signal", run("scheduled") == [])
-out = run("poll", ["/loss 162000"]); CLOCK[0] = datetime(2026, 11, 11, 14, 45, tzinfo=B.TEH)
+st = state(); st["day"]["records"].append({"type": "loss", "toman": 162000, "at": "14:40"}); st["day"]["losses"] = 1
+json.dump(st, open(B.STATE_JSON, "w")); CLOCK[0] = datetime(2026, 11, 11, 14, 45, tzinfo=B.TEH)
 check("after /loss the lock releases", len(run("scheduled")) == 1)
 st = state(); st["day"].update(losses=0, loss_toman=0, records=[]); st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 11, 15, 0, tzinfo=B.TEH)
 check("scheduled NO TRADE is silent", run("scheduled") == [])
-out = run("poll", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "معامله نه" in out[0])
-out = run("poll", ["/brief"]); check("/brief card", len(out) == 1 and "طلا" in out[0])
+out = run("command", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "معامله نه" in out[0])
+out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "طلا" in out[0])
 
 # ---- (f) pre-session briefs once per day
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); a = run("scheduled")
@@ -131,8 +128,8 @@ check("Saturday: scheduled run silent", run("scheduled") == [])
 
 # ---- (g) HTML escaping + fallback + length
 r = B.render("**x** <script> & `1.5` 2.5"); check("HTML escaped", "&lt;script&gt;" in r and "&amp;" in r and "<code>1.5</code>" in r and "۲٫۵" in r)
-FAIL_HTML[0] = True; out = run("poll", ["/help"]); FAIL_HTML[0] = False
-check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "راهنما" in out[0])
+FAIL_HTML[0] = True; out = run("command", ["/brief"]); FAIL_HTML[0] = False
+check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "طلا" in out[0])
 SENT.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
 check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) <= 4096 for x in SENT) and all(x.split("\n")[-1].startswith("\u200fخط") for x in SENT))
 

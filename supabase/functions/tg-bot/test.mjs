@@ -1,0 +1,138 @@
+// Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
+// usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
+import { makeApp } from "./app.js";
+import { render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort } from "./lib.js";
+let fails = 0;
+const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
+const SB = "https://x.supabase.co";
+const DB = { row: { state: {}, news: null, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
+const SENT = [], DISPATCHED = [];
+let failHtml = false, ghStatus = 204, raceOnce = false;
+const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
+globalThis.fetch = async (url, init = {}) => {
+  url = String(url);
+  if (url.startsWith(SB + "/rest/v1/bot_state")) return J([structuredClone(DB.row)]);
+  if (url.startsWith(SB + "/rest/v1/rpc/")) {
+    const fn = url.split("/").pop(), a = JSON.parse(init.body || "{}");
+    if (fn === "bot_secret") return J(DB.vault[a.p_name] ?? null);
+    if (fn === "bot_webhook_secret") return J(DB.vault.tg_webhook_secret);
+    if (fn === "bot_set_secret") { DB.vault[a.p_name] = a.p_value; return J(null); }
+    if (fn === "bot_save") {
+      if (raceOnce) { raceOnce = false; DB.row.version++; return J(false); }   // simulate a GitHub merge in between
+      if (a.p_version !== DB.row.version) return J(false);
+      DB.row.state = a.p_state; DB.row.version++; return J(true);
+    }
+    if (fn === "bot_merge") {
+      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at"];
+      for (const k of keys) if (k in a.p_patch) DB.row.state[k] = a.p_patch[k];
+      DB.row.state.pending_cmds = (DB.row.state.pending_cmds || []).filter((x) => !a.p_done.includes(x.id));
+      if (a.p_news) DB.row.news = a.p_news; DB.row.version++;
+      return J({ pending: DB.row.state.pending_cmds.length });
+    }
+  }
+  if (url.includes("api.telegram.org")) {
+    const b = JSON.parse(init.body);
+    if (url.endsWith("/sendMessage")) {
+      if (failHtml && b.parse_mode) return J({ ok: false });
+      SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } });
+    }
+    if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
+    if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
+  }
+  if (url.includes("api.github.com")) { DISPATCHED.push(JSON.parse(init.body)); return new Response(null, { status: ghStatus }); }
+  throw new Error("unexpected fetch " + url);
+};
+// ---- OIDC test key
+const kp = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+const jwk = { ...(await crypto.subtle.exportKey("jwk", kp.publicKey)), kid: "k1" };
+const jw = async () => ({ keys: [jwk] });
+const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+async function jwt(claims) {
+  const h = enc({ alg: "RS256", kid: "k1" }), p = enc(claims);
+  const sig = Buffer.from(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", kp.privateKey, new TextEncoder().encode(`${h}.${p}`))).toString("base64url");
+  return `${h}.${p}.${sig}`;
+}
+const good = { iss: "https://token.actions.githubusercontent.com", aud: "m5-gold-bot", repository: "haspou367cdp/m5-gold-team", ref: "refs/heads/main", exp: Date.now() / 1000 + 300 };
+const app = makeApp({ url: SB, key: "service" });
+const FN = SB + "/functions/v1/tg-bot";
+const gh = async (path, method = "GET", body) => app(new Request(FN + path, { method, body: body && JSON.stringify(body),
+  headers: { authorization: "Bearer " + (await jwt(good)) } }), jw);
+let uid = 1;
+async function tgSend(text, chat = 45639251, hdr = DB.vault.tg_webhook_secret) {
+  SENT.length = 0;
+  const r = await app(new Request(FN + "/tg", { method: "POST", headers: { "x-telegram-bot-api-secret-token": hdr },
+    body: JSON.stringify({ update_id: uid++, message: { chat: { id: chat }, text } }) }), jw);
+  return { status: r.status, out: SENT.map((x) => x.text) };
+}
+const st = () => DB.row.state;
+
+// formatting parity with bot.py
+check("render: bold/italic/code, Persian digits, Latin code, RLM", render("**a 1.5**\n`3884.2` 2,085,600") === "\u200f<b>a ۱٫۵</b>\n\u200f<code>3884.2</code> ۲٬۰۸۵٬۶۰۰");
+check("render escapes HTML", render("<x> & y").includes("&lt;x&gt; &amp;"));
+check("toman / tomanShort", toman(2085600) === "2٬085٬600" && tomanShort(2085600) === "2.09 میلیون" && tomanShort(417120) === "417 هزار");
+for (const [a, v] of [[["۲٬۰۸۵٬۶۰۰"], 2085600], [["2,085,600", "تومان"], 2085600], [["150", "000"], 150000], [["۱۵۰۰۰۰"], 150000]])
+  check(`parseAmount ${a.join(" ")}`, parseAmount(a) === v);
+for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
+  let ok = false; try { parseAmount(bad); } catch { ok = true; } check(`parseAmount rejects '${bad.join(" ")}'`, ok);
+}
+// setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
+let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
+  import_state: { equity_toman: 2085600, tg_offset: 9, signals_sent: [], presession_sent: { "2026-11-13-pm": true } },
+  import_news: { windows: [] }, set_webhook: true, announce: true })).json();
+check("setup: secrets stored, state migrated, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
+  o.imported && o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
+  st().equity_toman === 2085600 && !("tg_offset" in st()) && DB.row.news && DB.hook.max_connections === 1 &&
+  DB.hook.secret_token === DB.vault.tg_webhook_secret && DB.hook.url === FN + "/tg");
+SENT.length = 0;
+o = await (await gh("/admin/setup", "POST", { import_state: { equity_toman: 1 }, set_webhook: true, announce: true })).json();
+check("setup again: no re-import, no second announcement", !o.imported && SENT.length === 0 && st().equity_toman === 2085600);
+// webhook auth + chat filter
+check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).status === 403);
+const v0 = DB.row.version;
+check("other chat ignored", (await tgSend("/balance 1", 999)).out.length === 0 && DB.row.version === v0);
+let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f"));
+r = await tgSend("/balance ۲٬۰۸۵٬۶۰۰"); check("/balance Persian digits", st().equity_toman === 2085600 && r.out[0].includes("۲٬۰۸۵٬۶۰۰"));
+for (const bad of ["/balance", "/balance -5", "/balance nan", "/loss", "/loss 0", "/win abc"]) {
+  const before = JSON.stringify([st().equity_toman, st().day]);
+  r = await tgSend(bad); check(`invalid '${bad}' rejected`, r.out[0].includes("چیزی ثبت نشد") && JSON.stringify([st().equity_toman, st().day]) === before);
+}
+r = await tgSend("/loss ۱۵۰۰۰۰"); check("/loss", st().day.losses === 1 && st().day.loss_toman === 150000 && r.out[0].includes("زیان ثبت شد"));
+raceOnce = true; r = await tgSend("/win 150 000"); check("/win with space (survives a concurrent GitHub write)", st().day.win_toman === 150000 && r.out.length === 1);
+r = await tgSend("/undo"); check("/undo last (win)", st().day.wins === 0 && st().day.losses === 1);
+await tgSend("/undo"); r = await tgSend("/undo"); check("/undo empty safe", r.out[0].includes("چیزی برای حذف"));
+await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/loss 100000");
+check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
+DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
+await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
+r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ زیان"));
+r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
+const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
+check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
+check("Tehran clock is UTC+3:30", teh(new Date("2026-11-13T20:30:00Z")).full === "2026-11-14 00:00");
+// /scan -> queue + dispatch
+DISPATCHED.length = 0; r = await tgSend("/scan");
+check("/scan -> instant ack + workflow dispatch", r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1 && DISPATCHED[0].inputs.mode === "command");
+r = await tgSend("/brief"); check("second command within 90 s: queued, no 2nd dispatch", DISPATCHED.length === 1 && st().pending_cmds.length === 2);
+await tgSend("/scan"); check("duplicate /scan not queued twice", st().pending_cmds.length === 2);
+const before = uid; await tgSend("/help"); uid = before;
+r = await tgSend("/help"); check("Telegram retry (same update_id) ignored", r.out.length === 0); uid += 5;
+// GitHub state API
+const g = await (await gh("/state")).json();
+check("GET /state (OIDC) returns state + news", g.state.equity_toman === 2085600 && g.news_windows && g.state.pending_cmds.length === 2);
+const ids = g.state.pending_cmds.map((x) => x.id);
+await gh("/state", "POST", { patch: { last_run_tehran: "2026-11-13 17:30", equity_toman: 1, day: {} }, done_cmds: ids });
+check("POST /state merges bot keys only, clears done cmds", st().last_run_tehran === "2026-11-13 17:30" && st().equity_toman === 2085600 && st().day.losses === 2 && st().pending_cmds.length === 0);
+check("/state without token -> 401", (await app(new Request(FN + "/state"), jw)).status === 401);
+// GitHub dispatch failure -> honest reply, retried next time
+ghStatus = 403; DB.row.state.last_dispatch = 0; r = await tgSend("/scan"); ghStatus = 204;
+check("dispatch failure: queued, reply says next automatic check", r.out[0].includes("در صف") && st().pending_cmds.length === 1 && st().last_dispatch === 0);
+// HTML fallback
+failHtml = true; r = await tgSend("/help"); failHtml = false;
+check("HTML failure -> plain-text fallback", r.out.length === 1 && !r.out[0].includes("<b>"));
+// OIDC
+const req = async (c) => new Request(FN + "/state", { headers: { authorization: "Bearer " + (await jwt(c)) } });
+for (const [n, c] of [["other repo", { repository: "evil/x" }], ["other branch", { ref: "refs/heads/dev" }], ["wrong audience", { aud: "x" }], ["expired", { exp: 1 }]])
+  check(`OIDC: ${n} rejected`, !(await verifyOidc(await req({ ...good, ...c }), jw)));
+const t = await jwt(good);
+check("OIDC: tampered payload rejected", !(await verifyOidc(new Request("https://x", { headers: { authorization: "Bearer " + t.split(".")[0] + "." + enc({ ...good, x: 1 }) + "." + t.split(".")[2] } }), jw)));
+console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

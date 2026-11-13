@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """bot.py - Telegram front-end for the M5 gold toolkit, run by GitHub Actions (no server).
 
-Each run: read Telegram commands (getUpdates), optionally refresh the news calendar, run tools/brief.py,
-apply the automated DaryaGold risk check (replaces M5-Risk), send a message only when needed, save state.
+The Supabase Edge Function (supabase/functions/tg-bot) owns Telegram input (webhook); Postgres holds the state; pg_cron owns the schedule.
+Each run: the workflow pulls state from Supabase into STATE_DIR, this script answers queued /scan and /brief,
+refreshes the news calendar, runs tools/brief.py, applies the automated DaryaGold risk check (replaces M5-Risk),
+sends a message only when needed, and writes state.json; the workflow pushes the bot-owned keys back.
 
 modes : scheduled  - full check; sends a signal only if every gate passes (deduped); pre-session briefs
-        poll       - answer commands only; runs the brief only if /scan or /brief was asked
+        command    - answer queued /scan or /brief only ("poll" = old alias)
         test       - send one sample signal (labelled «نمونه»), nothing else
-env   : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (only this chat is answered), STATE_DIR (state.json + news_windows.json)
+env   : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, STATE_DIR (state.json + news_windows.json pulled from Supabase)
 Signal-only research. Never places trades. Not financial advice."""
 import argparse, csv, html, json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta
@@ -27,20 +29,7 @@ CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
-HELP = """**🤖 راهنما**
-~~بات طلای دریاگلد~~
-
-/scan  بررسی بازار و سیگنال
-/brief  وضعیت بازار
-/balance 2085600  ثبت موجودی
-/loss 150000  ثبت زیان امروز
-/win 200000  ثبت سود امروز
-/undo  حذف آخرین ثبت
-/status  وضعیت سیستم
-
-⏱ جواب در اجرای بعدی، حداکثر حدود ۱۵ دقیقه
-📅 دوشنبه تا جمعه، ۱۱:۳۰ تا ۰۰:۳۰
-🔕 بررسی‌های خودکار فقط وقتی پیام می‌دهند که سیگنال باشد"""
+# /help, /status, /balance, /loss, /win, /undo are answered by the Supabase Edge Function (supabase/functions/tg-bot).
 
 # ---------------- state ----------------
 def now_teh():
@@ -53,7 +42,6 @@ def load_state():
     except (FileNotFoundError, json.JSONDecodeError):
         s = {}
     s.setdefault("equity_toman", float(DG.load_config()["equity_toman"]))
-    s.setdefault("tg_offset", 0)
     s.setdefault("presession_sent", {})
     s.setdefault("signals_sent", [])
     today = now_teh().strftime("%Y-%m-%d")
@@ -70,21 +58,7 @@ def save_state(s):
         json.dump(s, f, ensure_ascii=False, indent=1)
     os.replace(STATE_JSON + ".tmp", STATE_JSON)
 
-# ---------------- amounts ----------------
-_DIGITS_IN = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫", "01234567890123456789.")
 SIGNAL_LOCK_MIN = 60   # max 1 position: after a signal, no new one for 60 min unless /loss or /win closes it
-
-def parse_amount(args):
-    """'150000', '۱۵۰٬۰۰۰', '150,000 تومان', '150 000' -> 150000.0; anything else -> ValueError."""
-    t = " ".join(args).translate(_DIGITS_IN)
-    t = re.sub(r"(تومان|toman|tmn)", "", t, flags=re.I)
-    t = re.sub(r"[\s,٬_']", "", t)
-    if not re.fullmatch(r"\d+(\.\d+)?", t):
-        raise ValueError(t)
-    v = float(t)
-    if not (0 < v < 1e12):
-        raise ValueError(t)
-    return v
 
 # ---------------- telegram ----------------
 def tg(method, **params):
@@ -122,28 +96,6 @@ def send(text):
         print(f"telegram send: {'ok message_id=' + str(r['result']['message_id']) if good else 'FAILED ' + str((r or {}).get('description'))}")
         ok = ok and good
     return ok
-
-def read_commands(state):
-    r = tg("getUpdates", offset=int(state.get("tg_offset", 0)) + 1 if state.get("tg_offset") else 0, timeout=0)
-    cmds = []
-    if not r or not r.get("ok"):
-        return cmds
-    for u in r.get("result", []):
-        state["tg_offset"] = max(int(state.get("tg_offset") or 0), int(u["update_id"]))
-        m = u.get("message") or u.get("edited_message") or {}
-        chat_id = str((m.get("chat") or {}).get("id", ""))
-        text = (m.get("text") or "").strip()
-        if not text.startswith("/"):
-            continue
-        if not CHAT or chat_id != CHAT:
-            print("ignored a command from an unknown chat")
-            continue
-        parts = text.split()
-        c = (parts[0].split("@")[0].lower(), parts[1:])
-        if c[0] in ("/start", "/help", "/scan", "/brief", "/status") and any(x[0] == c[0] for x in cmds):
-            continue  # answer repeated read-only commands once per run
-        cmds.append(c)
-    return cmds
 
 # ---------------- news calendar ----------------
 def prepare_news(state, force=False):
@@ -580,19 +532,6 @@ def sample_signal(b, cfg, state):
         return None
     return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg, sample=True)
 
-def status_msg(state, news_ok):
-    d = state["day"]
-    sig = state["signals_sent"][-1] if state["signals_sent"] else None
-    last = (state.get("last_run_tehran") or "—")[-5:]
-    return "\n".join([
-        "**📋 وضعیت**", f"~~آخرین بررسی {last}~~", "",
-        f"💼 موجودی {toman_short(state['equity_toman'])} تومان",
-        f"📉 امروز {d.get('losses', 0)} زیان · {d.get('wins', 0)} سود",
-        f"🎯 آخرین سیگنال: {sig['at'][-5:] if sig else 'هنوز نه'}",
-        f"📰 تقویم خبری: {'به‌روز ✅' if news_ok else 'قدیمی ⛔'}",
-        "⏱ بررسی هر ۱۵ دقیقه، دوشنبه تا جمعه ۱۱:۳۰ تا ۲۱:۳۰",
-    ])
-
 # ---------------- main ----------------
 def in_window(name, t):
     a, z = PRESESSION[name]
@@ -600,12 +539,15 @@ def in_window(name, t):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["scheduled", "poll", "test"], default="scheduled")
+    ap.add_argument("--mode", choices=["scheduled", "command", "poll", "test"], default="scheduled")
     a = ap.parse_args()
     global CFG
     cfg = CFG = DG.load_config()
     state = load_state()
-    cmds = read_commands(state)
+    # /scan and /brief are queued by the Supabase Edge Function (Telegram webhook); every other command is answered there.
+    pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief")]
+    cmds = [(x["cmd"], []) for x in pending]
+    state["done_cmds"] = [x["id"] for x in state.get("pending_cmds") or []]
     print(f"mode={a.mode} commands={[c for c, _ in cmds]}")
     news_ok = None
     brief = None
@@ -630,52 +572,8 @@ def main():
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
         return ok
 
-    # cheap commands first (balance/loss/win change what the scan computes)
-    for c, args in cmds:
-        try:
-            if c in ("/start", "/help"):
-                send(HELP)
-            elif c == "/balance":
-                v = parse_amount(args)
-                state["equity_toman"] = v
-                send(f"✅ موجودی ثبت شد: {DG.toman(v)} تومان.\nسقف ریسک هر معامله: {DG.toman(v * 0.1)} تومان؛ توقف روزانه: {DG.toman(v * 0.2)} تومان ضرر.")
-            elif c in ("/loss", "/win"):
-                v = parse_amount(args)  # positive amount required, else nothing is recorded
-                d = state["day"]
-                d.setdefault("records", []).append({"type": c[1:], "toman": v, "at": now_teh().strftime("%H:%M")})
-                if c == "/loss":
-                    d["losses"] += 1; d["loss_toman"] += v
-                else:
-                    d["wins"] += 1; d["win_toman"] += v
-                net = d["loss_toman"] - d["win_toman"]
-                stop = d["losses"] >= 3 or net >= state["equity_toman"] * 0.2
-                send(f"✅ ثبت شد. امروز {d['losses']} معامله‌ی زیان‌ده و {d['wins']} معامله‌ی سودده دارید؛ ضرر خالص: {DG.toman(max(net, 0))} تومان."
-                     + ("\n⛔ توقف روزانه فعال شد؛ تا روز معاملاتی بعد سیگنالی فرستاده نمی‌شود." if stop else ""))
-            elif c == "/undo":
-                d = state["day"]
-                recs = d.setdefault("records", [])
-                if not recs:
-                    send("چیزی برای حذف وجود ندارد؛ امروز هیچ سود یا زیانی ثبت نشده است.")
-                else:
-                    r = recs.pop()
-                    if r["type"] == "loss":
-                        d["losses"] = max(0, d["losses"] - 1); d["loss_toman"] = max(0, d["loss_toman"] - r["toman"])
-                    else:
-                        d["wins"] = max(0, d["wins"] - 1); d["win_toman"] = max(0, d["win_toman"] - r["toman"])
-                    kind = "زیان" if r["type"] == "loss" else "سود"
-                    send(f"↩️ آخرین مورد حذف شد: {kind} {DG.toman(r['toman'])} تومان. "
-                         f"امروز {d['losses']} معامله‌ی زیان‌ده و {d['wins']} معامله‌ی سودده ثبت شده است.")
-            elif c not in ("/status", "/brief", "/scan"):
-                send("دستور ناشناخته است. فهرست دستورها: /help")
-        except (ValueError, IndexError):
-            send("⚠️ مبلغ مثبت را هم بنویسید؛ چیزی ثبت نشد.\nمثال: /balance 2085600 یا /loss 150000 یا /win 200000\nبرای حذف آخرین مورد ثبت‌شده: /undo")
-
     for c, _ in cmds:
-        if c == "/status":
-            if news_ok is None:
-                news_ok = prepare_news(state)
-            send(status_msg(state, news_ok))
-        elif c == "/brief":
+        if c == "/brief":
             b = get_brief()
             send(short_brief(b, state, cfg))
         elif c == "/scan":

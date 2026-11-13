@@ -1,52 +1,88 @@
 name: telegram-bot
 
+# Supabase (project m5-gold-bot) runs the Telegram webhook (Edge Function tg-bot), holds the state (Postgres)
+# and dispatches this workflow: pg_cron on the Tehran schedule, the Edge Function on /scan and /brief.
+# The GitHub schedule below is only a fallback: with repo variable SUPABASE_CRON=1 scheduled runs are skipped
+# at job level (no runner, no minutes).
 # All cron times are UTC. Tehran = UTC+3:30 (no DST).
 on:
   schedule:
-    - cron: "45 7 * * 1-5"     # 11:15 Tehran  pre-London brief
-    - cron: "*/15 8-17 * * 1-5" # 11:30-21:15 Tehran scans every 15 min (16:15 = pre-NY brief)
-    - cron: "0 18 * * 1-5"     # 21:30 Tehran last scan
-    - cron: "0 19-21 * * 1-5"  # 22:30, 23:30, 00:30 Tehran: commands only
+    - cron: "45 7 * * 1-5"      # 11:15 Tehran pre-London brief
+    - cron: "*/15 8-17 * * 1-5" # 11:30-21:15 Tehran every 15 min (16:15 = pre-NY brief)
+    - cron: "0 18 * * 1-5"      # 21:30 Tehran last check
   workflow_dispatch:
     inputs:
       mode:
-        description: "scheduled | poll | test"
-        default: "test"
+        description: "scheduled | command | test | setup | unhook"
+        default: "command"
 
 permissions:
-  contents: write
+  contents: read
+  id-token: write   # GitHub OIDC token proves to the Edge Function that the caller is this repo's main branch
 
 concurrency:
   group: telegram-bot
   cancel-in-progress: false
 
+env:
+  FN_URL: https://kinbkthbbwzrfogqqttl.supabase.co/functions/v1/tg-bot
+
 jobs:
   run:
+    if: github.event_name != 'schedule' || vars.SUPABASE_CRON != '1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          ref: state
-          path: state
-          fetch-depth: 1
+
+      - name: Setup (store secrets in Supabase Vault, migrate state, set Telegram webhook)
+        if: github.event.inputs.mode == 'setup'
+        env:
+          TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GH: ${{ secrets.GH_DISPATCH_TOKEN }}
+          ANNOUNCE: ${{ vars.ANNOUNCE == '1' && '1' || '0' }}
+        run: |
+          git fetch -q --depth=1 origin state || true
+          umask 077
+          python3 - <<'PY' > "$RUNNER_TEMP/setup.json"
+          import json, os, subprocess
+          def show(p):
+              try: return json.loads(subprocess.check_output(["git", "show", f"FETCH_HEAD:{p}"], stderr=subprocess.DEVNULL))
+              except Exception: return None
+          print(json.dumps({"telegram_token": os.environ["TG"], "gh_token": os.environ.get("GH") or None,
+                            "import_state": show("state.json"), "import_news": show("news_windows.json"),
+                            "set_webhook": True, "announce": os.environ["ANNOUNCE"] == "1"}))
+          PY
+          TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=m5-gold-bot" | jq -r .value)
+          echo "::add-mask::$TOKEN"
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" --data @"$RUNNER_TEMP/setup.json" "$FN_URL/admin/setup"
+          rm -f "$RUNNER_TEMP/setup.json"
+
+      - name: Rollback (remove Telegram webhook; pending updates kept)
+        if: github.event.inputs.mode == 'unhook'
+        env:
+          TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: curl -fsS "https://api.telegram.org/bot${TG}/deleteWebhook?drop_pending_updates=false" | jq -c '{ok, description}'
+
       - uses: actions/setup-python@v5
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
         id: py
         with:
           python-version: "3.13"
       - name: Restore venv
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
         id: venv
         uses: actions/cache@v4
         with:
           path: ~/venv
           key: venv-${{ runner.os }}-${{ steps.py.outputs.python-version }}-${{ hashFiles('bot/requirements.txt') }}
       - name: Install deps (cache miss only)
-        if: steps.venv.outputs.cache-hit != 'true'
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook' && steps.venv.outputs.cache-hit != 'true'
         run: python -m venv ~/venv && ~/venv/bin/pip install -q -r bot/requirements.txt
       - name: Restore price cache
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -56,22 +92,32 @@ jobs:
           key: data-${{ github.run_id }}
           restore-keys: data-
       - name: Link repo to the toolkit path
-        run: sudo mkdir -p /workspace && sudo ln -sfn "$GITHUB_WORKSPACE" /workspace/m5-gold-team && mkdir -p data
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
+        run: sudo mkdir -p /workspace && sudo ln -sfn "$GITHUB_WORKSPACE" /workspace/m5-gold-team && mkdir -p data state
+
+      - name: Pull state from Supabase
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
+        id: pull
+        run: |
+          TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=m5-gold-bot" | jq -r .value)
+          echo "::add-mask::$TOKEN"
+          curl -fsS --retry 3 -H "Authorization: Bearer $TOKEN" "$FN_URL/state" -o /tmp/pull.json
+          jq '.state' /tmp/pull.json > state/state.json
+          jq -e '.news_windows' /tmp/pull.json > state/news_windows.json || rm -f state/news_windows.json
+          echo "pulled: equity=$(jq .state.equity_toman /tmp/pull.json) pending=$(jq '.state.pending_cmds|length' /tmp/pull.json)"
+
       - name: Run bot
+        if: github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STATE_DIR: ${{ github.workspace }}/state
-          EVENT_SCHEDULE: ${{ github.event.schedule }}
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
-          BOT_ECHO: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
-        run: |
-          MODE=scheduled
-          [ "$EVENT_SCHEDULE" = "0 19-21 * * 1-5" ] && MODE=poll
-          [ -n "$DISPATCH_MODE" ] && MODE="$DISPATCH_MODE"
-          ~/venv/bin/python bot/bot.py --mode "$MODE"
+          BOT_ECHO: ${{ github.event.inputs.mode == 'test' && '1' || '0' }}
+        run: ~/venv/bin/python bot/bot.py --mode "${DISPATCH_MODE:-scheduled}"
+
       - name: Save price cache
-        if: always()
+        if: always() && github.event.inputs.mode != 'setup' && github.event.inputs.mode != 'unhook'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -79,12 +125,20 @@ jobs:
             data/meta.json
             data/macro.json
           key: data-${{ github.run_id }}
-      - name: Save state (orphan 'state' branch, single commit, small JSON only)
-        if: always()
+
+      - name: Push bot-owned state back to Supabase
+        if: always() && steps.pull.outcome == 'success'
         run: |
-          cd state
-          git config user.name "m5-bot"; git config user.email "m5-bot@users.noreply.github.com"
-          git add state.json news_windows.json 2>/dev/null || true
-          if ! git diff --cached --quiet; then
-            git commit -q --amend -m "bot state" && git push -q --force origin HEAD:state
-          fi
+          [ -f state/state.json ] || exit 0
+          python3 - <<'PY' > /tmp/push.json
+          import json, os
+          s = json.load(open("state/state.json"))
+          keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at"]
+          out = {"patch": {k: s[k] for k in keys if k in s}, "done_cmds": s.get("done_cmds", [])}
+          if os.path.exists("state/news_windows.json"):
+              out["news_windows"] = json.load(open("state/news_windows.json"))
+          print(json.dumps(out, ensure_ascii=False))
+          PY
+          TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=m5-gold-bot" | jq -r .value)
+          echo "::add-mask::$TOKEN"
+          curl -fsS --retry 3 -X POST -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" --data @/tmp/push.json "$FN_URL/state"
