@@ -39,7 +39,9 @@ Amounts accept Persian or Latin digits, separators and «تومان» (e.g. `/lo
 
 Secrets: GitHub secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GH_DISPATCH_TOKEN`; the setup run copies the two tokens into Supabase Vault. Nothing secret is in the repo.
 
-Workflow modes (Actions → telegram-bot → Run workflow): `scheduled`, `command` (queued /scan /brief only), `test` (one sample signal labelled «نمونه»), `setup` (store tokens in Vault, migrate state, set the webhook), `unhook` (emergency: delete the webhook; then commands are not answered until `setup` is run again).
+Workflow modes (Actions → telegram-bot → Run workflow): `scheduled`, `command` (queued /scan /brief only), `test` (one sample signal labelled «نمونه»), `setup` (copy the two tokens into Vault and set the webhook; safe to re-run, e.g. after rotating a token), `unhook` (emergency: delete the webhook; commands then wait in Telegram until `setup` is run again).
+
+If Supabase is down: GitHub runs fail visibly (red) and send nothing. To fall back to GitHub's own (less punctual) schedule, delete repo variable `SUPABASE_CRON`.
 
 Tests (offline, mocked network; never touch journal.csv):
 `node supabase/functions/tg-bot/test.mjs` and `STATE_DIR=$(mktemp -d) python3 bot/test_bot.py`.
