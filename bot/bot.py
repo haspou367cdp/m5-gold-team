@@ -29,7 +29,7 @@ NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "11:44"), "pm": ("16:10", "16:44")}
 WARN = ("⚠️ سطح‌ها و جهت کلی تأیید نشده‌اند و مزیت آماری ثابت‌شده‌ای ندارند؛ هر دو روش معاملاتی در آزمون روی داده‌های جدید رد شدند. "
         "پیش از معامله‌ی واقعی، روی حساب آزمایشی (دمو) امتحان کنید.\nاین تحلیل است، نه توصیه‌ی مالی")
-HELP = """**🤖 راهنمای بات طلا (XAUUSD، نمودار ۵ دقیقه‌ای M5، دریاگلد)**
+HELP = """**🤖 راهنمای بات طلای دریاگلد**
 
 /scan — بررسی کامل بازار؛ اگر ستاپی از همه‌ی کنترل‌ها بگذرد سیگنال می‌دهد، وگرنه «معامله نکنید» را با دلیلش می‌گوید.
 /brief — گزارش تحلیلی کوتاه، بدون سیگنال
@@ -40,7 +40,7 @@ HELP = """**🤖 راهنمای بات طلا (XAUUSD، نمودار ۵ دقیق
 /status — وضعیت سیستم
 /help — همین راهنما
 
-⏱ این بات سرور همیشه‌روشن ندارد و روی GitHub Actions اجرا می‌شود؛ پس به دستورها فقط در اجرای بعدی جواب می‌دهد:
+⏱ این بات سرور همیشه‌روشن ندارد و روی سرورهای رایگان گیت‌هاب اجرا می‌شود؛ پس به دستورها فقط در اجرای بعدی جواب می‌دهد:
 • دوشنبه تا جمعه، حدود ۱۱:۳۰ تا ۲۱:۳۰ به وقت تهران، هر ۱۵ دقیقه (گاهی چند دقیقه دیرتر)
 • ۲۲:۳۰، ۲۳:۳۰ و ۰۰:۳۰ فقط برای جواب‌دادن به دستورها
 • شب‌ها و آخر هفته جوابی نمی‌دهد.
@@ -300,7 +300,10 @@ def render(t):
     """**bold** -> <b>, HTML-escaped, Persian digits."""
     t = html.escape(t, quote=False)
     t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
-    return fa_num(t)
+    t = re.sub(r"~~(.+?)~~", r"<i>\1</i>", t)
+    t = fa_num(t)
+    # RLM at the start of every line keeps iPhone/Android Telegram in right-to-left order
+    return "\n".join(("\u200f" + ln) if ln.strip() else ln for ln in t.split("\n"))
 
 _LABEL_RANK = ["ماه قبل", "ماه جاری", "هفته", "نیویورک دیروز", "دیروز", "امروز", "روزانه", "بازگشایی",
                "لندن", "آسیا", "نیویورک", "برابر", "چرخشی H4", "چرخشی H1", "چرخشی M15", "VWAP", "چرخشی M5", "EMA", "رُند"]
@@ -341,106 +344,129 @@ def fa_polish(t):
 def head(b):
     return (b.get("evaluated_at_tehran") or b.get("generated_at_tehran") or now_teh().strftime("%Y-%m-%d %H:%M"))[:16]
 
-def news_lines(b, limit, more=True):
-    w = b.get("news_windows_next_24h") or []
-    if not w:
-        return ["**پنجره‌های خبری:** در ۲۴ ساعت آینده پنجره‌ی مهمی ثبت نشده است."]
-    out = ["**پنجره‌های خبری (۲۴ ساعت آینده، ورود ممنوع):**"]
-    for x in w[:limit]:
-        out.append("• " + fa_polish(x).replace("، ورود ممنوع", ""))
-    if more and len(w) > limit:
-        out.append(f"• و {len(w) - limit} پنجره‌ی دیگر")
+WARN_LINE = "~~این تحلیل است، نه توصیه‌ی مالی. مزیت آماری ثابت‌شده ندارد؛ اول روی دمو امتحان کنید.~~"
+
+def px1(p):
+    """Compact DaryaGold price, one decimal."""
+    if p is None:
+        return "—"
+    bid = float(p)
+    dg = DG.to_broker(bid, CFG) if CFG else bid + 0.3
+    return f"{dg:.1f}"
+
+def _hm(x):
+    return str(x or "")[-5:]
+
+def _windows(b):
+    """[(start 'HH:MM', end 'HH:MM')] for the next 24 h, from the brief."""
+    out = []
+    for w in b.get("news_windows_next_24h") or []:
+        m = re.match(r"\s*(\d\d:\d\d)\s*[–-]\s*(\d\d:\d\d)", w)
+        if m:
+            out.append((m.group(1), m.group(2)))
     return out
 
-def money_line(state):
-    eq = float(state["equity_toman"]); d = state["day"]
-    return (f"**ریسک و موجودی:** موجودی {DG.toman(eq)} تومان؛ سقف ریسک هر معامله {DG.toman(eq * 0.10)} تومان؛ "
-            f"توقف روزانه با {DG.toman(eq * 0.20)} تومان ضرر یا ۳ زیان (امروز: {d.get('losses', 0)} زیان)")
+def next_news(b):
+    nw_ = b.get("news_window") or {}
+    if nw_.get("next_start"):
+        return f"{_hm(nw_['next_start'])}–{_hm(nw_.get('next_end'))}"
+    now = now_teh().strftime("%H:%M")
+    for a, z in _windows(b):
+        if a > now:
+            return f"{a}–{z}"
+    return None
 
-SEP = "────────────"
-WARN_SHORT = ("**هشدار:** سطح‌ها و جهت تأیید نشده‌اند و مزیت آماری ندارند؛ هر دو روش در آزمون روی داده‌های جدید رد شدند. "
-              "اول روی حساب آزمایشی (دمو) امتحان کنید.\nاین تحلیل است، نه توصیه‌ی مالی")
+def short_reason(b, reasons):
+    """One short, plain reason for a NO TRADE."""
+    nw_ = b.get("news_window") or {}
+    text = " ".join(reasons or [])
+    if nw_.get("inside"):
+        return f"پنجره‌ی خبری تا {_hm(nw_.get('end'))}"
+    if nw_.get("soon_block") or ("دقیقه تا پنجره" in text):
+        return f"پنجره‌ی خبری از {_hm(nw_.get('next_start'))} تا {_hm(nw_.get('next_end'))}"
+    if "پنجره‌ی خبری" in text and "ورود ممنوع" in text:
+        return "داخل پنجره‌ی خبری"
+    if (b.get("session_entry") or {}).get("blocked"):
+        return "جمعه‌شب، ورود جدید ممنوع" if (b["session_entry"].get("friday_window")) else "بازار بسته است"
+    if "توقف روزانه" in text:
+        return "توقف روزانه فعال است"
+    if "تازه نیست" in text or "کهنه" in text or "منبع قیمتی" in text:
+        return "داده‌ی قیمت تازه نیست"
+    if "منبع جایگزین" in text:
+        return "قیمت معتبر در دسترس نیست"
+    if "تقویم خبری" in text:
+        return "تقویم خبری در دسترس نیست"
+    if "خلاف جهت" in text or "روی سطح" in text:
+        return "قیمت روی سطح است؛ صبر کنید"
+    if "وسط راه" in text:
+        return "قیمت وسط محدوده است؛ صبر کنید"
+    if "خنثی" in text:
+        return "جهت بازار مشخص نیست"
+    if "اسپرد" in text:
+        return "اسپرد غیرعادی است"
+    if "نسبت" in text:
+        return "نسبت سود به ضرر کافی نیست"
+    if "حجم" in text or "ریسک" in text:
+        return "ریسک ستاپ بیش از سقف مجاز است"
+    return "ستاپ تأییدشده‌ای نیست"
 
 def friday_line():
-    if now_teh().weekday() == 4:
-        return ["📅 جمعه: از ساعت 23:30 ورود جدید ممنوع است و همه‌ی معامله‌ها باید پیش از 01:30 بسته شوند."]
+    t = now_teh()
+    if t.weekday() == 4 and t.hour >= 22:
+        return ["جمعه: از ۲۳:۳۰ ورود ممنوع؛ همه‌چیز تا ۰۱:۳۰ بسته شود."]
     return []
 
-def price_block(b, q):
-    fa = FA_TREND
-    age = f" (داده‌ی {q['age_minutes']} دقیقه پیش)" if q.get("age_minutes") is not None else ""
-    L = [f"**قیمت و جهت:** دریاگلد {px(b['price_bid'])}{age}؛ "
-         f"جهت کلی {fa.get(b.get('bias'), 'نامشخص')} (H4 {fa.get((b.get('h4') or {}).get('trend'), '؟')}، "
-         f"H1 {fa.get((b.get('h1') or {}).get('trend'), '؟')}، M15 {fa.get((b.get('m15') or {}).get('trend'), '؟')})"]
-    inv = b.get("invalidation") or {}
-    if inv.get("neutral_level"):
-        up = b.get("bias") == "bearish" or (b.get("bias") == "neutral" and b.get("technical_bias") == "bearish")
-        w = "بالای" if up else "زیر"
-        line = f"شرط ابطال: بسته‌شدن کندل M15 {w} {px(inv['neutral_level'])} جهت را خنثی می‌کند"
-        if inv.get("off_level"):
-            line += f" و بسته‌شدن کندل H1 {w} {px(inv['off_level'])} آن را باطل می‌کند"
-        L[0] += "\n" + line + "."
-    return L
-
-def levels_block(b, n, one_line=False):
+def sr_line(b):
+    r = (b.get("resistances") or [None])[0]
+    s_ = (b.get("supports") or [None])[0]
     parts = []
-    if b.get("resistances"):
-        parts.append("مقاومت " + "، ".join(lvl(l) for l in b["resistances"][:n]))
-    if b.get("supports"):
-        parts.append("حمایت " + "، ".join(lvl(l) for l in b["supports"][:n]))
-    if not parts:
-        return []
-    if one_line:
-        return ["**سطوح:** " + "؛ ".join(parts)]
-    return ["**سطوح:** " + parts[0]] + parts[1:]
+    if r: parts.append(f"مقاومت: {px1(r['price'])}")
+    if s_: parts.append(f"حمایت: {px1(s_['price'])}")
+    return [" · ".join(parts)] if parts else []
 
-def short_brief(b, state, cfg, reasons=None, title="📊 گزارش طلا (XAUUSD، M5)"):
-    t = head(b)[11:16] or now_teh().strftime("%H:%M")
-    top = f"**{title} · {t} تهران**"
+def short_brief(b, state, cfg, reasons=None, title=None):
+    t = (head(b)[11:16] or now_teh().strftime("%H:%M"))
     if b.get("error") or b.get("price_bid") is None:
-        q = fa_polish((b.get("quality") or {}).get("fa") or "داده‌ی قیمت در دسترس نیست.")
-        return "\n".join([top, SEP, "**نتیجه:** معامله نکنید", f"دلیل: {q}", SEP, WARN_SHORT])
+        return "\n".join([f"**⛔️ معامله نکنید** · {t}", "دلیل: داده‌ی قیمت در دسترس نیست", WARN_LINE])
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     side = dec.get("decision")
     trade = reasons is None and side in FA_SIDE
-    rs = reasons if reasons else (dec.get("reasons_reject") or [])
-    L = [top, SEP, f"**نتیجه:** {FA_SIDE[side] if trade else 'معامله نکنید'}"]
-    if rs:
-        L.append("دلیل: " + " ".join(fa_polish(r) for r in rs[:2]))
-    L += price_block(b, b.get("quality") or {})
-    L += levels_block(b, 2 if not trade else 3, one_line=not trade)
-    L += news_lines(b, 3 if trade else 2, more=trade)
-    L.append(money_line(state))
+    head_line = (f"**{'🟢' if side == 'BUY' else '🔴'} {FA_SIDE[side]}** · {t}" if trade else f"**⛔️ معامله نکنید** · {t}")
+    if title:
+        head_line = f"**{title}** · {t}\n" + head_line.replace(f" · {t}", "")
+    L = [head_line]
+    if not trade:
+        L.append("دلیل: " + short_reason(b, reasons if reasons else (dec.get("reasons_reject") or [])))
+    L.append(f"قیمت: {px1(b['price_bid'])} · جهت: {FA_TREND.get(b.get('bias'), 'نامشخص')}")
+    L += sr_line(b)
+    nn = next_news(b)
+    if nn and not trade and nn.split("–")[0] in L[-3 if len(L) >= 3 else 0]:
+        # the reason already names this window; show the one after it
+        later = [f"{a}–{z}" for a, z in _windows(b) if a > nn.split("–")[0]]
+        nn = later[0] if later else None
+    if nn:
+        L.append(f"خبر بعدی: {nn}")
     L += friday_line()
-    L += [SEP, WARN_SHORT]
+    L.append(WARN_LINE)
     return "\n".join(L)
 
 def signal_msg(b, plan, sizing, state, cfg):
-    dec = b["decision"]; s = sizing["size"]; eq = float(state["equity_toman"])
-    icon = "🟢" if plan["side"] == "BUY" else "🔴"
-    size_fa = "نیم واحد" if s.get("key") == "half_unit" else "یک واحد"
+    s = sizing["size"]; eq = float(state["equity_toman"])
     t = head(b)[11:16]
-    L = [f"**🚨 سیگنال {FA_SIDE[plan['side']]} {icon} طلا (XAUUSD، M5) · {t} تهران**", SEP,
-         f"**نتیجه:** {FA_SIDE[plan['side']]}؛ از همه‌ی کنترل‌های خودکار ریسک گذشته است.",
-         f"نوع ستاپ: {fa_polish(dec.get('engine_fa') or 'نامشخص')} (تأییدنشده)",
-         f"ورود (سفارش محدود): {px(plan['entry'])}",
-         f"حد ضرر: {px(plan['sl'])} (فاصله {abs(plan['entry'] - plan['sl']):.2f} دلار)",
-         f"حد سود: {px(plan['tp'])} (فاصله {abs(plan['tp'] - plan['entry']):.2f} دلار)",
-         f"حجم: {size_fa}؛ ریسک {DG.toman(s['risk_toman'])} تومان ({DG.pct_of(s['risk_toman'], eq)}٪ حساب)؛ "
-         f"سود {DG.toman(s['reward_toman'])} تومان ({DG.pct_of(s['reward_toman'], eq)}٪ حساب)",
-         f"نسبت سود به ضرر خالص: {s['net_rr']}؛ کارمزد {DG.toman(s['fee'])} تومان؛ وجه تضمین {DG.toman(s['margin'])} تومان"]
-    if dec.get("reasons_accept"):
-        L.append("دلیل: " + " ".join(fa_polish(r) for r in dec["reasons_accept"][:2]))
-    L += price_block(b, b.get("quality") or {})
-    nw_ = b.get("news_window") or {}
-    if nw_.get("next_start"):
-        L.append(f"**پنجره‌ی خبری بعدی:** {nw_['next_start'][-5:]} تا {nw_.get('next_end', '')} (ردیف {nw_.get('next_tier')})؛ "
-                 "پیش از شروع آن، سفارش را لغو و معامله را ببندید.")
-    L.append(money_line(state))
-    L.append("حداقل زمان نگه‌داشتن معامله ۶۰ ثانیه است و هم‌زمان فقط یک معامله‌ی باز مجاز است؛ "
-             "اگر ستاپ پیش از پرشدن سفارش باطل شد، سفارش را لغو کنید.")
+    size_fa = "نیم‌واحد" if s.get("key") == "half_unit" else "یک‌واحد"
+    p2 = lambda x: (f"{DG.to_broker(float(x), CFG):.2f}".rstrip("0").rstrip(".") if CFG else str(x))
+    L = [f"**{'🟢' if plan['side'] == 'BUY' else '🔴'} سیگنال {FA_SIDE[plan['side']]} طلا** · {t}",
+         f"ورود: {p2(plan['entry'])} (سفارش محدود)",
+         f"حد ضرر: {p2(plan['sl'])}",
+         f"حد سود: {p2(plan['tp'])}",
+         f"حجم: {size_fa}",
+         f"ریسک: {DG.toman(s['risk_toman'])} تومان ({DG.pct_of(s['risk_toman'], eq)}٪ حساب)",
+         f"نسبت سود به ضرر: {s['net_rr']}"]
+    nn = next_news(b)
+    if nn:
+        L.append(f"خبر بعدی: {nn}؛ پیش از آن سفارش را لغو و معامله را ببندید.")
     L += friday_line()
-    L += [SEP, WARN_SHORT]
+    L.append(WARN_LINE)
     return "\n".join(L)
 
 def status_msg(state, news_ok):
@@ -454,7 +480,7 @@ def status_msg(state, news_ok):
         f"{d.get('wins', 0)} معامله‌ی سودده ({DG.toman(d.get('win_toman', 0))} تومان)",
         f"آخرین اجرا: {state.get('last_run_tehran', '—')} به وقت تهران؛ آخرین نتیجه: {last_v}",
         f"آخرین سیگنال: {sig['at'] if sig else 'هنوز سیگنالی فرستاده نشده است'}",
-        f"تقویم خبری (ForexFactory): به‌روزرسانی {state.get('news_fetched_at', '—')} {'✅' if news_ok else '⛔ قدیمی است'}",
+        f"تقویم خبری: به‌روزرسانی {state.get('news_fetched_at', '—')} {'✅' if news_ok else '⛔ قدیمی است'}",
         "زمان اجرا: دوشنبه تا جمعه، ۱۱:۳۰ تا ۲۱:۳۰ به وقت تهران هر ۱۵ دقیقه؛ ۲۲:۳۰، ۲۳:۳۰ و ۰۰:۳۰ فقط برای دستورها.",
     ])
 
@@ -536,14 +562,14 @@ def main():
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
             send(signal_msg(b, plan, sizing, state, cfg) if ok else
-                 short_brief(b, state, cfg, reasons=why, title="🔎 نتیجه‌ی اسکن طلا (XAUUSD، M5)"))
+                 short_brief(b, state, cfg, reasons=why))
 
     t = now_teh()
     if a.mode == "test":
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-        body = signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why, title="📊 وضعیت فعلی بازار طلا (XAUUSD، M5)")
-        send("✅ سیستم راه‌اندازی شد؛ برای دیدن راهنما، /help را بفرستید.\n\n" + body)
+        body = signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why, title="📊 گزارش آزمایشی طلا")
+        send(body)
     elif a.mode == "scheduled" and DG.forex_open(t, cfg):
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
@@ -560,7 +586,7 @@ def main():
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"
                 if in_window(name, t) and not state["presession_sent"].get(tag):
-                    title = "🌅 گزارش پیش از بازگشایی لندن (XAUUSD، M5)" if name == "am" else "🗽 گزارش پیش از بازگشایی نیویورک (XAUUSD، M5)"
+                    title = "🌅 گزارش پیش از لندن" if name == "am" else "🗽 گزارش پیش از نیویورک"
                     if send(short_brief(b, state, cfg, reasons=None if ok else why, title=title)):
                         state["presession_sent"][tag] = True
     state["last_run_tehran"] = t.strftime("%Y-%m-%d %H:%M")
