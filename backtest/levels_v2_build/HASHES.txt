@@ -1,0 +1,13 @@
+b764f0cffb7673c5810d1d31f13e4e5f54f0646dcb81a96661b26aa35b7b92a8  PREREG_v2.md
+9aaeb469c0baf4955529ab90af6fee4db27f365f3bdace93b811e85068e0f284  ../../tools/levels_v2.py
+9def4b23828e51b14a0b91c4c4bfcad6ed7c6b00293c4667030b53987cb23554  gen_levels.py
+1ddf355c90cbe5310e47df7c26fb79d19ad5286e23fa31a736a831c618e202e9  levels_v2_hist.csv
+b22ef135f6c832eed6f4f80bc055944f5416a95fb1140de138695aeeeb668ef9  evaluate_v2.py
+7f4a2e9eb8888e7bebdab0d4256230fad2996f477330cff84206b45bb6543fcd  touches_v2.csv
+dce83c74f995a10ee1317ddb280ae6b00ff1f3f22cebe496050e0be6f6c38c40  summary.md
+# --- re-hash after review addendum 2026-11-13 (Tehran) ---
+7c568569ddc1f8faf09eb982e938f4ec0a84c4bb7867421ab1c786ab28d11c35  PREREG_v2.md
+ded0db7f07bcfcde9d5134eff7f45001c8c32a3c21520f13e44d465e92103750  summary.md
+7f4a2e9eb8888e7bebdab0d4256230fad2996f477330cff84206b45bb6543fcd  touches_v2.csv
+b22ef135f6c832eed6f4f80bc055944f5416a95fb1140de138695aeeeb668ef9  evaluate_v2.py
+9aaeb469c0baf4955529ab90af6fee4db27f365f3bdace93b811e85068e0f284  ../../tools/levels_v2.py
