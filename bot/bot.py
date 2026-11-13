@@ -27,24 +27,20 @@ CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "11:44"), "pm": ("16:10", "16:44")}
-HELP = """**🤖 راهنمای بات طلای دریاگلد**
+HELP = """**🤖 راهنما**
+~~بات طلای دریاگلد~~
 
-/scan — بررسی کامل بازار؛ اگر ستاپی از همه‌ی کنترل‌ها بگذرد سیگنال می‌دهد، وگرنه «معامله نکنید» را با دلیلش می‌گوید.
-/brief — گزارش تحلیلی کوتاه، بدون سیگنال
-/balance 2085600 — ثبت موجودی حساب به تومان
-/loss 150000 — ثبت یک معامله‌ی بسته‌شده‌ی امروز با ضرر (برای توقف روزانه)
-/win 200000 — ثبت یک معامله‌ی بسته‌شده‌ی امروز با سود
-/undo — حذف آخرین سود یا زیان ثبت‌شده
-/status — وضعیت سیستم
-/help — همین راهنما
+/scan  بررسی بازار و سیگنال
+/brief  وضعیت بازار
+/balance 2085600  ثبت موجودی
+/loss 150000  ثبت زیان امروز
+/win 200000  ثبت سود امروز
+/undo  حذف آخرین ثبت
+/status  وضعیت سیستم
 
-⏱ این بات سرور همیشه‌روشن ندارد و روی سرورهای رایگان گیت‌هاب اجرا می‌شود؛ پس به دستورها فقط در اجرای بعدی جواب می‌دهد:
-• دوشنبه تا جمعه، حدود ۱۱:۳۰ تا ۲۱:۳۰ به وقت تهران، هر ۱۵ دقیقه (گاهی چند دقیقه دیرتر)
-• ۲۲:۳۰، ۲۳:۳۰ و ۰۰:۳۰ فقط برای جواب‌دادن به دستورها
-• شب‌ها و آخر هفته جوابی نمی‌دهد.
-
-سیگنال خودکار فقط وقتی فرستاده می‌شود که از همه‌ی کنترل‌ها بگذرد. گزارش پیش از بازگشایی لندن حدود ساعت ۱۱:۱۵ و گزارش پیش از بازگشایی نیویورک حدود ساعت ۱۶:۱۵ فرستاده می‌شود.
-سفارش را خودتان در دریاگلد ثبت کنید؛ بات به حساب شما دسترسی ندارد."""
+⏱ جواب در اجرای بعدی، حداکثر حدود ۱۵ دقیقه
+📅 دوشنبه تا جمعه، ۱۱:۳۰ تا ۰۰:۳۰
+🔕 بررسی‌های خودکار فقط وقتی پیام می‌دهند که سیگنال باشد"""
 
 # ---------------- state ----------------
 def now_teh():
@@ -299,6 +295,7 @@ def render(t):
     t = html.escape(t, quote=False)
     t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
     t = re.sub(r"~~(.+?)~~", r"<i>\1</i>", t)
+    t = re.sub(r"`(.+?)`", r"<code>\1</code>", t)
     t = fa_num(t)
     # RLM at the start of every line keeps iPhone/Android Telegram in right-to-left order
     return "\n".join(("\u200f" + ln) if ln.strip() else ln for ln in t.split("\n"))
@@ -422,33 +419,98 @@ def sr_line(b):
     if s_: parts.append(f"حمایت: {px1(s_['price'])}")
     return [" · ".join(parts)] if parts else []
 
+# ---------------- cards ----------------
+ARROW = {"bearish": "↘️", "bullish": "↗️", "neutral": "↔️"}
+FA_WEEKDAY = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+FA_MONTH = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
+def jalali(gy, gm, gd):
+    """Gregorian -> Solar Hijri (jalaali algorithm, no dependency)."""
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = 355666 + 365 * gy + (gy2 + 3) // 4 - (gy2 + 99) // 100 + (gy2 + 399) // 400 + gd + g_d_m[gm - 1]
+    jy = -1595 + 33 * (days // 12053); days %= 12053
+    jy += 4 * (days // 1461); days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365; days = (days - 1) % 365
+    jm = 1 + days // 31 if days < 186 else 7 + (days - 186) // 30
+    jd = 1 + (days % 31 if days < 186 else (days - 186) % 30)
+    return jy, jm, jd
+
+def fa_date(t):
+    jy, jm, jd = jalali(t.year, t.month, t.day)
+    return f"{FA_WEEKDAY[t.weekday()]} {jd} {FA_MONTH[jm - 1]}"
+
+def toman_short(v):
+    v = float(v or 0)
+    if v >= 1e6:
+        return f"{v / 1e6:.2f}".rstrip("0").rstrip(".") + " میلیون"
+    if v >= 1e3:
+        return f"{round(v / 1e3):.0f} هزار"
+    return f"{v:.0f}"
+
+def p1(bid):
+    dg = DG.to_broker(float(bid), CFG) if CFG else float(bid) + 0.3
+    return f"{dg:.1f}"
+
+def friday_flag():
+    t = now_teh()
+    return ["🏳️ از ۲۳:۳۰ ورود بسته است"] if (t.weekday() == 4 and t.hour >= 22) else []
+
+def hilo(b):
+    r = (b.get("resistances") or [None])[0]
+    s_ = (b.get("supports") or [None])[0]
+    parts = []
+    if r: parts.append(f"سقف  {p1(r['price'])}")
+    if s_: parts.append(f"کف  {p1(s_['price'])}")
+    return ["   ·   ".join(parts)] if parts else []
+
 def short_brief(b, state, cfg, reasons=None, title=None):
-    t = (head(b)[11:16] or now_teh().strftime("%H:%M"))
+    """NO TRADE card for /scan and /brief (or a pointer to the signal if one passes)."""
     if b.get("error") or b.get("price_bid") is None:
-        return "\n".join([f"**⛔️ معامله نکنید** · {t}", "دلیل: داده‌ی قیمت در دسترس نیست"])
+        return "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~"
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
-    side = dec.get("decision")
-    trade = reasons is None and side in FA_SIDE
-    head_line = (f"**{'🟢' if side == 'BUY' else '🔴'} {FA_SIDE[side]}** · {t}" if trade else f"**⛔️ معامله نکنید** · {t}")
-    if title:
-        head_line = f"**{title}** · {t}\n" + head_line.replace(f" · {t}", "")
-    L = [head_line]
-    if not trade:
-        L.append("دلیل: " + short_reason(b, reasons if reasons else (dec.get("reasons_reject") or [])))
-    L.append(f"قیمت: {px1(b['price_bid'])} · جهت: {FA_TREND.get(b.get('bias'), 'نامشخص')}")
-    L += sr_line(b)
+    rs = reasons if reasons else (dec.get("reasons_reject") or [])
+    bias = b.get("bias")
+    L = ["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "",
+         f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')}"]
+    L += hilo(b)
     nn = next_news(b)
-    if nn and not trade and nn.split("–")[0] in L[-3 if len(L) >= 3 else 0]:
-        # the reason already names this window; show the one after it
-        later = [f"{a}–{z}" for a, z in _windows(b) if a > nn.split("–")[0]]
-        nn = later[0] if later else None
+    reason = L[1]
+    if nn and nn.split("–")[1] in reason:
+        later = [a for a, z in _windows(b) if a > nn.split("–")[0]]
+        nn = (later[0] + "–") if later else None
     if nn:
-        L.append(f"خبر بعدی: {nn}")
-    L += friday_line()
+        L += ["", f"🔔 خبر بعدی {nn.split('–')[0]}"]
+    L += friday_flag()
+    return "\n".join(L)
+
+def presession_brief(b, state, name):
+    t = now_teh()
+    title = "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود"
+    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
+    if b.get("error") or b.get("price_bid") is None:
+        L.append("داده‌ی قیمت در دسترس نیست")
+    else:
+        bias = b.get("bias")
+        L.append(f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')} {FA_TREND.get(bias, '')}")
+        L += hilo(b)
+    today = t.strftime("%H:%M")
+    wins = [(a, z) for a, z in _windows(b) if a >= today or z > today]
+    wins = [w for w in wins if w[0] >= "00:00"][:4]
+    L.append("")
+    if wins:
+        L.append("🔔 خبرهای امروز")
+        L += [f" {a} تا {z}" for a, z in wins]
+    else:
+        L.append("🔔 امروز خبر مهمی ثبت نشده")
+    eq = float(state["equity_toman"])
+    L += ["", f"💼 موجودی {toman_short(eq)} · سقف ضرر امروز {toman_short(eq * 0.2)}"]
+    L += friday_flag()
     return "\n".join(L)
 
 def second_target(b, plan):
-    """Next structural level beyond TP1 in the trade direction (bid terms), or None."""
     tp = plan.get("tp")
     if tp is None:
         return None
@@ -458,16 +520,12 @@ def second_target(b, plan):
     c = [l["price"] for l in (b.get("resistances") or []) if l["price"] > tp + 0.5]
     return min(c) if c else None
 
-def signal_msg(b, plan, sizing, state, cfg, title_prefix=""):
-    """Clean signal only: entry, SL, TP(s), size, risk, R:R, expiry, one-line warning."""
+def signal_msg(b, plan, sizing, state, cfg, sample=False):
+    """Clean signal card: prices in <code> for tap-to-copy."""
     s = sizing["size"]
     now = now_teh()
-    t = now.strftime("%H:%M")
     full = s.get("key") == "full_unit"
-    size_fa = "یک‌واحد" if full else "نیم‌واحد"
-    p2 = lambda x: (f"{DG.to_broker(float(x), CFG):.2f}".rstrip("0").rstrip(".") if CFG else str(x))
     tp2 = second_target(b, plan) if full else None  # a half unit cannot be split
-    # expiry: 30 minutes, but never into the next no-entry news window
     exp = now + timedelta(minutes=30)
     nw_ = b.get("news_window") or {}
     if nw_.get("next_start"):
@@ -477,46 +535,41 @@ def signal_msg(b, plan, sizing, state, cfg, title_prefix=""):
                 exp = ns
         except ValueError:
             pass
-    side_icon = "🟢" if plan["side"] == "BUY" else "🔴"
-    L = [f"**{side_icon} {title_prefix}سیگنال {FA_SIDE[plan['side']]} طلا** · {t}",
-         f"ورود: {p2(plan['entry'])} (سفارش محدود)",
-         f"حد ضرر: {p2(plan['sl'])}",
-         (f"حد سود ۱: {p2(plan['tp'])} · حد سود ۲: {p2(tp2)}" if tp2 else f"حد سود: {p2(plan['tp'])}"),
-         f"حجم: {size_fa} · ریسک: {DG.toman(s['risk_toman'])} تومان · نسبت سود به ضرر: {s['net_rr']}"]
+    icon, word = ("🟢", "خرید") if plan["side"] == "BUY" else ("🔴", "فروش")
+    sub = ("نمونه · " if sample else "") + f"سفارش محدود · اعتبار تا {exp:%H:%M}"
+    L = [f"**{icon} {word} طلا**", f"~~{sub}~~", "",
+         f"▸ ورود    `{p1(plan['entry'])}`",
+         f"▸ حد ضرر  `{p1(plan['sl'])}`",
+         f"▸ هدف ۱   `{p1(plan['tp'])}`"]
     if tp2:
-        L.append("تقسیم: در حد سود ۱ نیمی از معامله را ببندید و حد ضرر بقیه را به نقطه‌ی ورود ببرید؛ "
-                 "اگر دریاگلد بستن بخشی از معامله را اجازه نمی‌دهد، فقط حد سود ۱ را بگذارید.")
-    L.append(f"اعتبار تا: {exp:%H:%M}؛ اگر تا آن زمان سفارش پر نشد، لغو کنید.")
-    L += friday_line()
+        L.append(f"▸ هدف ۲   `{p1(tp2)}`")
+    L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(s['net_rr']):.1f}"]
+    if tp2:
+        L.append("~~نیمی در هدف ۱ ببندید، حد ضرر به ورود~~")
+    L += friday_flag()
     return "\n".join(L)
 
 def sample_signal(b, cfg, state):
-    """Synthetic signal from the current price, only to preview the format (never a real signal)."""
     bid = float(b["price_bid"])
     side = "SELL" if b.get("bias") == "bearish" else "BUY"
     sgn = -1 if side == "SELL" else 1
-    entry = round(bid - sgn * 0.5, 2)
-    sl = round(entry - sgn * 1.6, 2)
-    tp = round(entry + sgn * 4.0, 2)
+    entry = round(bid - sgn * 0.5, 2); sl = round(entry - sgn * 1.6, 2); tp = round(entry + sgn * 4.0, 2)
     sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
     if not sz.get("ok"):
         return None
-    return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg,
-                      title_prefix="نمونه‌ی آزمایشی، سیگنال واقعی نیست · ")
+    return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg, sample=True)
 
 def status_msg(state, news_ok):
     d = state["day"]
     sig = state["signals_sent"][-1] if state["signals_sent"] else None
-    last_v = {"BUY": "خرید", "SELL": "فروش"}.get(state.get("last_verdict"), "معامله نکنید" if state.get("last_verdict") else "—")
+    last = (state.get("last_run_tehran") or "—")[-5:]
     return "\n".join([
-        "**ℹ️ وضعیت سیستم**",
-        f"موجودی: {DG.toman(state['equity_toman'])} تومان",
-        f"امروز ({d['date']}): {d.get('losses', 0)} معامله‌ی زیان‌ده ({DG.toman(d.get('loss_toman', 0))} تومان) و "
-        f"{d.get('wins', 0)} معامله‌ی سودده ({DG.toman(d.get('win_toman', 0))} تومان)",
-        f"آخرین اجرا: {state.get('last_run_tehran', '—')} به وقت تهران؛ آخرین نتیجه: {last_v}",
-        f"آخرین سیگنال: {sig['at'] if sig else 'هنوز سیگنالی فرستاده نشده است'}",
-        f"تقویم خبری: به‌روزرسانی {state.get('news_fetched_at', '—')} {'✅' if news_ok else '⛔ قدیمی است'}",
-        "زمان اجرا: دوشنبه تا جمعه، ۱۱:۳۰ تا ۲۱:۳۰ به وقت تهران هر ۱۵ دقیقه؛ ۲۲:۳۰، ۲۳:۳۰ و ۰۰:۳۰ فقط برای دستورها.",
+        "**📋 وضعیت**", f"~~آخرین بررسی {last}~~", "",
+        f"💼 موجودی {toman_short(state['equity_toman'])} تومان",
+        f"📉 امروز {d.get('losses', 0)} زیان · {d.get('wins', 0)} سود",
+        f"🎯 آخرین سیگنال: {sig['at'][-5:] if sig else 'هنوز نه'}",
+        f"📰 تقویم خبری: {'به‌روز ✅' if news_ok else 'قدیمی ⛔'}",
+        "⏱ بررسی هر ۱۵ دقیقه، دوشنبه تا جمعه ۱۱:۳۰ تا ۲۱:۳۰",
     ])
 
 # ---------------- main ----------------
@@ -603,7 +656,8 @@ def main():
     if a.mode == "test":
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-        send(signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why, title="📊 گزارش آزمایشی طلا"))
+        send(signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why))
+        send(presession_brief(b, state, "am" if t.hour < 14 else "pm"))
         smp = sample_signal(b, cfg, state)
         if smp:
             send(smp)
@@ -623,8 +677,7 @@ def main():
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"
                 if in_window(name, t) and not state["presession_sent"].get(tag):
-                    title = "🌅 گزارش پیش از لندن" if name == "am" else "🗽 گزارش پیش از نیویورک"
-                    if send(short_brief(b, state, cfg, reasons=None if ok else why, title=title)):
+                    if send(presession_brief(b, state, name)):
                         state["presession_sent"][tag] = True
     state["last_run_tehran"] = t.strftime("%Y-%m-%d %H:%M")
     save_state(state)
