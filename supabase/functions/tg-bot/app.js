@@ -12,7 +12,8 @@ export function makeApp(cfg) {
   const rpc = async (fn, args = {}) => {
     const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method: "POST", headers: hdr, body: JSON.stringify(args) });
     if (!r.ok) throw new Error(`rpc ${fn} ${r.status}`);
-    return r.json();
+    const t = await r.text();   // void functions answer 204 with no body
+    return t ? JSON.parse(t) : null;
   };
   const loadRow = async () => {
     const r = await fetch(`${SB}/rest/v1/bot_state?id=eq.1&select=state,news,version`, { headers: hdr });
@@ -51,7 +52,7 @@ export function makeApp(cfg) {
     const text = (m.text || "").trim();
     if (String((m.chat || {}).id || "") !== CHAT_ID || !text.startsWith("/")) return new Response("ok");
     const res = await mutate(async (s) => {
-      if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
+      if ((s.seen_updates || []).includes(u.update_id) || u.update_id < (s.min_update_id || 0)) return null;   // retry / already answered by polling
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
       const r = handle(s, text);
       if (r.queue) {
@@ -81,7 +82,9 @@ export function makeApp(cfg) {
     const env = await secrets();
     const row = await loadRow();
     if (b.import_state && (!row.state || !Object.keys(row.state).length)) {
-      const s = normalize(b.import_state); delete s.tg_offset;
+      const s = normalize(b.import_state);
+      if (s.tg_offset) s.min_update_id = s.tg_offset;   // updates below the old polling offset were already answered
+      delete s.tg_offset;
       out.imported = await rpc("bot_save", { p_state: s, p_version: row.version });
     }
     if (b.import_news && !row.news) await rpc("bot_merge", { p_patch: {}, p_done: [], p_news: b.import_news });

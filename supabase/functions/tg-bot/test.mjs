@@ -16,7 +16,7 @@ globalThis.fetch = async (url, init = {}) => {
     const fn = url.split("/").pop(), a = JSON.parse(init.body || "{}");
     if (fn === "bot_secret") return J(DB.vault[a.p_name] ?? null);
     if (fn === "bot_webhook_secret") return J(DB.vault.tg_webhook_secret);
-    if (fn === "bot_set_secret") { DB.vault[a.p_name] = a.p_value; return J(null); }
+    if (fn === "bot_set_secret") { DB.vault[a.p_name] = a.p_value; return new Response(null, { status: 204 }); }
     if (fn === "bot_save") {
       if (raceOnce) { raceOnce = false; DB.row.version++; return J(false); }   // simulate a GitHub merge in between
       if (a.p_version !== DB.row.version) return J(false);
@@ -86,6 +86,8 @@ check("setup: secrets stored, state migrated, webhook set, announced once", o.te
 SENT.length = 0;
 o = await (await gh("/admin/setup", "POST", { import_state: { equity_toman: 1 }, set_webhook: true, announce: true })).json();
 check("setup again: no re-import, no second announcement", !o.imported && SENT.length === 0 && st().equity_toman === 2085600);
+check("polling offset kept: updates below it are skipped", st().min_update_id === 9 && (await tgSend("/help")).out.length === 0);
+uid = 9;
 // webhook auth + chat filter
 check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).status === 403);
 const v0 = DB.row.version;
