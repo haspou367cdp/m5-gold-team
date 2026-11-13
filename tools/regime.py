@@ -117,8 +117,10 @@ def vwap_deviation(lv, price=None):
             "session": key, "session_fa": src,
             "volume_note": "tick-volume proxy (not exchange volume)"}
 
-def classify(lv, win=None, spread=None, h4=None, h1=None, m5=None, h1_df=None, m5_df=None, m15_df=None):
-    """Return a 4-state regime dict. Deterministic heuristics, not a forecast."""
+def classify(lv, win=None, spread=None, h4=None, h1=None, m5=None, h1_df=None, m5_df=None, m15_df=None, ignore_gates=False):
+    """Return a 4-state regime dict. Deterministic heuristics, not a forecast.
+    ignore_gates=True skips the news/spread and volatility states (counterfactual for the shadow log only;
+    the live brief never sets it)."""
     win = win or {}
     spread = spread or {}
     st = lv.get("structure") or {}
@@ -152,6 +154,8 @@ def classify(lv, win=None, spread=None, h4=None, h1=None, m5=None, h1_df=None, m
     vdev = vwap_deviation(lv)
 
     # --- state 1: news / spread ---
+    if ignore_gates:
+        win, spread = {}, {}
     if win.get("action") == "block" or (win.get("inside") and win.get("tier") == "A"):
         why = f"داخل پنجره‌ی خبری سطح {win.get('tier') or 'A'} (ورود ممنوع) {win.get('start','')} تا {win.get('end','')}"
         if win.get("labels"):
@@ -183,7 +187,7 @@ def classify(lv, win=None, spread=None, h4=None, h1=None, m5=None, h1_df=None, m
             exp_why.append(f"حجم تیک نسبی {rv}× (پروکسی)")
     elif rv is not None and rv >= 2.5 and expanding:
         exp, exp_why = True, [f"حجم تیک نسبی {rv}× همراه با گسترش ATR (پروکسی حجم تیک)"]
-    if exp:
+    if exp and not ignore_gates:
         return _pack("volatility_expansion", "جهش نوسان", "، ".join(exp_why),
                      None, rng, adx_h1, adx_m15, atr_pct, rvol, vdev)
 

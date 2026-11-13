@@ -19,6 +19,7 @@ sys.path.insert(0, f"{ROOT}/tools")
 from zoneinfo import ZoneInfo
 TEH = ZoneInfo("Asia/Tehran")
 import broker_daryagold as DG
+import shadow as SH
 
 STATE_DIR = os.environ.get("STATE_DIR", f"{ROOT}/state")
 STATE_JSON = f"{STATE_DIR}/state.json"
@@ -125,6 +126,12 @@ def prepare_news(state, force=False):
     return age_h is not None and age_h < NEWS_MAX_AGE_H
 
 # ---------------- brief + automated risk check ----------------
+def day_cap(state, cfg=None):
+    """Daily net-loss cap: 20% of the day's starting equity (set by the Edge Function at the first command of the day),
+    so a /trade that changes equity during the day does not move the cap."""
+    d = state.get("day") or {}
+    base = float(d.get("start_equity") or 0) or float(state["equity_toman"])
+    return base * float((cfg or {}).get("daily_loss_pct_max", 20)) / 100
 IN_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 
 def write_journal(state):
@@ -201,7 +208,7 @@ def risk_check(b, state, cfg, news_ok):
         closed = any(f"{d['date']} {r.get('at', '')}" >= last["at"] for r in d.get("records", []))
         if 0 <= age < SIGNAL_LOCK_MIN and not closed:
             reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، `/loss` یا `/win` را بفرستید.")
-    cap_loss = eq * float(cfg.get("daily_loss_pct_max", 20)) / 100
+    cap_loss = day_cap(state, cfg)
     if int(d.get("losses") or 0) >= int(cfg.get("max_consecutive_losses", 3)):
         reasons.append(f"توقف روزانه فعال است: امروز {d['losses']} ضرر ثبت شده است.")
     if float(d.get("loss_toman") or 0) - float(d.get("win_toman") or 0) >= cap_loss:
@@ -452,57 +459,89 @@ def friday_flag():
         return [f"🏳️ ورود بسته است؛ همه‌چیز تا {close:%H:%M} بسته شود"]
     return []
 
+NY = ZoneInfo("America/New_York")
+NEAR_MIN_USD = 1.0   # a "nearest" level closer than max(0.3 x ATR M5, $1) to price is skipped (next one shown)
+
+def day_start(t):
+    """Forex trading day start: 17:00 New York (DaryaGold/MT server 00:00; 01:30 Tehran in US winter, 00:30 in summer)."""
+    ny = t.astimezone(NY)
+    st = ny.replace(hour=17, minute=0, second=0, microsecond=0)
+    if ny < st:
+        st -= timedelta(days=1)
+    return st.astimezone(TEH)
+
+def day_hilo(t):
+    """(high_bid, low_bid) of today's forex day from 1-minute bid candles, or None."""
+    try:
+        import pandas as pd
+        d = pd.read_parquet(f"{ROOT}/data/xauusd_1m.parquet", columns=["h_b", "l_b"])
+        d = d[d.index >= pd.Timestamp(day_start(t)).tz_convert("UTC")]
+        if d.empty:
+            return None
+        return float(d.h_b.max()), float(d.l_b.min())
+    except Exception as e:
+        print("day_hilo unavailable:", type(e).__name__)
+        return None
+
+def near_levels(b):
+    """Nearest resistance above / support below that is at least max(0.3 x ATR M5, $1) from price."""
+    bid = float(b["price_bid"])
+    gap = max(0.3 * float(b.get("atr_m5") or 0), NEAR_MIN_USD)
+    res = sorted((l for l in b.get("resistances") or [] if l.get("price") is not None), key=lambda l: float(l["price"]))
+    sup = sorted((l for l in b.get("supports") or [] if l.get("price") is not None), key=lambda l: -float(l["price"]))
+    r = next((l for l in res if float(l["price"]) - bid >= gap), None)
+    s_ = next((l for l in sup if bid - float(l["price"]) >= gap), None)
+    return r, s_
+
 def hilo(b):
-    r = (b.get("resistances") or [None])[0]
-    s_ = (b.get("supports") or [None])[0]
-    parts = []
-    if r: parts.append(f"سقف  {p1(r['price'])}")
-    if s_: parts.append(f"کف  {p1(s_['price'])}")
-    return ["   ·   ".join(parts)] if parts else []
+    """Day high/low (from candles) and, separately, the nearest levels."""
+    L = []
+    hl = day_hilo(now_teh())
+    if hl:
+        L.append(f"سقف روز  {p1(hl[0])}   ·   کف روز  {p1(hl[1])}")
+    r, s_ = near_levels(b)
+    parts = ([f"مقاومت نزدیک  {p1(r['price'])}"] if r else []) + ([f"حمایت نزدیک  {p1(s_['price'])}"] if s_ else [])
+    if parts:
+        L.append("   ·   ".join(parts))
+    return L
 
 def short_brief(b, state, cfg, reasons=None, title=None):
-    """NO TRADE card for /scan and /brief (or a pointer to the signal if one passes)."""
+    """/scan without a signal: title, one-line reason, price. Nothing else."""
     if b.get("error") or b.get("price_bid") is None:
         return "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~"
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     rs = reasons if reasons else (dec.get("reasons_reject") or [])
-    bias = b.get("bias")
-    L = ["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "",
-         f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')}"]
-    L += hilo(b)
-    nn = next_news(b)
-    reason = L[1]
-    if nn and nn.split("–")[1] in reason:
-        later = [a for a, z in _windows(b) if a > nn.split("–")[0]]
-        nn = (later[0] + "–") if later else None
-    if nn:
-        L += ["", f"🔔 خبر بعدی {nn.split('–')[0]}"]
-    L += friday_flag()
-    return "\n".join(L)
+    return "\n".join(["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "",
+                      f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(b.get('bias'), '↔️')}"])
 
-def presession_brief(b, state, name):
+def market_summary(b, state, title):
+    """/brief and the pre-session briefs: price, trend, day high/low, nearest levels, today's remaining news,
+    balance and today's loss cap. Never a signal."""
     t = now_teh()
-    title = "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود"
     L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
     if b.get("error") or b.get("price_bid") is None:
         L.append("داده‌ی قیمت در دسترس نیست")
     else:
         bias = b.get("bias")
-        L.append(f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')} {FA_TREND.get(bias, '')}")
+        L.append(f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')} {FA_TREND.get(bias, '')}".rstrip())
         L += hilo(b)
-    today = t.strftime("%H:%M")
-    wins = [(a, z) for a, z in _windows(b) if a >= today or z > today]
-    wins = [w for w in wins if w[0] >= "00:00"][:4]
+    now = t.strftime("%H:%M")
+    wins = [(a, z) for a, z in _windows(b) if a >= now or z > now]
     L.append("")
     if wins:
-        L.append("🔔 خبرهای امروز")
+        L.append("🔔 خبرهای باقی‌مانده‌ی امروز")
         L += [f" {a} تا {z}" for a, z in wins]
     else:
-        L.append("🔔 امروز خبر مهمی ثبت نشده")
-    eq = float(state["equity_toman"])
-    L += ["", f"💼 موجودی {toman_short(eq)} · سقف ضرر امروز {toman_short(eq * 0.2)}"]
+        L.append("🔔 امروز خبر مهم دیگری ثبت نشده")
+    L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} · سقف ضرر امروز {toman_short(day_cap(state, CFG))}"]
     L += friday_flag()
     return "\n".join(L)
+
+def presession_brief(b, state, name):
+    return market_summary(b, state, "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود")
+
+def brief_msg(b, state):
+    return market_summary(b, state, "📊 خلاصه‌ی بازار")
 
 def signal_msg(b, plan, sizing, state, cfg, sample=False):
     """Clean signal card: prices in <code> for tap-to-copy."""
@@ -537,6 +576,48 @@ def sample_signal(b, cfg, state):
     if not sz.get("ok") or float(sz["size"]["net_rr"]) < 1.5:
         return None
     return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg, sample=True)
+
+# ---------------- shadow log (silent; research only, never changes a live gate) ----------------
+shadow_bars = SH.m1_bars          # hooks (mocked in tests)
+shadow_candidate = SH.candidate
+
+def shadow_step(state, b, cfg, news_ok, now, record=True):
+    """Resolve open shadow entries from later candles, then (if this run was blocked only by a gate)
+    record the setup that would otherwise have been a signal. Never sends anything."""
+    sh = list(state.get("shadow") or [])
+    live = [e for e in sh if e.get("status") in ("pending", "open")]
+    if live:
+        try:
+            since = min(SH._ts(e["at"]) for e in live)
+            try:
+                close_at = datetime.strptime(DG.session_entry_block(now, cfg)["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+            except Exception:
+                close_at = None
+            SH.resolve(sh, shadow_bars(since), now, close_at)
+        except Exception as e:
+            print("shadow resolve skipped:", type(e).__name__, str(e)[:120])
+    gates = SH.gates_active(b) if record and not b.get("error") else []
+    dec = b.get("decision")
+    side = dec.get("decision") if isinstance(dec, dict) else dec
+    if gates and side not in ("BUY", "SELL") and not SH.has_open(sh):
+        try:
+            cdec, plan, sizing = shadow_candidate(cfg)
+        except Exception as e:
+            print("shadow candidate failed:", type(e).__name__, str(e)[:120])
+            cdec = plan = sizing = None
+        if cdec and cdec.get("decision") in ("BUY", "SELL") and plan and plan.get("tp") is not None:
+            cf = dict(b, decision=cdec, plan=plan, sizing=sizing, news_window={}, spread={},
+                      session_entry={"blocked": False})
+            ok, _, _, why = risk_check(cf, state, cfg, news_ok)
+            if ok:
+                e = SH.new_entry(now, plan, sizing, gates, DG.offset_usd(cfg) or 0.0)
+                sh.append(e)
+                print(f"shadow: recorded {e['side']} {e['entry']} sl {e['sl']} tp {e['tp']} gates={gates}")
+            else:
+                print("shadow: candidate fails non-gate checks:", " | ".join(why)[:200])
+        else:
+            print(f"shadow: gates={gates}, but no setup without them")
+    state["shadow"] = sh[-SH.KEEP:]
 
 # ---------------- main ----------------
 def in_window(name, t):
@@ -581,7 +662,7 @@ def main():
     for c, _ in cmds:
         if c == "/brief":
             b = get_brief()
-            send(short_brief(b, state, cfg))
+            send(brief_msg(b, state))
         elif c == "/scan":
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
@@ -604,6 +685,7 @@ def main():
             emit_signal(b, plan, sizing)
         else:
             print("no signal:", " | ".join(why)[:300])
+        shadow_step(state, b, cfg, news_ok, t, record=not ok)
         if t.weekday() < 5:
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"

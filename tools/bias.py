@@ -77,7 +77,8 @@ def spread_check(m1):
             "limit_rule": "spread > 2× typical for the hour AND > $0.80",
             "hard_floor": 0.80}
 
-def compute(at=None, pre=20):
+def compute(at=None, pre=20, ignore_gates=False):
+    """ignore_gates=True: news window and spread treated as clear (shadow-log counterfactual only)."""
     meta = load_json(META_JSON, {}); lv = load_json(LEVELS_JSON)
     if lv is None: raise SystemExit("ERROR: levels.json missing - run levels.py first")
     m1, m15, h1, h4 = load_bars("1m"), load_bars("m15"), load_bars("h1"), load_bars("h4")
@@ -130,6 +131,8 @@ def compute(at=None, pre=20):
         pass
     win = nw.status(news_doc, now, pre)
     sp = spread_check(m1)
+    if ignore_gates:
+        win, sp = {"inside": False}, dict(sp, abnormal=False)
     out["news_window"] = win; out["spread"] = sp; out["evaluated_at_tehran"] = now.strftime("%Y-%m-%d %H:%M")
     v = {}
     block_now = win.get("action") == "block" or (win.get("inside") and win.get("tier") == "A")

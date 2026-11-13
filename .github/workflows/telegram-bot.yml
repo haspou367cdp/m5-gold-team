@@ -130,7 +130,7 @@ jobs:
           python3 - <<'PY' > /tmp/push.json
           import json, os
           s = json.load(open("state/state.json"))
-          keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at"]
+          keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow"]
           out = {"patch": {k: s[k] for k in keys if k in s}, "done_cmds": s.get("done_cmds", [])}
           if os.path.exists("state/news_windows.json"):
               out["news_windows"] = json.load(open("state/news_windows.json"))

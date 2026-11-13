@@ -131,6 +131,92 @@ check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" 
 SENT.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
 check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) <= 4096 for x in SENT) and all(x.split("\n")[-1].startswith("\u200fخط") for x in SENT))
 
+# ---- (h) /brief vs /scan; day high/low from candles; nearest levels skip ones glued to price
+B.day_hilo = lambda t: (3922.995, 3874.895)
+CLOCK[0] = datetime(2026, 11, 11, 18, 50, tzinfo=B.TEH)
+st = state(); st["equity_toman"] = 2954400; st["day"] = {"date": "2026-11-11", "losses": 0, "loss_toman": 0, "wins": 0, "win_toman": 0, "records": [], "start_equity": 1000000}
+json.dump(st, open(B.STATE_JSON, "w"))
+BRIEF[0] = mk_brief(entry=3887.545, sl=3889.2, tp=3882.0, atr_m5=1.6,
+                    resistances=[{"price": 3888.1}, {"price": 3895.0}], supports=[{"price": 3887.465}, {"price": 3880.2}],
+                    news_windows_next_24h=["16:45–17:15 (B)", "18:40–19:05 (B)", "19:30–19:50 (B)", "20:15–21:00 (B)", "22:00–22:30 (B)", "03:15–04:00 (B)"])
+out = run("command", ["/brief"]); br = out[0] if out else ""
+check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "<code>" not in br and "فروش طلا" not in br)
+check("/brief: day high/low from candles, DaryaGold +0.3", "سقف روز  ۳۹۲۳٫۳" in br and "کف روز  ۳۸۷۵٫۲" in br)
+check("/brief: nearest levels skip a level closer than max(0.3 ATR, $1)", "مقاومت نزدیک  ۳۸۹۵٫۳" in br and "حمایت نزدیک  ۳۸۸۰٫۵" in br and "۳۸۸۸٫۴" not in br)
+check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
+check("/brief: balance and today's loss cap from the day's start equity", "موجودی ۲٫۹۵ میلیون" in br and "سقف ضرر امروز ۲۰۰ هزار" in br)
+check("/brief: no 'strong'/قوی, no زیان", not any(w in br for w in ["قوی", "strong", "زیان"]))
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"})
+out = run("command", ["/scan"]); sc = out[0] if out else ""
+check("/scan no trade: title + one reason + price only", "معامله نه" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
+      len([l for l in sc.split("\n") if l.strip()]) == 3 and "سقف" not in sc and "موجودی" not in sc)
+CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, resistances=[{"price": 3895.0}], supports=[{"price": 3870.0}])
+out = run("scheduled"); check("pre-session brief uses the same summary (day high/low + nearest levels)", len(out) == 1 and "نیویورک" in out[0] and "سقف روز" in out[0] and "حمایت نزدیک" in out[0])
+check("forex day start: 17:00 New York = 01:30 Tehran (winter) / 00:30 (summer)",
+      B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 01:30" and
+      B.day_start(datetime(2026, 11, 13, 1, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 01:30" and
+      B.day_start(datetime(2026, 7, 15, 12, 0, tzinfo=B.TEH)).strftime("%H:%M") == "00:30")
+check("risk_check daily cap uses start_equity", B.day_cap({"equity_toman": 2954400, "day": {"start_equity": 1000000}}, cfg) == 200000 and
+      B.day_cap({"equity_toman": 2954400, "day": {}}, cfg) == 2954400 * 0.2)
+
+# ---- (i) shadow log: silent record of gate-only blocks, resolved from later 1-minute bars
+import shadow as SH
+from datetime import timedelta as TD
+def bars(start, rows):
+    t0 = datetime.strptime(start, "%Y-%m-%d %H:%M").replace(tzinfo=B.TEH)
+    return [(t0 + TD(minutes=i), h, l, c) for i, (h, l, c) in enumerate(rows)]
+def ent(side="SELL", entry=3894.2, sl=3896.2, tp=3890.2, at="2026-11-11 18:00"):
+    return {"at": at, "side": side, "entry": entry, "sl": sl, "tp": tp, "status": "pending", "gates": ["news"]}
+NOW = datetime(2026, 11, 11, 23, 0, tzinfo=B.TEH)
+e = SH.resolve([ent()], bars("2026-11-11 18:00", [(3893.0, 3892.0, 3892.5), (3894.3, 3893.0, 3894.0), (3895.0, 3891.0, 3891.5), (3891.0, 3890.1, 3890.5)]), NOW)[0]
+check("shadow: SELL fills, TP first -> +2R, +306,000 toman (1 unit, fee 14,000)", e["status"] == "tp" and e["R"] == 2.0 and e["toman"] == 306000 and e["filled_at"] == "2026-11-11 18:01")
+e = SH.resolve([ent()], bars("2026-11-11 18:00", [(3894.5, 3893.0, 3894.0), (3896.3, 3893.0, 3896.0)]), NOW)[0]
+check("shadow: SL first -> -1R, -174,000 toman", e["status"] == "sl" and e["R"] == -1.0 and e["toman"] == -174000)
+e = SH.resolve([ent()], bars("2026-11-11 18:00", [(3894.5, 3893.0, 3894.0), (3896.5, 3890.0, 3893.0)]), NOW)[0]
+check("shadow: TP and SL in the same bar -> SL (conservative)", e["status"] == "sl")
+e = SH.resolve([ent(side="BUY", entry=3880, sl=3878, tp=3884)], bars("2026-11-11 18:00", [(3882, 3881, 3881.5)] * 40), NOW)[0]
+check("shadow: limit not touched within 30 min -> unfilled, 0", e["status"] == "unfilled" and e["toman"] == 0)
+e = SH.resolve([ent(side="BUY", entry=3880, sl=3878, tp=3884)], bars("2026-11-11 18:00", [(3880.5, 3879.8, 3880.4)] + [(3881.2, 3879.0, 3881.0)] * 250), NOW)[0]
+check("shadow: open 4 h without TP/SL -> expired at market (+0.5R)", e["status"] == "expired" and e["R"] == 0.5 and e["exit"] == 3881.0)
+e = SH.resolve([ent()], bars("2026-11-11 18:00", [(3894.5, 3893.0, 3894.0)] + [(3895.0, 3893.0, 3894.0)] * 3), datetime(2026, 11, 11, 18, 3, tzinfo=B.TEH))[0]
+check("shadow: still open while data is too short; incomplete bars ignored", e["status"] == "open")
+check("gates_active: news / volatility / Friday / none",
+      SH.gates_active({"news_window": {"inside": True, "action": "block"}}) == ["news"] and
+      SH.gates_active({"regime": {"code": "volatility_expansion"}, "news_window": {"soon_block": True}}) == ["news", "volatility"] and
+      SH.gates_active({"session_entry": {"blocked": True, "friday_window": True}}) == ["friday"] and
+      SH.gates_active({"regime": {"code": "trend"}, "news_window": {}, "session_entry": {"blocked": False}}) == [])
+CAND = [None]
+B.shadow_candidate = lambda cfg: CAND[0]
+B.shadow_bars = lambda since: []
+def cand(side="SELL", entry=3880.0, sl=3881.6, tp=3876.0):
+    sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
+    return ({"decision": side}, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz)
+st = state(); st["shadow"] = []; st["signals_sent"] = []; st["day"].update(losses=0, loss_toman=0, records=[]); json.dump(st, open(B.STATE_JSON, "w"))
+CLOCK[0] = datetime(2026, 11, 11, 18, 20, tzinfo=B.TEH)
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["news"]}, plan=None, sizing=None,
+                    regime={"code": "news_abnormal"}, news_window={"inside": True, "action": "block", "tier": "B", "end": "2026-11-11 18:40"})
+CAND[0] = cand(); out = run("scheduled")
+sh = state().get("shadow") or []
+check("shadow: news-blocked valid setup recorded silently (no Telegram message)", out == [] and len(sh) == 1 and sh[0]["gates"] == ["news"] and sh[0]["side"] == "SELL" and sh[0]["status"] == "pending" and sh[0]["at"] == "2026-11-11 18:20")
+CLOCK[0] = datetime(2026, 11, 11, 18, 35, tzinfo=B.TEH); out = run("scheduled")
+check("shadow: one open entry at a time (no duplicate while pending)", out == [] and len(state()["shadow"]) == 1)
+st = state(); st["shadow"] = []; json.dump(st, open(B.STATE_JSON, "w"))
+CAND[0] = cand(tp=3877.6); run("scheduled"); check("shadow: candidate failing R:R (a setup condition) not recorded", state()["shadow"] == [])
+CAND[0] = cand(); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["no setup"]}, regime={"code": "trend"})
+run("scheduled"); check("shadow: NO TRADE without any gate -> not recorded", state()["shadow"] == [])
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["v"]}, regime={"code": "volatility_expansion"})
+st = state(); st["day"]["losses"] = 3; json.dump(st, open(B.STATE_JSON, "w"))
+run("scheduled"); check("shadow: daily stop active -> not recorded (account rule, not a gate)", state()["shadow"] == [])
+st = state(); st["day"]["losses"] = 0; json.dump(st, open(B.STATE_JSON, "w"))
+out = run("scheduled"); check("shadow: volatility-blocked setup recorded; live gate unchanged (nothing sent)", out == [] and state()["shadow"][-1]["gates"] == ["volatility"])
+B.shadow_bars = lambda since: bars("2026-11-11 18:35", [(3880.5, 3879.0, 3879.5), (3879.0, 3875.5, 3876.0)])
+CLOCK[0] = datetime(2026, 11, 11, 18, 50, tzinfo=B.TEH); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, regime={"code": "trend"})
+run("scheduled"); check("shadow: later run resolves the open entry (TP)", state()["shadow"][-1]["status"] == "tp")
+B.shadow_candidate = lambda cfg: (_ for _ in ()).throw(RuntimeError("boom"))
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["v"]}, regime={"code": "volatility_expansion"})
+out = run("scheduled"); check("shadow: a failing counterfactual never breaks the run", out == [] and state()["last_run_tehran"] == "2026-11-11 18:50")
+
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)
 # Friday flag follows the DST-aware session gate (winter cutoff 23:30, close 01:30; summer 22:30 / 00:30)

@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -23,7 +23,7 @@ globalThis.fetch = async (url, init = {}) => {
       DB.row.state = a.p_state; DB.row.version++; return J(true);
     }
     if (fn === "bot_merge") {
-      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at"];
+      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow"];
       for (const k of keys) if (k in a.p_patch) DB.row.state[k] = a.p_patch[k];
       DB.row.state.pending_cmds = (DB.row.state.pending_cmds || []).filter((x) => !a.p_done.includes(x.id));
       if (a.p_news) DB.row.news = a.p_news; DB.row.version++;
@@ -81,7 +81,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 8 commands, same wording as /help, no examples or digits", o.commands && DB.menu.length === 8 &&
+check("setup menu: 10 commands, same wording as /help, no examples or digits", o.commands && DB.menu.length === 10 &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -143,6 +143,39 @@ check("/state without token -> 401", (await app(new Request(FN + "/state"), jw))
 // GitHub dispatch failure -> honest reply, retried next time
 ghStatus = 403; DB.row.state.last_dispatch = 0; r = await tgSend("/scan"); ghStatus = 204;
 check("dispatch failure: queued, reply says next automatic check", r.out[0].includes("در صف") && st().pending_cmds.length === 1 && st().last_dispatch === 0);
+// /trade (manual trades): equity, day ledger, daily stop, /undo
+const day0 = () => { DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [], start_equity: 2954400 }; DB.row.state.equity_toman = 2954400; DB.row.state.trades = []; };
+day0();
+check("parseTrade sell full", JSON.stringify(parseTrade(["sell", "3914.07", "3909.61", "1"])) === JSON.stringify({ side: "sell", entry: 3914.07, exit: 3909.61, units: 1, gross: 356800, net: 342800, fee: 14000 }));
+check("parseTrade buy half, Persian digits", parseTrade(["خرید", "۳۸۹۴٫۱۱", "۳۸۹۸٫۹۹", "۰٫۵"]).gross === 195200 && parseTrade(["buy", "3894.11", "3898.99", "نیم"]).net === 181200);
+for (const bad of [[], ["sell", "3914", "3909"], ["hold", "3914", "3909", "1"], ["sell", "3914", "3909", "2"], ["sell", "abc", "3909", "1"], ["sell", "39", "3909", "1"], ["sell", "3914", "3909", "-1"]]) {
+  let ok = false; try { parseTrade(bad); } catch { ok = true; } check(`parseTrade rejects '${bad.join(" ")}'`, ok);
+}
+r = await tgSend("/trade sell 3914.07 3909.61 1");
+check("/trade win: equity + net, one win, reply", st().equity_toman === 3297200 && st().day.wins === 1 && st().day.win_toman === 342800 &&
+  st().trades.length === 1 && st().trades[0].id.endsWith("-T1-SELL") && r.out[0].includes("<code>3914.07</code>") &&
+  r.out[0].includes("+۳۴۲٬۸۰۰") && r.out[0].includes("۳٬۲۹۷٬۲۰۰") && r.out[0].includes("یک واحد") && !/زیان/.test(r.out[0]));
+r = await tgSend("/undo"); check("/undo reverses the last /trade exactly", st().equity_toman === 2954400 && st().day.wins === 0 && st().day.win_toman === 0 && st().trades.length === 0 && r.out[0].includes("۲٬۹۵۴٬۴۰۰"));
+r = await tgSend("/trade buy ۳۹۰۰ ۳۸۹۹ ۰٫۵"); check("/trade loss half (Persian digits): -54,000 net, loss counted once", st().equity_toman === 2900400 && st().day.losses === 1 && st().day.loss_toman === 54000 && r.out[0].includes("نیم واحد") && r.out[0].includes("ضرر"));
+const v1 = DB.row.version; r = await tgSend("/trade buy 3900"); check("/trade bad syntax: nothing recorded, usage shown", r.out[0].includes("ثبت نشد") && r.out[0].includes("/trade sell") && st().trades.length === 1);
+await tgSend("/trade sell 3900 3901 1"); r = await tgSend("/trade sell 3900 3901 1");
+check("3 losing trades -> daily stop", st().day.losses === 3 && r.out[0].includes("توقف روزانه"));
+day0(); r = await tgSend("/trade buy 3900 3893 1");
+check("20% cap uses the day's starting equity (equity drop does not shrink it)", st().day.loss_toman === 574000 && !r.out[0].includes("توقف روزانه"));
+r = await tgSend("/trade buy 3900 3899.8 1"); check("…and the cap triggers at 20% of 2,954,400 = 590,880", st().day.loss_toman === 604000 && r.out[0].includes("توقف روزانه"));
+day0(); DB.row.state.day.start_equity = 0; await tgSend("/balance 1000000"); check("/balance before any record sets the day's start equity", st().day.start_equity === 1000000);
+await tgSend("/loss 1000"); await tgSend("/balance 2000000"); check("/balance after a record keeps the day's start equity", st().day.start_equity === 1000000);
+day0();
+// /shadow
+check("/shadow empty", shadowMsg({ shadow: [] }).includes("هنوز موردی"));
+DB.row.state.shadow = [{ at: "2026-11-13 18:10", side: "SELL", entry: 3894.2, sl: 3896.2, tp: 3890.2, offset: 0.3, gates: ["news"], status: "tp", R: 2, toman: 306000 },
+  { at: "2026-11-13 18:40", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["volatility", "news"], status: "sl", R: -1, toman: -174000 },
+  { at: "2026-11-13 19:00", side: "SELL", entry: 3890, sl: 3892, tp: 3886, offset: 0.3, gates: ["friday"], status: "pending" }];
+r = await tgSend("/shadow"); check("/shadow summary: counts, R, toman, DaryaGold Latin prices, no ‘زیان’", r.out[0].includes("هدف ۱") && r.out[0].includes("حد ضرر ۱") &&
+  r.out[0].includes("+۱٫۰R") && r.out[0].includes("+۱۳۲٬۰۰۰") && r.out[0].includes("<code>3894.5</code>") && r.out[0].includes("نوسان، خبر") && !/زیان|قوی/.test(r.out[0]));
+const g2 = await (await gh("/state")).json(); await gh("/state", "POST", { patch: { shadow: [{ at: "x", status: "pending" }] }, done_cmds: [] });
+check("GitHub may merge 'shadow' but not equity/trades", st().shadow.length === 1 && st().equity_toman === 2954400 && Array.isArray(st().trades) && g2.state.day.start_equity === 2954400);
+check("/help lists /trade and /shadow", HELP.includes("/trade sell 3914.07 3909.61 1") && HELP.includes("/shadow") && HELP.includes("بررسی سیگنال"));
 // HTML fallback
 failHtml = true; r = await tgSend("/help"); failHtml = false;
 check("HTML failure -> plain-text fallback", r.out.length === 1 && !r.out[0].includes("<b>"));
