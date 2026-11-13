@@ -14,7 +14,8 @@ import argparse, csv, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
-from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json
+from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, market_open, now_utc
+import pandas as pd
 import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
 
@@ -53,27 +54,44 @@ def _macro_cached_or_empty():
     out = dict(cached); out["from_cache"] = True
     return out
 
+def _live_age_minutes(meta):
+    """Minutes since last completed 1m bar close, computed from now — not the cached age_minutes field."""
+    last_open = meta.get("last_bar_open_utc")
+    now = pd.Timestamp(now_utc())
+    if last_open:
+        lo = pd.Timestamp(last_open)
+        if lo.tzinfo is None:
+            lo = lo.tz_localize("UTC")
+        return (now - (lo + pd.Timedelta(minutes=1))).total_seconds() / 60.0
+    as_of = meta.get("as_of_tehran")
+    if as_of:
+        try:
+            t = datetime.strptime(as_of, "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+            return (datetime.now(TEH) - t).total_seconds() / 60.0
+        except ValueError:
+            pass
+    try:
+        return float(meta["age_minutes"]) if meta.get("age_minutes") is not None else None
+    except (TypeError, ValueError):
+        return None
+
 def quality_gate(meta):
     """Fail closed: missing or stale (>10 min in-session) price data => NO TRADE / stop."""
     if not meta or (not meta.get("source") and not meta.get("as_of_tehran") and not meta.get("ok")):
         return {"ok": False, "code": "missing",
                 "fa": "داده‌ی قیمت موجود نیست؛ توقف. تصمیم: NO TRADE."}
-    age = meta.get("age_minutes")
-    try:
-        age_f = float(age) if age is not None else None
-    except (TypeError, ValueError):
-        age_f = None
-    open_ = bool(meta.get("market_open"))
-    stale = bool(meta.get("stale")) or (open_ and age_f is not None and age_f > STALE_MIN)
+    age_f = _live_age_minutes(meta)
+    open_ = bool(market_open(now_utc()))
+    stale = (open_ and age_f is not None and age_f > STALE_MIN)
     if stale and open_:
         shown = f"{age_f:.1f}" if age_f is not None else "؟"
         return {"ok": False, "code": "stale",
                 "fa": f"داده‌ی قیمت کهنه است (سن {shown} دقیقه، حد {STALE_MIN} دقیقه در سشن)؛ توقف. تصمیم: NO TRADE."}
-    if meta.get("ok") is False and open_:
+    if meta.get("ok") is False and open_ and (age_f is None or age_f > STALE_MIN):
         return {"ok": False, "code": "unusable",
                 "fa": "داده‌ی قیمت قابل استفاده نیست؛ توقف. تصمیم: NO TRADE."}
     if age_f is not None:
-        return {"ok": True, "code": "ok", "fa": f"تازه (سن {age_f:.1f} دقیقه)"}
+        return {"ok": True, "code": "ok", "fa": f"تازه (سن {age_f:.1f} دقیقه)", "age_minutes": round(age_f, 1)}
     return {"ok": True, "code": "ok", "fa": "تازه"}
 
 def daily_risk_note():

@@ -5,18 +5,26 @@ File: /workspace/m5-gold-team/data/news_windows.json   (all times Asia/Tehran, I
 { "updated_at_tehran": ..., "source": ..., "news_bias": {...},
   "windows": [ {"start": "...", "end": "...", "label": "...", "tier": "A"|"B"|"C", "fomc": false, "added_by": "..."} ] }
 
-Tiers (classified from the label; can be overridden with --tier):
-  A  FOMC, CPI, NFP, Core PCE / PCE — hard block
-  B  PPI, ISM, Retail Sales, GDP — caution + spread check (not an automatic block)
-  C  everything else (speeches, claims, …) — monitor only, not an automatic block
+Tiers (auto-classified from the label for *new* `event`/`add` rows only).
+Stored `tier` and `fomc` on an existing window are authoritative and are never overwritten.
 
-Default buffers for the `event` command (minutes before / after the release):
-  A        5 / 15
-  A FOMC  15 / 45   (statement + press conference runs longer)
-  B        5 / 15
-  C        5 / 15   (stored for the calendar only; action is still monitor)
+  A  US CPI, US NFP, US Core PCE / PCE; FOMC *decision/statement/presser* (fomc=true);
+     Fed Chair speeches (fomc=false). Hard block.
+  B  FOMC *minutes* (fomc=false — not a hard block); PPI, ISM, Retail Sales, GDP;
+     named non-US CPI; other Fed speeches (governors, vice chairs, presidents). Caution + spread check.
+  C  monitor only (claims and other items that are not in the lists above)
 
-Existing windows keep the start/end that M5-News (or a human) already stored; only the tier/action is applied.
+Default buffers for the `event` command (minutes before / after `--time`).
+These match data/news_windows.json `window_policy` and do not rewrite stored start/end:
+  A data (US CPI / NFP / PCE)     15 / 15
+  A FOMC (`--time` = statement)   30 / 90  (30 before the statement, 60 after a presser that starts ~30 min later)
+  A FOMC (`--time` = presser)     30 / 60  (if the label is a press conference only)
+  A Fed Chair speech              15 / 30
+  B data / FOMC minutes           15 / 15
+  B Fed speech / Q&A              15 / 30
+  C                               5 / 15   (calendar only; action is still monitor)
+
+Existing windows keep the start, end, tier and fomc that M5-News (or a human) already stored.
 
 Commands
   seed  [--md /workspace/team/m5-news/latest.md]   import windows + htf_gold_bias from M5-News latest.md (merges, no dupes)
@@ -68,16 +76,43 @@ def mk(date, start, end):
     return s, e
 
 # ---------- tiers ----------
+_US = r"(?:us|u\.s\.|u\.s|usa|united states)"
+_NON_US = (r"(?:uk|u\.k\.|britain|british|ons|eurozone|euro[- ]area|euro area|"
+           r"germany|france|china|japan|canada|australia|india|ecb)")
+_SPEECH = (r"(?:speaks?|speech|remarks|discussion|conversation|fireside|"
+           r"testimony|testifies|luncheon|moderated|q\s*&\s*a)")
+_FED_BANK = (r"(?:fed|federal reserve|fomc|"
+             r"(?:new york|ny|chicago|cleveland|san francisco|sf|atlanta|"
+             r"richmond|st\.?\s*louis|minneapolis|dallas|boston|"
+             r"philadelphia|kansas city|philly)\s+fed)")
+
+def _has_us(s):
+    return bool(re.search(rf"\b{_US}\b", s))
+
+def _has_non_us(s):
+    return bool(re.search(rf"\b{_NON_US}\b", s))
+
 def classify_tier(label):
-    """Return (tier, is_fomc) from a free-text event label. Never guesses beyond the keyword list."""
+    """Return (tier, is_fomc) from a free-text event label. Used only when a window has no stored tier/fomc.
+    Stored fields always win. is_fomc is True only for the FOMC decision/statement/presser, never minutes."""
     s = (label or "").lower()
-    # FOMC / rate decision first (longer buffer). A lone "Powell speaks" is C, not FOMC.
-    if re.search(r"\bfomc\b", s) or re.search(r"\b(fed|fomc)\s+(rate|interest)\s+decision\b", s) \
-            or "interest rate decision" in s or "fomc press" in s or "fomc statement" in s \
-            or "fomc monetary" in s or "rate decision" in s:
+    # 1) Minutes first: any "FOMC minutes" label is B, fomc=false — not a hard block.
+    if re.search(r"\bfomc\s+minutes\b", s) or (re.search(r"\bfomc\b", s) and "minutes" in s):
+        return "B", False
+    # 2) FOMC decision / statement / press conference (not a lone "Fed official speaks").
+    if re.search(r"\bfomc\b", s) and re.search(
+            r"(rate decision|interest rate|statement|press(?:er| conference)|monetary policy decision|fomc meeting)", s):
         return "A", True
+    if re.search(r"\b(fed|fomc)\s+(rate|interest)\s+decision\b", s) or "interest rate decision" in s             or "fomc press" in s or "fomc statement" in s or "fomc monetary" in s:
+        return "A", True
+    # Bare "FOMC" without minutes/decision: do not auto-upgrade. (Minutes already handled.)
+    # 3) CPI: require a US country marker. Named non-US CPI is B, not A. Bare "CPI" is not auto-A.
     if re.search(r"\bcpi\b", s) or "consumer price" in s:
-        return "A", False
+        if _has_us(s) and not _has_non_us(s):
+            return "A", False
+        if _has_non_us(s):
+            return "B", False
+        return "C", False
     if re.search(r"\bnfp\b", s) or re.search(r"non[-\s]?farm", s) or re.search(r"\bpayrolls\b", s):
         return "A", False
     if re.search(r"\bpce\b", s) or "personal consumption" in s:
@@ -89,6 +124,13 @@ def classify_tier(label):
     if "retail sales" in s:
         return "B", False
     if re.search(r"\bgdp\b", s):
+        return "B", False
+    # 4) Fed Chair speech → A, but fomc=false (not the FOMC meeting block).
+    if re.search(rf"\b{_FED_BANK}\s+chair(?:man|woman)?\b", s) or re.search(
+            r"\bchair(?:man|woman)?\s+(powell|warsh|jerome|kevin)\b", s):
+        return "A", False
+    # 5) Other Fed speeches default to B (governors, vice chairs, presidents).
+    if re.search(rf"\b{_FED_BANK}\b", s) and re.search(rf"\b{_SPEECH}\b", s):
         return "B", False
     return "C", False
 
@@ -102,7 +144,8 @@ def action_for(tier, fomc=False):
     return None
 
 def default_buffers(label, tier=None, fomc=None):
-    """Minutes (before, after) for the `event` command, plus resolved tier/fomc."""
+    """Minutes (before, after) for a *new* `event` row, plus resolved tier/fomc.
+    Does not change windows already stored in news_windows.json."""
     t, is_fomc = classify_tier(label)
     if tier in ("A", "B", "C"):
         t = tier
@@ -111,18 +154,32 @@ def default_buffers(label, tier=None, fomc=None):
     if fomc is True:
         is_fomc = True
         t = "A"
+    s = (label or "").lower()
     if is_fomc:
-        return 15, 45, t, True
+        # --time is the statement by default: 30 before statement, 60 after presser start (~statement+30).
+        if re.search(r"press(?:er| conference)", s) and not re.search(r"statement|rate decision|interest rate", s):
+            return 30, 60, t, True
+        return 30, 90, t, True
+    if t == "A" and re.search(r"\bchair", s):
+        return 15, 30, t, False
+    if t == "A":
+        return 15, 15, t, False
+    if t == "B" and re.search(rf"\b{_SPEECH}\b", s):
+        return 15, 30, t, False
+    if t == "B":
+        return 15, 15, t, False
     return 5, 15, t, False
 
 def annotate_window(w):
-    """Fill tier/fomc/action on a window dict (does not change start/end)."""
-    if w.get("tier") in ("A", "B", "C"):
-        tier = w["tier"]
-        fomc = bool(w.get("fomc")) if "fomc" in w else (classify_tier(w.get("label") or "")[1] if tier == "A" else False)
-    else:
-        tier, fomc = classify_tier(w.get("label") or "")
+    """Return a copy with action filled in. Never mutates the stored row.
+    If `tier` and/or `fomc` are already set on the window, those values win — the classifier is not applied."""
     w = dict(w)
+    has_tier = w.get("tier") in ("A", "B", "C")
+    has_fomc = "fomc" in w
+    guessed_tier, guessed_fomc = classify_tier(w.get("label") or "")
+    tier = w["tier"] if has_tier else guessed_tier
+    # Explicit fomc (including False, e.g. FOMC minutes) is never replaced by a label guess.
+    fomc = bool(w.get("fomc")) if has_fomc else (False if has_tier else guessed_fomc)
     w["tier"] = tier
     w["fomc"] = bool(fomc)
     w["action"] = action_for(tier, fomc)
@@ -141,12 +198,7 @@ def add(d, s, e, label, by, tier=None, fomc=None):
          "tier": t, "fomc": bool(is_fomc), "added_by": by}
     if not any(x["start"] == w["start"] and x["end"] == w["end"] for x in d["windows"]):
         d["windows"].append(w); return True
-    # already present: still backfill tier if the stored row is missing it
-    for x in d["windows"]:
-        if x["start"] == w["start"] and x["end"] == w["end"]:
-            if x.get("tier") not in ("A", "B", "C"):
-                x["tier"], x["fomc"] = t, bool(is_fomc)
-            break
+    # already present: do not touch start/end/label/tier/fomc (M5-News hand-set values are authoritative)
     return False
 
 def windows(d):
@@ -184,8 +236,9 @@ def merged(d):
 def status(d, at=None, lookahead=30):
     """Current news-window status. `inside` is true if *any* stored window covers `at`.
     `action` is block/caution/monitor from the highest-severity overlapping window.
-    `soon` / `soon_action` describe the next window; hard-block lookahead is 5 min (15 for FOMC),
-    not the generic `lookahead` (kept for listing 'upcoming'). exit 1 from `now` only when action==block."""
+    `soon` / `soon_action` describe the next window. Stored start/end already include the official
+    lead-in, so a hard-block 'soon' flag is only raised in the last 5 minutes before a tier-A
+    window starts. exit 1 from `now` only when action==block (or soon_block)."""
     at = at or datetime.now(TEH)
     for s, e, meta in merged(d):
         if s <= at < e:
@@ -198,7 +251,8 @@ def status(d, at=None, lookahead=30):
     if nxt:
         s, e, m = nxt[0]
         mins = round((s - at).total_seconds() / 60)
-        pre = 15 if m.get("fomc") else (5 if m["tier"] == "A" else (5 if m["tier"] == "B" else None))
+        # Stored windows already include policy lead-ins; only flag the last 5 min before a block.
+        pre = 5 if m["action"] == "block" else None
         soon_action = None
         if pre is not None and mins <= pre:
             soon_action = m["action"]

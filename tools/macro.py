@@ -245,10 +245,34 @@ def _fetch_fred_stack():
         data[k] = row
     return data
 
+def _as_of_age_hours(block):
+    """Hours since the series timestamp (Tehran clock or FRED date). None if unknown."""
+    ts = block.get("as_of_tehran")
+    if ts:
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                dt = datetime.strptime(ts, fmt).replace(tzinfo=TEH)
+                return (datetime.now(TEH) - dt).total_seconds() / 3600.0
+            except ValueError:
+                continue
+    d = block.get("as_of_date")
+    if d:
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=TEH)
+            return (datetime.now(TEH) - dt).total_seconds() / 3600.0
+        except ValueError:
+            return None
+    return None
+
 def _fetch_us2y_yahoo():
-    """Yahoo 2YY=F is 2-Year Yield Futures, not the cash 2Y Treasury. Never use ^IRX (13-week bill)."""
+    """Yahoo 2YY=F is 2-Year Yield Futures, not the cash 2Y Treasury. Never use ^IRX (13-week bill).
+    Reject prints older than 4 days — an expired front contract can sit unchanged for weeks."""
     data, err = _yahoo_chart("2YY=F")
     if data and data.get("last") is not None:
+        age_h = _as_of_age_hours(data)
+        if age_h is not None and age_h > 96:
+            return _empty("US2Y yield futures",
+                          err=f"2YY=F last print is {age_h/24:.1f} days old (likely an expired contract); not used")
         data["kind"] = "US2Y yield futures"
         data["unit"] = "percent"
         data["proxy"] = True
