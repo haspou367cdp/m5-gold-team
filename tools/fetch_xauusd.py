@@ -12,7 +12,7 @@ Signal-only research tool. Not financial advice."""
 import argparse, os, sys, time
 import pandas as pd, requests
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
-from m5lib import DATA, META_JSON, UTC, teh, now_utc, market_open, minutes_since_open, save_json, load_json
+from m5lib import DATA, META_JSON, UTC, teh, now_utc, market_open, minutes_since_open, save_json, load_json, month_starts_utc
 
 DUKA = ("https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD"
         "&offer_side={side}&interval=1MIN&splits=true&stocks=true&limit=2000&time_direction=N&timestamp={ts}&jsonp=_cb")
@@ -103,8 +103,9 @@ def main():
         print("ERROR: ALL DATA SOURCES FAILED - no prices available. Do NOT publish levels.", file=sys.stderr)
         save_json(META_JSON, {"ok": False, "errors": errors, "checked_at_utc": str(now_utc())}); sys.exit(3)
 
-    # Merge with any older cached bars so ADR(14) / weekly levels keep a stable history.
-    # A short incremental fetch must not wipe a longer cache. Cap at 40 calendar days.
+    # Merge with any older cached bars so prev-month H/L, ADR(20) and weekly levels keep a stable history.
+    # A short incremental fetch must not wipe a longer cache. Keep at least the previous NY month
+    # (plus a 2-day pad) and never less than 80 calendar days.
     cache_1m = f"{DATA}/xauusd_1m.parquet"
     try:
         if os.path.exists(cache_1m):
@@ -112,7 +113,11 @@ def main():
             if old is not None and len(old) and old.index.tz is not None:
                 m1 = pd.concat([old, m1]).sort_index()
                 m1 = m1[~m1.index.duplicated(keep="last")]
-                cut = m1.index[-1] - pd.Timedelta(days=40)
+                _, prev_m = month_starts_utc(m1.index[-1])
+                floor = pd.Timestamp(prev_m) - pd.Timedelta(days=2)
+                if floor.tzinfo is None:
+                    floor = floor.tz_localize("UTC")
+                cut = min(floor, m1.index[-1] - pd.Timedelta(days=80))
                 m1 = m1[m1.index >= cut]
     except Exception as e:
         errors.append(f"cache merge skipped: {e}")

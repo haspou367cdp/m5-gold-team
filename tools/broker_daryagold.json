@@ -47,6 +47,17 @@
     }
   },
   "news_buffers_note": "Effective window is the stricter (union) of these floors and the stored start/end in data/news_windows.json. Stored windows are never shrunk or rewritten.",
-  "friday_close_no_entry_hours": 2,
-  "no_hold_over_weekend_or_iranian_holidays": true
+  "no_hold_over_weekend_or_iranian_holidays": true,
+  "session": {
+    "kind": "forex",
+    "timezone": "America/New_York",
+    "open_day": 6,
+    "open": "18:00",
+    "close_day": 4,
+    "close": "17:00",
+    "daily_break_start": "17:00",
+    "daily_break_end": "18:00",
+    "no_new_entries_hours_before_friday_close": 2,
+    "note": "DaryaGold follows forex/gold hours (Sun 18:00 NY open to Fri 17:00 NY close, DST-aware). Overnight weekday holds are allowed; there is no daily 22:30/00:30 cutoff. Friday only: no new entries from 2 hours before 17:00 NY (23:30 Tehran in US winter) and all trades must be closed before Friday 17:00 NY (01:30 Tehran in US winter)."
+  }
 }

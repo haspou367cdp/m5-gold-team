@@ -15,7 +15,7 @@ import argparse, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
-from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, market_open, now_utc
+from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, market_open, now_utc, month_starts_utc
 import pandas as pd
 import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
@@ -103,14 +103,14 @@ def _write(md, payload, rc):
     save_json(f"{ROOT}/latest_brief.json", payload)
     sys.exit(rc)
 
-def _apply_broker_gates(decision, lv, b, cfg, friday):
-    """Size any engine setup and apply DaryaGold vetoes (daily stop, Friday close, sizing)."""
+def _apply_broker_gates(decision, lv, b, cfg, session):
+    """Size any engine setup and apply DaryaGold vetoes (daily stop, forex/Friday close, sizing)."""
     vetoes = []
     day_veto, day_why, journal = DG.daily_loss_veto(cfg)
     if day_veto:
         vetoes.append(day_why)
-    if friday.get("blocked"):
-        vetoes.append(friday["reason_fa"])
+    if session.get("blocked"):
+        vetoes.append(session["reason_fa"])
     setup = (decision or {}).get("setup")
     plan, sizing = None, None
     if setup and decision.get("decision") in ("BUY", "SELL"):
@@ -139,7 +139,7 @@ def _apply_broker_gates(decision, lv, b, cfg, friday):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-fetch", action="store_true", help="use cached price + macro (no download)")
-    ap.add_argument("--days", default=None, help="price look-back in calendar days (default: 3 if cache already covers ~21 calendar days, else 21)")
+    ap.add_argument("--days", default=None, help="price look-back in calendar days (default: 3 if cache already covers the previous NY month, else enough days for prev-month H/L + ADR20)")
     ap.add_argument("--n", type=int, default=4, help="levels per side")
     ap.add_argument("--at", help="evaluate news windows at Tehran time (testing)")
     ap.add_argument("--equity", type=float, default=None,
@@ -149,18 +149,24 @@ def main():
     px = lambda p: DG.fmt_px(p, cfg)
     rc = 0
     if a.days is None:
-        # Need ~21 calendar days for 14 full gold sessions; reuse a deep cache and only fetch a short tail.
+        # Need the full previous NY calendar month (prev-month H/L) and ~30 calendar days for ADR20.
+        # Reuse a deep enough cache and only fetch a short tail when history already covers prev-month start.
         try:
             import pandas as pd
             p1 = f"{DATA}/xauusd_1m.parquet"
+            now = now_utc()
+            _, prev_m = month_starts_utc(now)
+            prev_m = pd.Timestamp(prev_m)
+            need = int((pd.Timestamp(now) - prev_m).total_seconds() // 86400) + 3
+            need = max(need, 35)
+            covered = False
             if os.path.exists(p1):
                 idx = pd.read_parquet(p1, columns=["c_b"]).index
-                span = (idx[-1] - idx[0]).days if len(idx) else 0
-                a.days = "3" if span >= 20 else "21"
-            else:
-                a.days = "21"
+                if len(idx) and pd.Timestamp(idx[0]) <= prev_m + pd.Timedelta(hours=6):
+                    covered = True
+            a.days = "3" if covered else str(need)
         except Exception:
-            a.days = "21"
+            a.days = "45"
     if a.no_fetch:
         macro = _macro_cached_or_empty()
     else:
@@ -206,8 +212,8 @@ def main():
     regime = REG.classify(lv, win=b.get("news_window"), spread=b.get("spread"),
                           h4=b.get("h4"), h1=b.get("h1"))
     decision = REG.decide(lv, b, regime, quality=q)
-    friday = DG.friday_close_block(at or now, cfg)
-    decision, plan, sizing, journal = _apply_broker_gates(decision, lv, b, cfg, friday)
+    session = DG.session_entry_block(at or now, cfg)
+    decision, plan, sizing, journal = _apply_broker_gates(decision, lv, b, cfg, session)
 
     h4t = (b.get("h4") or {}).get("trend", "neutral")
     lines = [
@@ -241,7 +247,7 @@ def main():
     lines.append(f"**قیمت:** {px(bid)} ({src_kind})  ·  "
                  f"ATR پنج‌دقیقه: {lv['atr_m5_14']} دلار · کیفیت داده: {q['fa']}")
     lines.append(DG.price_convention_fa(cfg))
-    lines += DG.fa_risk_lines(cfg, spread=b.get("spread"), sizing=sizing, friday=friday)
+    lines += DG.fa_risk_lines(cfg, spread=b.get("spread"), sizing=sizing, friday=session)
     lines += MAC.fa_lines(macro, lv, b.get("news_window"), regime, price_fmt=px)
     lines += REG.fa_indicator_lines(regime, price_fmt=px)
 
@@ -304,7 +310,7 @@ def main():
         "news_windows_next_24h": wins, "markdown": md,
         "broker": cfg.get("broker"),
         "equity_toman": cfg.get("equity_toman"),
-        "plan": plan, "sizing": sizing, "friday_close": friday,
+        "plan": plan, "sizing": sizing, "session_entry": session, "friday_close": session,
         "journal_today": journal,
     }
     _write(md, payload, 0)

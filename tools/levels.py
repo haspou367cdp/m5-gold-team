@@ -132,8 +132,8 @@ def equal_swings(swings, tol, side):
                     "times": [teh(t) for t, _ in cl]})
     return out
 
-def add_structure(out, bid, last_t, n_adr=14):
-    """PDH/PDL already in sessions; add week H/L, previous week, month H/L, ADR of N full days, % used, D1 structure."""
+def add_structure(out, bid, last_t, n_adr=20):
+    """PDH/PDL already in sessions; add week H/L, previous week, month H/L, ADR of N full days (default 20), % used, D1 structure."""
     d0 = trading_day_start(last_t)
     ws = week_start_utc(last_t)
     pws = ws - pd.Timedelta(days=7)
@@ -155,7 +155,7 @@ def add_structure(out, bid, last_t, n_adr=14):
         month["incomplete"] = bool(cache_start is not None and cache_start > this_m + pd.Timedelta(hours=12))
         month["complete"] = False  # month still running
     days, ds = [], d0
-    for _ in range(30):
+    for _ in range(40):
         if len(days) >= n_adr:
             break
         ds = previous_trading_day_start(ds)

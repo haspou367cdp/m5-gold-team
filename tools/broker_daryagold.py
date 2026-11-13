@@ -51,6 +51,10 @@ def to_broker(price, cfg):
     return p if off is None else p + off
 
 
+def fa_digits(s):
+    return str(s).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+
+
 def _n(x, nd=2):
     s = f"{float(x):.{nd}f}"
     if "." in s:
@@ -360,33 +364,124 @@ def expand_news_doc(doc, cfg=None):
     return out
 
 
-def friday_close_block(now=None, cfg=None):
-    """No new entries in the last N hours before Friday 17:00 New York close."""
+def _hm(s, default="17:00"):
+    raw = str(s if s is not None else default)
+    parts = raw.split(":")
+    return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+
+
+def session_cfg(cfg=None):
+    """DaryaGold session = forex hours, times from broker_daryagold.json (DST via NY)."""
     cfg = cfg or load_config()
-    hours = float(cfg.get("friday_close_no_entry_hours") or 2)
+    s = cfg.get("session") or {}
+    hours = s.get("no_new_entries_hours_before_friday_close")
+    if hours is None:
+        hours = cfg.get("friday_close_no_entry_hours") or 2
+    return {
+        "tz": ZoneInfo(s.get("timezone") or "America/New_York"),
+        "open_day": int(s.get("open_day", 6)),
+        "open": _hm(s.get("open"), "18:00"),
+        "close_day": int(s.get("close_day", 4)),
+        "close": _hm(s.get("close"), "17:00"),
+        "break_start": _hm(s.get("daily_break_start"), "17:00"),
+        "break_end": _hm(s.get("daily_break_end"), "18:00"),
+        "hours": float(hours),
+    }
+
+
+def forex_open(now=None, cfg=None):
+    """True while the forex/gold session is open (Sun 18:00 NY to Fri 17:00 NY, daily break excluded)."""
+    sc = session_cfg(cfg)
     t = now or datetime.now(UTC)
     if t.tzinfo is None:
         t = t.replace(tzinfo=TEH)
-    n = t.astimezone(NY)
-    if n.weekday() != 4:
-        return {"blocked": False, "hours": hours}
-    close = n.replace(hour=17, minute=0, second=0, microsecond=0)
-    start = close - timedelta(hours=hours)
-    blocked = start <= n < close
+    n = t.astimezone(sc["tz"])
+    wd, hm = n.weekday(), n.hour * 60 + n.minute
+    oh, om = sc["open"]
+    ch, cm = sc["close"]
+    bh, bm = sc["break_start"]
+    eh, em = sc["break_end"]
+    if wd == 5:
+        return False
+    if wd == sc["open_day"]:
+        return hm >= oh * 60 + om
+    if wd == sc["close_day"]:
+        return hm < ch * 60 + cm
+    return not (bh * 60 + bm <= hm < eh * 60 + em)
+
+
+def _friday_close_ny(now, sc):
+    n = now.astimezone(sc["tz"])
+    ch, cm = sc["close"]
+    return (n + timedelta(days=(sc["close_day"] - n.weekday()))).replace(
+        hour=ch, minute=cm, second=0, microsecond=0
+    )
+
+
+def session_entry_block(now=None, cfg=None):
+    """No new entries outside forex hours, or in the last N hours before Friday 17:00 NY close.
+
+    Overnight weekday holds are allowed. There is no daily 22:30/00:30 cutoff.
+    Friday close and the entry cutoff are DST-aware (computed in America/New_York).
+    """
+    cfg = cfg or load_config()
+    sc = session_cfg(cfg)
+    t = now or datetime.now(UTC)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=TEH)
+    n = t.astimezone(sc["tz"])
     teh = n.astimezone(TEH)
+    hours = sc["hours"]
+    close = _friday_close_ny(t, sc)
+    start = close - timedelta(hours=hours)
+    in_friday_window = start <= n < close
+    is_open = forex_open(t, cfg)
+    blocked = (not is_open) or in_friday_window
+    close_teh = close.astimezone(TEH)
+    start_teh = start.astimezone(TEH)
+    start_fa, close_fa, close_ny_fa = (fa_digits(x.strftime("%H:%M")) for x in (start_teh, close_teh, close))
+    if in_friday_window:
+        reason = (
+            f"فقط جمعه: از {start_fa} تهران ورود جدید ممنوع است "
+            f"و همه معاملات باید پیش از بسته شدن فارکس "
+            f"({close_ny_fa} نیویورک / {close_fa} تهران) بسته شوند. "
+            "تصمیم: NO TRADE."
+        )
+    elif not is_open:
+        reason = (
+            "بازار دریاگلد خارج از ساعت فارکس است "
+            "(ساعت کاری برابر فارکس: از دوشنبه تا جمعه، شنبه و یکشنبه تعطیل). "
+            "تصمیم: NO TRADE."
+        )
+    else:
+        reason = (
+            f"ورود جدید از {start_fa} تهران جمعه تا بسته شدن فارکس "
+            f"({close_fa} تهران / {close_ny_fa} نیویورک) ممنوع است. "
+            "نگهداری شبانه در روزهای هفته مجاز است."
+        )
     return {
         "blocked": blocked,
         "hours": hours,
-        "close_tehran": close.astimezone(TEH).strftime("%Y-%m-%d %H:%M"),
-        "block_start_tehran": start.astimezone(TEH).strftime("%Y-%m-%d %H:%M"),
+        "forex_open": is_open,
+        "friday_window": in_friday_window,
+        "close_tehran": close_teh.strftime("%Y-%m-%d %H:%M"),
+        "block_start_tehran": start_teh.strftime("%Y-%m-%d %H:%M"),
+        "close_ny": close.strftime("%Y-%m-%d %H:%M"),
         "now_tehran": teh.strftime("%Y-%m-%d %H:%M"),
-        "reason_fa": (
-            f"در { _n(hours, 0)} ساعت پایانی قبل از بسته شدن بازار در جمعه "
-            f"(۱۷:۰۰ نیویورک / {close.astimezone(TEH).strftime('%H:%M')} تهران) ورود جدید ممنوع است."
-            if blocked else
-            f"ورود جدید از {start.astimezone(TEH).strftime('%H:%M')} تهران تا بسته شدن جمعه ممنوع است."
+        "reason_fa": reason,
+        "hours_line_fa": (
+            f"ساعت کاری دریاگلد برابر ساعت فارکس است (از دوشنبه تا جمعه، شنبه و یکشنبه تعطیل). "
+            f"نگهداری شبانه در روزهای هفته مجاز است و قطع روزانه ۲۲:۳۰/۰۰:۳۰ وجود ندارد. "
+            f"فقط جمعه: از {start_fa} تهران ورود جدید نیست و همه معاملات باید "
+            f"پیش از {close_fa} تهران "
+            f"(بسته شدن فارکس، {close_ny_fa} نیویورک، با احتساب تغییر ساعت) بسته شوند."
         ),
     }
+
+
+def friday_close_block(now=None, cfg=None):
+    """Back-compat alias for session_entry_block."""
+    return session_entry_block(now, cfg)
 
 
 def journal_today(cfg=None):
@@ -436,6 +531,7 @@ def daily_loss_veto(cfg):
 def hold_rules_fa(cfg):
     sec = int(cfg.get("min_hold_seconds") or 60)
     return (f"حداقل نگهداری معامله {sec} ثانیه است (بستن دستی و حد سود؛ حد ضرر و حراج مستثنی‌اند). "
+            "نگهداری شبانه در روزهای هفته مجاز است. "
             "معامله را روی تعطیلی آخر هفته یا تعطیلات رسمی ایران باز نگذار؛ "
             "پلتفرم ممکن است در تعطیلات رسمی ایران بسته شود.")
 
@@ -460,7 +556,7 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         fee_note = (f" کارمزد نیم واحدی محافظه‌کارانه {toman(half.get('fee') or 14000)} تومان "
                     "در نظر گرفته شده (تأییدنشده؛ تا اعلام بروکر).")
     _, _, j = daily_loss_veto(cfg)
-    fri = friday or friday_close_block(cfg=cfg)
+    fri = friday or session_entry_block(cfg=cfg)
     liq = int(cfg.get("liquidation_pct") or 80)
     lines = (
         f"**دروازه‌های ریسک (دریاگلد، ارزش حساب {toman(equity)} تومان، "
@@ -482,7 +578,8 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         f"{flag}{known}.{fee_note} "
         + (j.get("note_fa") or "")
     )
-    extra = [lines, hold_rules_fa(cfg)]
+    extra = [lines, fri.get("hours_line_fa") or "", hold_rules_fa(cfg)]
+    extra = [x for x in extra if x]
     if fri.get("blocked"):
         extra.append("⚠️ " + fri["reason_fa"])
     if sizing and sizing.get("reason_fa"):
@@ -543,4 +640,26 @@ if __name__ == "__main__":
     # B 15/15 already covers the 10/15 floor
     s3, e3 = effective_bounds(start, end, "B", False, cfg)
     assert (s3, e3) == (start, end)
+    # Forex hours + Friday window (winter 2026: 17:00 NY = 01:30 Tehran next day)
+    wed = datetime(2026, 11, 11, 23, 45, tzinfo=TEH)
+    w = session_entry_block(wed, cfg)
+    assert not w["blocked"] and w["forex_open"], w
+    fri_before = datetime(2026, 11, 13, 23, 0, tzinfo=TEH)
+    assert not session_entry_block(fri_before, cfg)["blocked"], session_entry_block(fri_before, cfg)
+    fri_cut = datetime(2026, 11, 13, 23, 30, tzinfo=TEH)
+    fc = session_entry_block(fri_cut, cfg)
+    assert fc["blocked"] and fc["friday_window"] and "NO TRADE" in fc["reason_fa"], fc
+    sat_pre_close = datetime(2026, 11, 14, 1, 0, tzinfo=TEH)
+    assert session_entry_block(sat_pre_close, cfg)["friday_window"]
+    sat_closed = datetime(2026, 11, 14, 12, 0, tzinfo=TEH)
+    scb = session_entry_block(sat_closed, cfg)
+    assert scb["blocked"] and not scb["forex_open"]
+    mon_pre = datetime(2026, 11, 16, 1, 0, tzinfo=TEH)
+    assert session_entry_block(mon_pre, cfg)["blocked"]
+    mon_open = datetime(2026, 11, 16, 3, 0, tzinfo=TEH)
+    assert not session_entry_block(mon_open, cfg)["blocked"]
+    # US summer DST: Friday 17:00 NY = 00:30 Tehran Saturday; cutoff 22:30 Tehran Friday
+    summer = session_entry_block(datetime(2026, 7, 17, 22, 30, tzinfo=TEH), cfg)
+    assert summer["blocked"] and summer["friday_window"], summer
+    assert summer["close_tehran"].endswith("00:30"), summer
     print("self-check ok", fmt_px(3886.28, cfg), s_ok["size"]["key"], s_ok["size"]["net_rr"])
