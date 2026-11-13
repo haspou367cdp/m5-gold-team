@@ -34,3 +34,9 @@ ae9d726fa1d3feeac1dd0989958e633bdcdf608edfa9e7297e1523b30a47eb8e  gc_vp_hf/post_
 f0d37329a8e558c7a7cfdc1c1e794b21170c077cd9ee239e95a0235ec6d13006  gc_vp_hf/summary.md
 # gc_vp_hf summary.md re-hashed 2026-11-13 08:26:05 +0330 Asia/Tehran (Persian date-range wording fix only)
 4b1e474ac3b73a5ba31dd37e4820e8e3a530f06127a556dd465219396b8da4e3  gc_vp_hf/summary.md
+
+# fw2_trend PREREG hashed 2026-11-13 13:01:18 +0330 Asia/Tehran, BEFORE any evaluator or outcome (prereg only; not run)
+c1592e504f89be6d1aa3801c97040d40c568740f7574a0912658405bc97a945d  fw2_trend/PREREG.md
+
+# fw2_sweep PREREG hashed 2026-11-13 13:01:18 +0330 Asia/Tehran, BEFORE any evaluator or outcome (prereg only; not run)
+c3e8fd0feb1f443197828193f66c84185c764a64ff4ca633d9322a9fe34a39bb  fw2_sweep/PREREG.md

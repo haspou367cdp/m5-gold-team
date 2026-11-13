@@ -1,0 +1,2 @@
+# fw2_sweep PREREG hashed 2026-11-13 13:01:18 +0330 Asia/Tehran, BEFORE any evaluator or outcome
+c3e8fd0feb1f443197828193f66c84185c764a64ff4ca633d9322a9fe34a39bb  PREREG.md
