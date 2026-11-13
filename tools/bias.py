@@ -121,7 +121,13 @@ def compute(at=None, pre=20):
         out["invalidation"] = None
     # verdict
     now = at or datetime.now(TEH)
-    win = nw.status(nw.load(), now, pre)
+    news_doc = nw.load()
+    try:
+        import broker_daryagold as DG
+        news_doc = DG.expand_news_doc(news_doc)
+    except Exception:
+        pass
+    win = nw.status(news_doc, now, pre)
     sp = spread_check(m1)
     out["news_window"] = win; out["spread"] = sp; out["evaluated_at_tehran"] = now.strftime("%Y-%m-%d %H:%M")
     v = {}

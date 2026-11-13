@@ -1,14 +1,16 @@
 # M5 Gold Scalp toolkit (XAUUSD, M5) — `/workspace/m5-gold-team/tools/`
 
-The owner (pouhasaa, $500 account, Asia/Tehran) uses this brief for a live layered read of XAUUSD.
-`brief.py` prints: **(1) BUY / SELL / NO TRADE with accept/reject reasons, (2) regime + allowed engine, (3) direction (H4, H1, M15), (4) ADR and reference highs/lows (day, week, month, sessions, opening ranges), (5) macro (DXY / 2Y / 10Y / real yield / 5Y–10Y breakevens), (6) hard risk gates, (7) nearby highs/lows without strength labels.**
-Trade setups with entry/SL/TP are **not** auto-printed here; they go through M5-Risk separately when asked. The two engines in `regime.py` are **unvalidated detectors** only (see `preregistration_engines.md`).
+The owner (pouhasaa, DaryaGold, Asia/Tehran) uses this brief for a live layered read of XAUUSD.
+Account equity defaults to `tools/broker_daryagold.json` (`equity_toman`, overridable with `EQUITY_TOMAN` or `--equity`).
+`brief.py` prints: **(1) BUY / SELL / NO TRADE with accept/reject reasons, (2) regime + allowed engine, (3) direction (H4, H1, M15), (4) ADR and reference highs/lows (day, week, month, sessions, opening ranges), (5) macro (DXY / 2Y / 10Y / real yield / 5Y–10Y breakevens), (6) DaryaGold risk gates and unit sizing, (7) nearby highs/lows without strength labels.**
+Displayed gold prices are DaryaGold-adjusted (`bid + price_offset_usd`) with the raw Dukascopy bid in brackets. Engines still run on the bid. If a setup fires, a numeric plan is sized in نیم‌واحدی / یک واحد and may be vetoed. The two engines in `regime.py` are **unvalidated detectors** only (see `preregistration_engines.md`).
 Signal-only research, not financial advice, nothing here places trades.
 
 ## One command
 ```bash
-python3 /workspace/m5-gold-team/tools/brief.py            # fetch price + macro (in parallel) + levels + bias + regime + Persian brief (target < 60 s)
-python3 /workspace/m5-gold-team/tools/brief.py --no-fetch # reuse cached price + macro (fast)
+python3 /workspace/m5-gold-team/tools/brief.py                  # fetch price + macro (in parallel) + levels + bias + regime + Persian brief (target < 60 s)
+python3 /workspace/m5-gold-team/tools/brief.py --no-fetch       # reuse cached price + macro (fast)
+python3 /workspace/m5-gold-team/tools/brief.py --equity 2085600 # override equity (toman)
 ```
 Outputs: stdout (Persian markdown), `/workspace/m5-gold-team/latest_brief.md`, `/workspace/m5-gold-team/latest_brief.json`.
 Exit codes: 0 ok · 2 data stale or data-quality gate failed (brief says **NO TRADE** / stop, do not publish prices) · 3 no data source worked.
@@ -22,7 +24,8 @@ Exit codes: 0 ok · 2 data stale or data-quality gate failed (brief says **NO TR
 | `news_windows.py seed\|add\|event\|bias\|list\|now\|prune` | No-trade windows (Tehran time), M5-News bias, and **A/B/C tiers**. `event` defaults follow `window_policy` in `data/news_windows.json`: US A-data 15/15, FOMC statement 30/90 (30 before the statement to 60 after a presser starting ~30 min later), FOMC presser-only 30/60, Fed Chair speech 15/30, B data/minutes 15/15, B Fed speech 15/30, C 5/15. Stored `tier`/`fomc`/start/end are never overwritten. `now` exits 1 only on an active **tier-A hard block** (or the last 5 min before a stored A window) — not for B/C, and not for FOMC minutes (B, fomc=false). **stdlib only** (no pandas). | `/workspace/team/m5-news/latest.md` (seed) or CLI | `data/news_windows.json` | M5-News (writes), M5-Risk / bias.py (reads) |
 | `macro.py [--no-fetch] [--ttl 600]` | DXY (Yahoo `DX-Y.NYB`, fallback `DX=F` then EURUSD proxy), US 10Y nominal (Yahoo `^TNX`, fallback FRED DGS10 lagged), **US 2Y** (Yahoo `2YY=F` 2-Year Yield Futures, *not* the cash 2Y; official cash is FRED DGS2 lagged — `^IRX` is the 13-week bill and is not used), 10Y real yield (FRED DFII10, lagged), **5Y/10Y inflation breakevens** (FRED T5YIE / T10YIE, lagged). 10-minute cache, 6 s HTTP timeout, 10 s overall budget. | internet or `data/macro.json` | `data/macro.json` | `brief.py` (parallel with the price fetch) |
 | `regime.py` | 4-state regime gate: **trend** → continuation engine allowed; **range** → sweep/mean-reversion engine allowed; **volatility_expansion** (M5 ATR percentile, relative tick volume) → wait; **news_abnormal** (tier-A window or spread anomaly) → no trade. Optional ADX(14) on H1/M15 and session-VWAP deviation (tick-volume proxy). Two setup detectors, flagged unvalidated. | `levels.json`, bars, news/spread | used in-process by `brief.py` | `brief.py` |
-| `brief.py` | Runs fetch + macro (parallel), levels, bias, regime, engines, and the Persian brief. **Data-quality gate:** missing data or last bar older than 10 minutes while the market is open → **NO TRADE / stop**, no full analysis. **Does not print قوی/متوسط/ضعیف.** Always prints hard risk gates and the unvalidated-levels line. | — | `latest_brief.md`, `latest_brief.json` | Boti (posts to owner), all bots |
+| `broker_daryagold.json` / `broker_daryagold.py` | DaryaGold contract, equity, unit sizes, fees, price offset, and risk floors. `load_config(equity=)` honors `--equity` then `EQUITY_TOMAN`. Sizing picks the largest unit (full, else half) whose SL loss + fee + spread cost stays inside `risk_per_trade_pct_max`. Half-unit fee is conservatively 14000 toman (unconfirmed). News floors (A 15/30, B 10/15) are unioned with stored windows, never shrinking them. No new entries in the last 2 hours before Friday 17:00 NY. | config + bid prices | sizing / formatted prices | `brief.py`, `bias.py` |
+| `brief.py` | Runs fetch + macro (parallel), levels, bias, regime, engines, and the Persian brief. Prints gold prices as DaryaGold (bid + offset) with the raw bid in brackets. **Data-quality gate:** missing data or last bar older than 10 minutes while the market is open → **NO TRADE / stop**, no full analysis. **Does not print قوی/متوسط/ضعیف.** Always prints DaryaGold risk gates, the 60-second hold rule, and the weekend/Iranian-holiday warning. | — | `latest_brief.md`, `latest_brief.json` | Boti (posts to owner), all bots |
 | `preregistration_engines.md` | Pre-registration stub for the two engines' separate out-of-sample backtests. No results are claimed. | — | — | research, later backtests |
 | `m5lib.py` | Shared paths, Tehran formatting, market hours, session clock, H4 fallback resample, NY month bounds. | — | — | imported |
 
@@ -51,14 +54,16 @@ Candidates within `max($0.5, 0.25×ATR_M5)` are merged. Score = sum of source we
 The brief's **BUY / SELL / NO TRADE** is the regime+engine decision on top of this; a `near_level` verdict alone is not enough to print BUY/SELL.
 Invalidation: bearish → M15 close above nearest high-score resistance = neutral; H1 close above last H1 swing high = bias off (mirrored for bullish).
 
-### Hard risk gates (printed every analysis; not changed to 0.5%)
-On a $500 account with 0.01 lot (≈ $1 per $1 of move):
-- spread limit: > 2× typical for that hour **and** > $0.80 → no entry
-- stop-loss ≤ **$5** at 0.01 lot
-- reward:risk ≥ **1.5**
-- stop the day after **3 losses** or **$10** lost
-
-These stay the current M5-Risk rules. A 0.25–0.5% risk cap would be $1.25–$2.50, which is tighter than a typical M5 ATR and would mostly be stopped out by noise.
+### Hard risk gates — DaryaGold (printed every analysis)
+Source of truth: `broker_daryagold.json` (equity is user-editable). Default equity 2,085,600 toman. Max risk per trade **10%**, daily loss cap **20%**, max 3 closed losses, 1 open position, net R:R after fee+spread ≥ **1.5**.
+- Sizes: نیم واحدی (margin 500,000; 40,000 toman per $1) or یک واحد (margin 1,000,000; 80,000 toman per $1). Pick the largest size whose SL loss + fee + spread cost fits the risk budget; if even the half unit does not, **NO TRADE**.
+- Half-unit fee is conservatively **14,000 toman** (unconfirmed; broker states 14,000 per unit).
+- Min stop **$1.0** (broker flags tighter stops). Prefer a limit **order** (no entry spread). SL/TP are stated to have no spread; a typical/current spread is still added as a conservative cost.
+- Liquidation is at **80%** of the whole portfolio, not just the blocked margin.
+- News: effective window = the stricter of stored `news_windows.json` start/end and floors of **A 15 minutes before / 30 after**, **B 10 / 15**. Stored windows are never rewritten.
+- No new entries in the last **2 hours** before Friday 17:00 New York close. Do not hold over the weekend or official Iranian holidays (the platform may close). Manual or TP exits must stay open at least **60 seconds**.
+- Spread anomaly unchanged: > 2× typical for that hour **and** > $0.80 → no entry.
+- Price display: DaryaGold ≈ Dukascopy bid + `price_offset_usd` (0.3, calibrated 2026-11-13 15:37 Tehran, uncertainty ±0.5). Raw bid is shown in brackets. Engines still use the bid.
 
 ### News tiers
 Auto-classification is only used for *new* `event`/`add` rows. If a window already has `tier` and/or `fomc` set (M5-News hand-set the current 37 windows at 12:59 Tehran on 2026-11-13), those fields and the stored start/end are **never overwritten**.
@@ -75,7 +80,7 @@ A bare label of just "CPI" or a lone "FOMC" without minutes/decision is **not** 
 - **M5-News**: after each brief, `python3 news_windows.py seed` (reads `/workspace/team/m5-news/latest.md`; keep the `- HH:MM-HH:MM | label` format under `today_YYYY-MM-DD:` / `tomorrow_YYYY-MM-DD:`, add `(Fri)` for after-midnight events) and `python3 news_windows.py bias --bias bearish --why "..." --invalidation "..."`. Single event: `news_windows.py event --date 2026-11-13 --time 17:00 --label "US PPI"` (tier B, caution, 15/15). For a rate decision use a label such as `FOMC rate decision` (`--time` = statement time) so the 30/90 FOMC buffer applies. `FOMC minutes` is tier B, `fomc=false`, and does not hard-block.
 - **M5-Levels**: `python3 fetch_xauusd.py && python3 levels.py --print`; full numbers in `data/levels.json`.
 - **M5-Signal**: `python3 brief.py` → report decision / direction / now-or-wait / levels only (no entry/SL/TP unless the owner asks).
-- **M5-Risk**: `python3 news_windows.py now` (exit 1 = **tier-A block** only) and `jq .spread data/bias.json`; warn on stale data (`meta.json` `stale: true` or age > 10 min in session) or abnormal spread. Keep the $5 / 1.5 R:R / 3-loss or $10 daily stop rules.
+- **M5-Risk**: `python3 news_windows.py now` (exit 1 = **tier-A block** only; `bias.py` / `brief.py` also apply the stricter DaryaGold buffers) and `jq .spread data/bias.json`; warn on stale data (`meta.json` `stale: true` or age > 10 min in session) or abnormal spread. Size in DaryaGold units from `broker_daryagold.py`; veto if the half unit exceeds the 10% budget, SL < $1, net R:R < 1.5, Friday-close window, or the daily 20% / 3-loss stop.
 - **M5-Journal**: log `latest_brief.json` (as_of, bias, decision, regime, levels) to `session_log.csv`; later check whether bias/levels/engines held.
 - **Boti**: `python3 brief.py` and post the stdout to the owner.
 
@@ -85,10 +90,10 @@ A bare label of just "CPI" or a lone "FOMC" without minutes/decision is **not** 
 - **Live official cash 2Y** and **live real yield / breakevens**. FRED DGS2, DFII10, T5YIE and T10YIE are **daily and lagged**. Yahoo `2YY=F` is **2-Year Yield Futures**, not the cash Treasury; it is labelled as a futures proxy. Yahoo `^IRX` is the 13-week bill and is not used as a 2Y stand-in.
 - **A complete previous-month high/low** when the 1m cache does not cover the whole month (the cache currently starts around 2026-10-23, so October 2026 is flagged incomplete).
 - **A statistical edge.** Prior backtests of direction / levels did not show one after costs. The two new engines are unvalidated and must be tested separately out of sample (`preregistration_engines.md`). The brief always says so.
-- **Broker-identical quotes and spreads.** Dukascopy bid can differ from the broker by about $1.
+- **Broker-identical quotes and spreads.** DaryaGold is shown as Dukascopy bid + 0.3 (calibrated 2026-11-13 15:37 Tehran, uncertainty ±0.5). The brief prints both. Live broker spread may still differ.
 
 ## Limitations
-- Dukascopy prices are **bid**, a liquidity-provider feed; broker quotes differ by ~$1 and spreads differ. Tick volume, not real volume (VWAP is approximate).
+- Dukascopy prices are **bid**, a liquidity-provider feed. DaryaGold display uses bid + 0.3 (uncertainty ±0.5); spreads may still differ. Tick volume, not real volume (VWAP is approximate).
 - The Dukascopy endpoint is an unofficial public chart feed (no SLA). If it fails, the Yahoo `GC=F` fallback is futures (basis vs spot, can be several $), has no spread and is delayed ~10 min.
 - `/workspace/data/gold_1m` (old shared feed) is stale since 2026-11-06 — not used.
 - Level strengths and verdict thresholds are heuristics, not backtested, and are not shown in the brief. News windows are only as good as what M5-News enters; tier keywords can mis-tag an unusual label.

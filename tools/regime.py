@@ -427,7 +427,7 @@ def decide(lv, bias, regime, quality=None, journal_note=None):
     return {"decision": det["side"], "engine": det["engine"], "engine_fa": det["engine_fa"],
             "reasons_accept": accepts, "reasons_reject": rejects, "setup": det, "unvalidated": True}
 
-def fa_indicator_lines(regime):
+def fa_indicator_lines(regime, price_fmt=None):
     """Short Persian lines for ADX / ATR percentile / VWAP deviation (no strength words)."""
     lines = []
     adx_h1 = (regime or {}).get("adx_h1") or {}
@@ -445,6 +445,7 @@ def fa_indicator_lines(regime):
     vdev = (regime or {}).get("vwap_deviation") or {}
     if vdev.get("vwap") is not None:
         sig = f" / {vdev['sigma']}σ" if vdev.get("sigma") is not None else ""
+        vwap_s = price_fmt(vdev["vwap"]) if price_fmt else f"{vdev['vwap']:.2f}"
         lines.append(f"**انحراف VWAP {vdev.get('session_fa') or ''}:** {vdev['distance']:+.2f} دلار{sig} "
-                     f"(VWAP {vdev['vwap']:.2f}، پروکسی حجم تیک)".replace("  ", " "))
+                     f"(VWAP {vwap_s}، پروکسی حجم تیک)".replace("  ", " "))
     return lines
