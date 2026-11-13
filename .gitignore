@@ -1,0 +1,12 @@
+data/
+*.parquet
+*.csv
+*.log
+bak_*/
+__pycache__/
+journal*
+session_log*
+latest_brief.json
+*.html
+.env
+secrets
