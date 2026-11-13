@@ -169,7 +169,7 @@ def compute(at=None, pre=20):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--at", help='evaluate news windows at this Tehran time "YYYY-MM-DD HH:MM" (testing)')
-    ap.add_argument("--pre", type=int, default=20, help="lookahead (minutes) for listing the next window; A-tier block uses 5 (FOMC 15)")
+    ap.add_argument("--pre", type=int, default=20, help="lookahead (minutes) for listing the next window; stored A windows already include their lead-in, and soon-block is the last 5 min before start")
     a = ap.parse_args()
     at = datetime.strptime(a.at, "%Y-%m-%d %H:%M").replace(tzinfo=TEH) if a.at else None
     out = compute(at, a.pre); save_json(BIAS_JSON, out)
