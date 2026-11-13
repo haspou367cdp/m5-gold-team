@@ -6,7 +6,7 @@ apply the automated DaryaGold risk check (replaces M5-Risk), send a message only
 
 modes : scheduled  - full check; sends a signal only if every gate passes (deduped); pre-session briefs
         poll       - answer commands only; runs the brief only if /scan or /brief was asked
-        test       - send 'سیستم راه‌اندازی شد' + current verdict
+        test       - send one sample signal (labelled «نمونه»), nothing else
 env   : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (only this chat is answered), STATE_DIR (state.json + news_windows.json)
 Signal-only research. Never places trades. Not financial advice."""
 import argparse, csv, html, json, os, re, subprocess, sys, time, urllib.parse, urllib.request
@@ -26,7 +26,7 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
-PRESESSION = {"am": ("11:10", "11:44"), "pm": ("16:10", "16:44")}
+PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
 HELP = """**🤖 راهنما**
 ~~بات طلای دریاگلد~~
 
@@ -70,6 +70,22 @@ def save_state(s):
         json.dump(s, f, ensure_ascii=False, indent=1)
     os.replace(STATE_JSON + ".tmp", STATE_JSON)
 
+# ---------------- amounts ----------------
+_DIGITS_IN = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫", "01234567890123456789.")
+SIGNAL_LOCK_MIN = 60   # max 1 position: after a signal, no new one for 60 min unless /loss or /win closes it
+
+def parse_amount(args):
+    """'150000', '۱۵۰٬۰۰۰', '150,000 تومان', '150 000' -> 150000.0; anything else -> ValueError."""
+    t = " ".join(args).translate(_DIGITS_IN)
+    t = re.sub(r"(تومان|toman|tmn)", "", t, flags=re.I)
+    t = re.sub(r"[\s,٬_']", "", t)
+    if not re.fullmatch(r"\d+(\.\d+)?", t):
+        raise ValueError(t)
+    v = float(t)
+    if not (0 < v < 1e12):
+        raise ValueError(t)
+    return v
+
 # ---------------- telegram ----------------
 def tg(method, **params):
     if not TOKEN:
@@ -93,13 +109,15 @@ def send(text):
     text = render(text)
     ok = True
     while text:
-        part, text = text[:3900], text[3900:]
+        cut = text.rfind("\n", 0, 3900) if len(text) > 3900 else len(text)
+        cut = cut if cut > 0 else min(len(text), 3900)
+        part, text = text[:cut], text[cut:].lstrip("\n")
         r = tg("sendMessage", chat_id=CHAT, text=part, parse_mode="HTML", disable_web_page_preview="true")
         good = bool(r and r.get("ok"))
         if os.environ.get("BOT_ECHO") == "1":
             print("----- sent text -----\n" + part + "\n---------------------")
         if not good:  # never lose a message over formatting
-            r = tg("sendMessage", chat_id=CHAT, text=re.sub(r"</?b>", "", html.unescape(part)), disable_web_page_preview="true")
+            r = tg("sendMessage", chat_id=CHAT, text=html.unescape(re.sub(r"<[^>]+>", "", part)), disable_web_page_preview="true")
             good = bool(r and r.get("ok"))
         print(f"telegram send: {'ok message_id=' + str(r['result']['message_id']) if good else 'FAILED ' + str((r or {}).get('description'))}")
         ok = ok and good
@@ -141,7 +159,10 @@ def prepare_news(state, force=False):
     if last:
         age_h = (now_teh() - datetime.strptime(last, "%Y-%m-%d %H:%M").replace(tzinfo=TEH)).total_seconds() / 3600
     if force or age_h is None or age_h >= NEWS_REFRESH_H:
-        p = subprocess.run([sys.executable, f"{ROOT}/tools/ff_calendar.py"], capture_output=True, text=True)
+        try:
+            p = subprocess.run([sys.executable, f"{ROOT}/tools/ff_calendar.py"], capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            p = subprocess.CompletedProcess([], 4, "", "ForexFactory timeout")
         print(p.stdout.strip(), p.stderr.strip()[-300:])
         if p.returncode == 0:
             state["news_fetched_at"] = now_teh().strftime("%Y-%m-%d %H:%M")
@@ -170,8 +191,11 @@ def write_journal(state):
 def run_brief(state):
     write_journal(state)
     t0 = time.time()
-    p = subprocess.run([sys.executable, f"{ROOT}/tools/brief.py", "--equity", str(int(state["equity_toman"]))],
-                       capture_output=True, text=True)
+    try:
+        p = subprocess.run([sys.executable, f"{ROOT}/tools/brief.py", "--equity", str(int(state["equity_toman"]))],
+                           capture_output=True, text=True, timeout=150)
+    except subprocess.TimeoutExpired:
+        p = subprocess.CompletedProcess([], 3, "", "brief.py timeout")
     print(f"brief rc={p.returncode} in {time.time() - t0:.1f}s")
     try:
         with open(f"{ROOT}/data/meta.json") as f:
@@ -182,6 +206,8 @@ def run_brief(state):
     if p.returncode not in (0, 2):
         print(p.stderr[-800:])
     try:
+        if p.returncode not in (0, 2) or os.path.getmtime(f"{ROOT}/latest_brief.json") < t0 - 1:
+            raise RuntimeError("brief failed or stale")  # never act on an old latest_brief.json
         with open(f"{ROOT}/latest_brief.json") as f:
             b = json.load(f)
     except Exception:
@@ -217,6 +243,12 @@ def risk_check(b, state, cfg, news_ok):
     if (b.get("session_entry") or {}).get("blocked"):
         reasons.append((b["session_entry"].get("reason_fa")) or "در این ساعت ورود مجاز نیست.")
     d = state["day"]
+    last = (state.get("signals_sent") or [None])[-1]
+    if last and last.get("at"):
+        age = (now_teh() - datetime.strptime(last["at"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)).total_seconds() / 60
+        closed = any(f"{d['date']} {r.get('at', '')}" >= last["at"] for r in d.get("records", []))
+        if 0 <= age < SIGNAL_LOCK_MIN and not closed:
+            reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، /loss یا /win را بفرستید.")
     cap_loss = eq * float(cfg.get("daily_loss_pct_max", 20)) / 100
     if int(d.get("losses") or 0) >= int(cfg.get("max_consecutive_losses", 3)):
         reasons.append(f"توقف روزانه فعال است: امروز {d['losses']} معامله‌ی زیان‌ده ثبت شده است.")
@@ -288,6 +320,7 @@ _NUM = re.compile(r"(?<![A-Za-z\d.])\d+(?:\.\d+)?")
 
 def fa_num(t):
     """Persian digits and decimal separator; tokens like M5, H1, M15, EMA20, XAUUSD stay Latin."""
+    t = re.sub(r"(?<=\d),(?=\d{3})", "٬", t)  # thousands separator
     return _NUM.sub(lambda m: m.group(0).replace(".", "٫").translate(_FA_DIGITS), t)
 
 def render(t):
@@ -384,6 +417,8 @@ def short_reason(b, reasons):
         return "داخل پنجره‌ی خبری"
     if (b.get("session_entry") or {}).get("blocked"):
         return "جمعه‌شب، ورود جدید ممنوع" if (b["session_entry"].get("friday_window")) else "بازار بسته است"
+    if "باز فرض می‌شود" in text:
+        return "معامله‌ی قبلی هنوز باز است"
     if "توقف روزانه" in text:
         return "توقف روزانه فعال است"
     if "تازه نیست" in text or "کهنه" in text or "منبع قیمتی" in text:
@@ -583,20 +618,29 @@ def main():
             state["last_verdict"] = dec.get("decision") if isinstance(dec, dict) else dec
         return brief
 
+    def emit_signal(b, plan, sizing, on_request=False):
+        """Send a signal at most once (dedup key), and record it so the 1-position lock applies."""
+        t = now_teh()
+        key = f"{t:%Y-%m-%d}|{plan['side']}|{round(plan['entry'] * 2) / 2}|{round(plan['sl'] * 2) / 2}"
+        if key in [x["key"] for x in state["signals_sent"]] and not on_request:
+            print("signal already sent:", key)
+            return False
+        ok = send(signal_msg(b, plan, sizing, state, cfg))
+        if ok and key not in [x["key"] for x in state["signals_sent"]]:
+            state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
+        return ok
+
     # cheap commands first (balance/loss/win change what the scan computes)
     for c, args in cmds:
         try:
             if c in ("/start", "/help"):
                 send(HELP)
             elif c == "/balance":
-                v = float(args[0].replace(",", "").replace("٬", ""))
-                if v <= 0: raise ValueError
+                v = parse_amount(args)
                 state["equity_toman"] = v
                 send(f"✅ موجودی ثبت شد: {DG.toman(v)} تومان.\nسقف ریسک هر معامله: {DG.toman(v * 0.1)} تومان؛ توقف روزانه: {DG.toman(v * 0.2)} تومان ضرر.")
             elif c in ("/loss", "/win"):
-                v = float(args[0].replace(",", "").replace("٬", ""))  # positive amount required, else nothing is recorded
-                if v <= 0:
-                    raise ValueError
+                v = parse_amount(args)  # positive amount required, else nothing is recorded
                 d = state["day"]
                 d.setdefault("records", []).append({"type": c[1:], "toman": v, "at": now_teh().strftime("%H:%M")})
                 if c == "/loss":
@@ -621,6 +665,8 @@ def main():
                     kind = "زیان" if r["type"] == "loss" else "سود"
                     send(f"↩️ آخرین مورد حذف شد: {kind} {DG.toman(r['toman'])} تومان. "
                          f"امروز {d['losses']} معامله‌ی زیان‌ده و {d['wins']} معامله‌ی سودده ثبت شده است.")
+            elif c not in ("/status", "/brief", "/scan"):
+                send("دستور ناشناخته است. فهرست دستورها: /help")
         except (ValueError, IndexError):
             send("⚠️ مبلغ مثبت را هم بنویسید؛ چیزی ثبت نشد.\nمثال: /balance 2085600 یا /loss 150000 یا /win 200000\nبرای حذف آخرین مورد ثبت‌شده: /undo")
 
@@ -635,8 +681,10 @@ def main():
         elif c == "/scan":
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-            send(signal_msg(b, plan, sizing, state, cfg) if ok else
-                 short_brief(b, state, cfg, reasons=why))
+            if ok:
+                emit_signal(b, plan, sizing, on_request=True)
+            else:
+                send(short_brief(b, state, cfg, reasons=why))
 
     t = now_teh()
     if a.mode == "test":
@@ -649,12 +697,7 @@ def main():
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
         if ok:
-            key = f"{t:%Y-%m-%d}|{plan['side']}|{round(plan['entry'] * 2) / 2}|{round(plan['sl'] * 2) / 2}"
-            if key not in [x["key"] for x in state["signals_sent"]]:
-                if send(signal_msg(b, plan, sizing, state, cfg)):
-                    state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
-            else:
-                print("signal already sent:", key)
+            emit_signal(b, plan, sizing)
         else:
             print("no signal:", " | ".join(why)[:300])
         if t.weekday() < 5:
