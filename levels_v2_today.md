@@ -1,3 +1,5 @@
+> **SUPERSEDED / historical snapshot (2026-11-13 07:45 Tehran).** Do not use for trading. The levels_v2 score FAILED its backtest; the strong/medium labels below are unvalidated and must not be read as edge. Current source of truth: `tools/brief.py` / `latest_brief.md`.
+
 # XAUUSD key levels v2 (scored framework) — Fri 2026-11-13
 
 > **UNVALIDATED — backtest pending; scores are a heuristic.** The earlier locked backtest (2020–2026) found levels and direction **no better than random**. This is analysis only, not financial advice and not a trade signal.

@@ -517,16 +517,21 @@
   "source": "M5-News manual update"
  },
  "source": "M5-News official calendar refresh 2026-11-13 (tier v2)",
- "updated_at_tehran": "2026-11-13 12:59",
+ "updated_at_tehran": "2026-11-13T15:50",
  "window_policy": {
   "used": "M5-News recommended defaults for A/B data and speeches; tool C default 5/15 kept for monitor-only events. tools/news_windows.py event defaults are A/B/C 5/15 and A-FOMC 15/45; those 5-minute lead-ins were not used for A or B prints or speeches.",
-  "tool_defaults": "A 5/15 block; A FOMC 15/45 block; B 5/15 caution; C 5/15 monitor. now exits 1 only on an active A block.",
-  "A_data": "15/15 hard block (CPI, NFP, Core PCE).",
+  "tool_defaults": "tools/news_windows.py event defaults: A data 15/30, A FOMC 30/90 (statement) or 30/60 (presser only), A Chair speech 15/30, B data/minutes 15/15, B speech 15/30, C 5/15. `now` uses effective windows (stored ∪ DaryaGold floors) and exits 1 on an active A or B block.",
+  "A_data": "15/30 hard block (CPI, NFP, Core PCE) per 2026-11-13 team rule.",
   "A_fomc": "30 minutes before the statement to 60 minutes after the press conference start, including the presser. None in this date window.",
   "A_chair_speech": "15/30 hard block; extend through a scheduled Q&A or fireside segment.",
-  "B_data": "15/15 caution + spread check (PPI, Retail Sales, jobless claims, UK CPI).",
-  "B_speech_qa": "15/30 caution + spread check (governor/president outlook or Q&A).",
-  "B_minutes": "15/15 caution; fomc=false so merge will not upgrade to A. Upgrade only if the preceding meeting is known to be contentious.",
-  "C": "5/15 monitor only, not a block."
+  "B_data": "15/15 stored; NO-ENTRY block + be flat before the window (DaryaGold team rule). PPI, Retail Sales, jobless claims, UK CPI.",
+  "B_speech_qa": "15/30 stored; NO-ENTRY block + be flat before the window (governor/president outlook or Q&A).",
+  "B_minutes": "15/15 stored; NO-ENTRY block + be flat before the window; fomc=false so merge will not upgrade to A.",
+  "C": "5/15 monitor only, not a block.",
+  "team_rule_2026-11-13_15:38": "Boti decision: strictest window always applies. Team minimum: tier A no entries 15 before to 30 after; tier B no entries 10 before to 15 after and close before the window. Stored windows checked 15:40 Tehran: all A/B rows already meet or exceed this (A speeches 15/30, B data 15/15, B speeches 15/30). No A data prints (CPI/NFP/PCE) in the current file; future A data rows must use 15/30, not 15/15.",
+  "iran_holidays_next_30d": "Fri 2026-11-13 (22 Aban 1405, Fatimah martyrdom, official holiday, coincides with Friday). None in Azar 1405. Next: Wed 2026-12-23 (2 Dey). Sources: timeanddate.ir, timestamp.ir, makanet.ir. DaryaGold opening on holidays unconfirmed. Update 15:39: Boti confirmed from owner screenshots (15:29, 15:37) that DaryaGold is open with live quotes on 2026-11-13.",
+  "friday_close": "Owner decision (via Boti 15:48): DaryaGold follows forex hours, closed Sat-Sun. Mon-Thu trades may stay open overnight (00:30 settlement is not a close reason). Friday only: no new entries from 23:30 Tehran, all trades closed before 01:30 (forex close, 17:00 NY). The 22:30/00:30 rule is cancelled.",
+  "outside_hours_note": "Late-evening US events (FOMC minutes Wed 22:30 B, Warsh fireside Mon 23:15 A, Williams Wed 23:00 C, Barr Thu 22:45 C) are within trading hours again and their windows apply; overnight positions are exposed to them.",
+  "semantics": "Single source of truth: tools/news_windows.py effective_doc. Effective window = union(stored start/end, DaryaGold floors from the official release time: A 15 before/30 after, B 10 before/15 after). No new entries inside the effective window for tier A and B; for tier B be flat (close positions, cancel pending orders) before the effective START. Example 2026-11-13 PPI 17:00: stored 16:45-17:15 is wider than 10/15, so no entries from 16:45 and flat by 16:45 (not 16:50). Tier C monitor only."
  }
 }

@@ -1,0 +1,430 @@
+== BINDING OWNER OVERRIDES (DaryaGold, 2026-11-13; supersede any number below) ==
+Single source of truth for numbers: tools/broker_daryagold.json; news-window semantics: tools/news_windows.py (effective_doc).
+- Equity 2,085,600 toman (owner-editable). Sizes: half unit 40,000 toman/$1 (margin 500,000), full unit 80,000 toman/$1 (margin 1,000,000); fee 14,000 toman/unit (half-unit fee unconfirmed, 14,000 used); spread ~$0.25; limit entries and SL/TP fills have no spread.
+- Risk (owner's maximum-risk choice): max 10% of equity per trade incl. fee+spread; daily stop 20% of start-of-day equity or 3 losses; max 1 position incl. pending orders; net R:R >= 1.5. The 1% / 0.5% / 2% figures below are the original generic proposal and are NOT in force.
+- SL >= $1 and >= $0.5 beyond the structure level; no SL = VETO. 60 s minimum hold before manual/TP close. Liquidation at 80% loss of the whole portfolio.
+- News: tier A no entries 15 min before to 30 after the release; tier B no entries 10 before to 15 after AND be flat before the window; the effective window is the union with the stored window (e.g. PPI 17:00 stored 16:45-17:15 -> no entries and flat from 16:45). Tier C monitor only.
+- Hours: forex hours, closed Sat/Sun; weekday overnight holds allowed; Friday only no new entries from 2 h before 17:00 New York (23:30 Tehran in US winter) and everything closed before 17:00 NY (01:30 Tehran in US winter), DST-aware. The 22:30/00:30 nightly rule is CANCELLED.
+- Price: DaryaGold ~= Dukascopy bid + $0.3 (+/-0.5), calibrated 2026-11-13 15:37 Tehran.
+- Data freshness: brief.py treats data older than 10 minutes during market hours as stale (NO TRADE); the 2-second figure below is an ideal for live execution, not what our feed can deliver.
+- Both v2 engines FAILED out-of-sample (trend -0.35R, sweep -0.45R): demo only, no statistical edge. Never call a level strong.
+================================================================================
+
+برای اینکه قوانین M5-Risk در حساب‌های ۱۰۰، ۵۰۰، ۱۰۰۰، ۵۰۰۰ یا حتی ۱۰۰ هزار دلاری قابل استفاده باشند، باید محدودیت‌های ثابت دلاری و حجمی را به قوانین نسبتی و پویا (Dynamic Risk Management) تبدیل کنیم.
+
+پیشنهاد من این است که M5-Risk مستقل از سرمایه و استراتژی معاملاتی عمل کند؛ یعنی استراتژی فقط پیشنهاد معامله بدهد و مدیر ریسک براساس موجودی، مشخصات قرارداد، هزینه اجرا و محدودیت‌های حساب تصمیم بگیرد.
+
+یک اصلاح مهم: حجم ۰٫۰۱ لات نباید قانون ثابت باشد. این مقدار در یک حساب ممکن است ریسک زیادی داشته باشد و در حساب دیگر بسیار ناچیز باشد. حجم باید از فاصله حد ضرر و بودجه ریسک محاسبه شود.
+
+M5-Risk | Universal Risk Management Policy
+
+نسخه پیشنهادی 2.0
+
+۱. تعیین سرمایه و بودجه ریسک
+
+مبنای محاسبه باید Equity واقعی حساب باشد، نه موجودی اولیه یا Balance قدیمی.
+
+متغیرهای اصلی:
+
+* Account Equity: ارزش لحظه‌ای حساب با احتساب سود و زیان شناور.
+* Start-of-Day Equity: ارزش حساب در ابتدای روز معاملاتی.
+* Risk Per Trade: درصد مجاز ریسک هر معامله.
+* Daily Loss Limit: حداکثر زیان مجاز روزانه.
+* Max Position Risk: سقف ریسک یک موقعیت.
+* Free Margin: مارجین آزاد.
+
+پیشنهاد اولیه:
+
+پارامتر	مقدار پیشنهادی
+ریسک هر معامله	۱٪ Equity
+ریسک محافظه‌کارانه‌تر	۰٫۵٪ Equity
+سقف زیان روزانه	۲٪ Equity ابتدای روز
+حداکثر ضرر متوالی	۳ معامله
+حداکثر پوزیشن هم‌زمان	۱
+حداقل Risk/Reward	۱٫۵
+مبنای محاسبه	Equity
+
+این درصدها پارامترهای اولیه سیاست هستند و باید متناسب با نوسان، اهرم و شرایط حساب قابل تنظیم باشند.
+
+۲. محاسبه خودکار حجم معامله (Dynamic Position Sizing)
+
+جایگزین قانون ثابت ۰٫۰۱ لات
+
+فرمول اصلی:
+
+RiskBudget=Equity\times RiskPercent
+
+سپس:
+
+LotSize=
+\frac{RiskBudget}
+{StopDistance\times ContractValuePerPriceUnit}
+
+در محاسبه نهایی باید کمیسیون، اسپرد، اسلیپیج احتمالی و تبدیل ارز حساب نیز لحاظ شوند.
+
+مثال برای XAUUSD با فرض مشخصات قراردادی بروکر که هر ۱ لات معادل ۱۰۰ اونس طلا باشد:
+
+سرمایه	ریسک ۱٪	زیان مجاز
+۱۰۰ دلار	۱ دلار	۱ دلار
+۵۰۰ دلار	۵ دلار	۵ دلار
+۱۰۰۰ دلار	۱۰ دلار	۱۰ دلار
+۵۰۰۰ دلار	۵۰ دلار	۵۰ دلار
+۱۰٬۰۰۰ دلار	۱۰۰ دلار	۱۰۰ دلار
+۵۰٬۰۰۰ دلار	۵۰۰ دلار	۵۰۰ دلار
+۱۰۰٬۰۰۰ دلار	۱۰۰۰ دلار	۱۰۰۰ دلار
+
+این جدول سقف بودجه ریسک را نشان می‌دهد، نه اینکه الزاماً تمام آن باید مصرف شود.
+
+قانون بسیار مهم: اگر حداقل حجم مجاز بروکر، ریسک معامله را از بودجه تعیین‌شده بیشتر کند، M5-Risk باید معامله را رد کند؛ حتی اگر سیگنال از نظر تکنیکال عالی باشد.
+
+همچنین مشخصات قرارداد XAUUSD در بروکرها یکسان نیست. سیستم باید Contract Size، Tick Size، Tick Value، حداقل لات و گام تغییر حجم را مستقیماً از مشخصات نماد دریافت کند.
+
+۳. حد ضرر (Stop Loss)
+
+قانون ثابت «حداکثر ۵ دلار» حذف می‌شود و به دو محدودیت تبدیل می‌شود:
+
+* حد ضرر باید براساس ساختار بازار تعیین شود.
+* زیان احتمالی در صورت برخورد به حد ضرر نباید از بودجه ریسک عبور کند.
+
+مثلاً اگر یک ستاپ به حد ضرر دورتر نیاز داشته باشد، سیستم باید حجم را کاهش دهد؛ نه اینکه حد ضرر را به‌صورت مصنوعی نزدیک کند.
+
+اگر حجم قابل معامله با حداقل لات بروکر سازگار نباشد، نتیجه NO TRADE است.
+
+توجه: در گپ قیمتی، لغزش شدید یا اختلال نقدشوندگی، زیان واقعی ممکن است از بودجه محاسبه‌شده بیشتر شود. بنابراین بودجه ریسک تضمین سقف قطعی زیان نیست.
+
+۴. نسبت سود به ضرر (Risk/Reward)
+
+قانون:
+
+RR=\frac{ExpectedNetProfit}{PotentialNetLoss}حداقل 1.5:1
+
+شرایط:
+
+* نسبت باید بعد از کسر هزینه‌های معامله محاسبه شود.
+* هدف سود باید با سطوح واقعی بازار سازگار باشد.
+* هدف سود نباید صرفاً برای رسیدن به ۱٫۵ تغییر داده شود.
+* اگر فضای کافی تا سطح مقاومت یا حمایت بعدی وجود نداشته باشد، معامله رد شود.
+* نسبت ۱٫۵ حداقل مجاز است، نه تضمین سودآوری.
+
+مثلاً با ریسک ۱۰ دلار، سود خالص مورد انتظار باید حداقل ۱۵ دلار باشد.
+
+۵. مدیریت اخبار اقتصادی
+
+قانون اخبار باید بر اساس اهمیت رویداد و زمان انتشار تنظیم شود.
+
+سطح	رویداد	سیاست
+A	FOMC، CPI، NFP، Core PCE	ورود ممنوع
+B	PPI، ISM، Retail Sales، GDP	احتیاط و خروج پیش از شروع پنجره
+C	اخبار کم‌اهمیت	نظارت معمول
+
+پیشنهاد پنجره اولیه برای آزمایش:
+
+نوع خبر	قبل از انتشار	بعد از انتشار
+A	۱۵ دقیقه	۳۰ دقیقه
+B	۱۰ دقیقه	۱۵ دقیقه
+C	بدون توقف اجباری	نظارت عادی
+
+برای FOMC و رویدادهای غیرعادی، این پنجره‌ها می‌توانند طولانی‌تر شوند.
+
+قاعده مهم: اگر پوزیشن بازی در زمان نزدیک‌شدن به پنجره ممنوعیت قرار دارد، سیستم باید قبل از شروع پنجره آن را ببندد. برای خبر سطح A نیز هیچ ورود جدیدی مجاز نیست.
+
+زمان‌ها باید قابل تنظیم باشند و براساس زمان محلی انتشار رویداد و تقویم معتبر اقتصادی اجرا شوند.
+
+۶. کنترل اسپرد (Spread Filter)
+
+قانون ثابت ۰٫۸۰ دلار را به یک فیلتر تطبیقی تبدیل می‌کنیم.
+
+اسپرد باید با شرایط معمول همان ساعت و همان سشن مقایسه شود.
+
+پیشنهاد:
+
+SpreadRatio=
+\frac{CurrentSpread}{NormalSpread_{Session}}
+
+ورود ممنوع اگر هر دو شرط برقرار باشند:
+
+SpreadRatio>2
+
+و
+
+CurrentSpread>AbsoluteSpreadCap
+
+مقدار AbsoluteSpreadCap باید بر اساس بروکر، نوع حساب و مشخصات نماد تعیین شود؛ ۰٫۸۰ دلار می‌تواند مقدار اولیه قابل آزمایش باشد، نه قانون جهانی.
+
+علاوه بر این، اگر هزینه اسپرد و کمیسیون باعث شود نسبت سود به ضرر خالص کمتر از ۱٫۵ شود، معامله حتی با اسپرد ظاهراً مجاز نیز رد می‌شود.
+
+۷. کنترل تازگی و اعتبار داده‌ها
+
+قانون توقف اجباری
+
+اگر داده قیمت معتبر و تازه نباشد:
+
+* ورود ممنوع.
+* تغییر حد ضرر و مدیریت سفارش باید فقط از طریق اطلاعات معتبر بروکر انجام شود.
+* هیچ قیمت تخمینی یا داده کش‌شده‌ای جایگزین قیمت زنده نشود.
+* در صورت قطع اتصال یا عدم هماهنگی ساعت داده‌ها، سیستم وارد وضعیت NO TRADE شود.
+
+پیشنهاد اولیه برای فید زنده XAUUSD:
+
+داده	حداکثر تأخیر پیشنهادی
+قیمت XAUUSD	۲ ثانیه
+Bid/Ask	۲ ثانیه
+GC Order Flow	۳ ثانیه
+وضعیت سفارش بروکر	۵ ثانیه
+
+این اعداد باید براساس نرخ به‌روزرسانی واقعی فید تنظیم شوند. تأخیر عادی ناشی از نبود معامله جدید نباید با قطع‌شدن داده اشتباه گرفته شود؛ برای تشخیص این دو باید Heartbeat و زمان آخرین به‌روزرسانی بررسی شود.
+
+همچنین اگر GC از دسترس خارج شود، سیستم نباید وانمود کند که تأیید Order Flow دریافت کرده است. در نسخه‌ای که تأیید GC اجباری است، معامله متوقف می‌شود.
+
+۸. توقف روزانه (Daily Loss Limit)
+
+قانون وتوی M5-Risk
+
+قانون ثابت ۱۰ دلار حذف می‌شود.
+
+مبنای جدید:
+
+DailyLossLimit=StartOfDayEquity\times 2\%
+
+توقف معاملات با وقوع اولین مورد از این دو شرط:
+
+* سه معامله زیان‌ده متوالی.
+* رسیدن زیان روزانه به ۲٪ سرمایه ابتدای روز.
+
+مثال:
+
+سرمایه ابتدای روز	سقف زیان روزانه
+۱۰۰ دلار	۲ دلار
+۵۰۰ دلار	۱۰ دلار
+۱۰۰۰ دلار	۲۰ دلار
+۵۰۰۰ دلار	۱۰۰ دلار
+۱۰٬۰۰۰ دلار	۲۰۰ دلار
+۱۰۰٬۰۰۰ دلار	۲۰۰۰ دلار
+
+برای محاسبه زیان روزانه باید موارد زیر لحاظ شوند:
+
+* زیان معاملات بسته‌شده.
+* سود و زیان شناور پوزیشن‌های باز.
+* کمیسیون.
+* Swap و هزینه‌های معاملاتی.
+* هزینه‌های دیگر قابل انتساب به معاملات.
+
+پیشنهاد من این است که توقف روزانه تا شروع روز معاملاتی بعدی بروکر باقی بماند و با تغییر روز تقویمی محلی به‌تنهایی آزاد نشود.
+
+اگر سقف زیان روزانه لمس شد، ابتدا ریسک پوزیشن موجود مدیریت و موقعیت طبق سیاست توقف بسته شود؛ سپس ورود جدید تا روز معاملاتی بعد ممنوع خواهد بود.
+
+۹. محدودیت تعداد پوزیشن‌ها
+
+قانون یک پوزیشن را حفظ می‌کنیم، اما دقیق‌تر:
+
+* حداکثر یک پوزیشن باز XAUUSD در هر زمان.
+* سفارش‌های معلقی که ممکن است پوزیشن دوم ایجاد کنند نیز مشمول محدودیت هستند.
+* سفارش جدید تا تعیین وضعیت قطعی سفارش قبلی ارسال نشود.
+* پوزیشن‌های چندبخشی یا معاملات هم‌جهت نباید برای دورزدن محدودیت استفاده شوند.
+
+اگر چند سیستم معاملاتی روی یک حساب کار می‌کنند، M5-Risk باید همه آن‌ها را از نظر مجموع ریسک کنترل کند.
+
+۱۰. قوانین جدید وتوی M5-Risk
+
+این بخش مهم‌ترین قسمت سیاست است.
+
+M5-Risk صرفاً یک امتیازدهنده نیست؛ یک Risk Gate مستقل است.
+
+هر سیگنال باید از تمام کنترل‌های زیر عبور کند:
+
+کنترل	شرط رد سیگنال
+سرمایه	Equity نامعتبر
+حجم	ریسک بیشتر از بودجه
+حد ضرر	SL نامعتبر یا غیرقابل اجرا
+R/R	کمتر از ۱٫۵ خالص
+اخبار A	داخل پنجره ممنوعیت
+اخبار B	داخل پنجره ممنوعیت یا خروج پیش از آن ناممکن
+اسپرد	عبور از محدودیت تطبیقی
+داده	کهنه، ناقص یا نامعتبر
+زیان روزانه	رسیدن به سقف
+ضرر متوالی	رسیدن به ۳ ضرر
+پوزیشن	وجود پوزیشن باز یا سفارش متعارض
+مارجین	ناکافی بودن Free Margin
+اتصال	وضعیت نامعتبر بروکر یا سفارش
+
+اصل نهایی:
+
+حتی اگر تمام تحلیل‌های تکنیکال، فاندامنتال و Order Flow سیگنال خرید یا فروش بدهند، ردشدن حتی یک شرط اجباری توسط M5-Risk به معنی لغو سیگنال است.
+
+۱۱. خروجی استاندارد M5-Risk
+
+هر سیگنال باید یک گزارش ساختاریافته داشته باشد.
+
+M5-Risk Validation
+
+نمونه تأیید
+
+اعداد زیر صرفاً نمونه هستند و سیگنال واقعی نیستند.
+
+پارامتر	مقدار نمونه
+Account Equity	$5,000
+Risk Per Trade	۱٪
+Maximum Risk	$50
+Position Size	محاسبه پویا
+Stop Loss	ساختاری
+Minimum R/R	1.5
+Daily Loss Limit	$100
+Max Positions	1
+News Filter	PASS
+Spread Filter	PASS
+Data Freshness	PASS
+Margin Check	PASS
+
+Risk Decision
+
+APPROVED
+
+تأیید ریسک به معنی تأیید سودآوری یا وجود برتری آماری نیست.
+
+در صورت رد:
+
+M5-Risk Validation
+
+VETO
+
+Reason: Daily Loss Limit Reached
+
+Action: NO TRADE
+
+Permission: DENIED
+
+Next Eligible Session: Next Broker Trading Day
+
+۱۲. هشدار اجباری برای تمام سیگنال‌ها
+
+این هشدار باید بدون استثنا همراه تمام خروجی‌های خرید و فروش باشد:
+
+هشدار ریسک معاملاتی
+
+این سیگنال صرفاً بر اساس تحلیل داده‌های موجود تولید شده و دارای برتری آماری اثبات‌شده نیست. احتمال زیان وجود دارد و حد ضرر نیز در شرایط گپ قیمتی یا اسلیپیج شدید، سقف قطعی زیان را تضمین نمی‌کند.
+
+پیش از استفاده از سرمایه واقعی، استراتژی را روی حساب دمو و با احتساب هزینه‌های واقعی اجرا آزمایش کنید.
+
+۱۳. نسخه نهایی قوانین قابل انتقال به سیستم
+
+این قسمت را می‌توانی مستقیماً به مشخصات فنی سیستم معاملاتی اضافه کنی.
+
+M5_RISK:
+  role: independent_risk_manager
+  authority: absolute_veto
+  mode: pre_trade_and_continuous_monitoring
+  capital:
+    reference: account_equity
+    daily_reference: start_of_day_equity
+    dynamic_position_sizing: true
+    broker_contract_specs_required: true
+  risk:
+    risk_per_trade_pct: 1.0
+    conservative_risk_pct: 0.5
+    daily_loss_limit_pct: 2.0
+    max_consecutive_losses: 3
+    max_open_positions: 1
+    minimum_net_risk_reward: 1.5
+  position_sizing:
+    fixed_lot: false
+    calculate_from_stop_distance: true
+    include_commission: true
+    include_spread: true
+    include_slippage_estimate: true
+    account_currency_conversion: required
+    respect_broker_min_lot: true
+    respect_broker_lot_step: true
+    reject_if_min_lot_exceeds_risk: true
+  stop_loss:
+    structurally_based: true
+    maximum_loss_from_risk_budget: true
+    never_widen_without_revalidation: true
+    no_stop_loss: reject
+  news:
+    level_A:
+      entries_allowed: false
+      pre_event_minutes: 15
+      post_event_minutes: 30
+    level_B:
+      entries_allowed: false
+      pre_event_minutes: 10
+      post_event_minutes: 15
+      close_positions_before_window: true
+    level_C:
+      normal_monitoring: true
+    timezone_aware: true
+    calendar_source_required: true
+  spread:
+    adaptive_session_baseline: true
+    max_relative_spread: 2.0
+    absolute_spread_cap: broker_configured
+    reject_if_both_limits_exceeded: true
+  data_quality:
+    stale_price_reject: true
+    price_max_age_seconds: 2
+    bid_ask_validation: true
+    timestamp_validation: true
+    gc_data_validation: true
+    heartbeat_monitoring: true
+    missing_critical_data: reject
+  daily_limits:
+    stop_after_consecutive_losses: 3
+    stop_at_daily_loss_pct: 2.0
+    include_floating_pnl: true
+    include_trading_costs: true
+    reset_at_broker_trading_day: true
+    manual_bypass: prohibited
+  execution:
+    free_margin_check: true
+    pending_order_control: true
+    duplicate_position_prevention: true
+    broker_connection_validation: true
+  signal_policy:
+    veto_overrides_all_strategies: true
+    veto_reason_required: true
+    no_trade_if_any_mandatory_check_fails: true
+    statistical_edge_warning_required: true
+    demo_testing_recommended: true
+  output:
+    risk_decision:
+      - APPROVED
+      - VETO
+    include:
+      - equity
+      - risk_budget
+      - position_size
+      - stop_loss
+      - take_profit
+      - net_risk_reward
+      - spread_status
+      - news_status
+      - data_status
+      - daily_loss_status
+      - margin_status
+      - veto_reason
+      - statistical_edge_warning
+
+۱۴. سه بهبود تکمیلی که توصیه می‌کنم
+
+سه قابلیت دیگر را هم به M5-Risk اضافه می‌کنم:
+
+* Risk Scaling: اگر حساب افت سرمایه پیدا کرد، ریسک معامله به‌صورت خودکار کاهش یابد. مثلاً در Drawdown از سقف سرمایه، سیستم به‌جای ادامه با ریسک ۱٪، به ۰٫۵٪ برگردد.
+* Execution Kill Switch: اگر اسلیپیج غیرعادی، قطع ارتباط یا خطای سفارش رخ داد، تمام ورودهای جدید متوقف شوند.
+* Risk Audit Log: هر تأیید یا وتو با زمان، سرمایه، دلیل، پارامترها و وضعیت داده‌ها ثبت شود تا بعداً بتوان عملکرد مدیر ریسک را ارزیابی کرد.
+
+نتیجه نهایی من
+
+بهترین اصلاح این است که M5-Risk را به یک مدیر ریسک مستقل با سه وظیفه تبدیل کنیم:
+
+* Pre-Trade: بررسی و تأیید یا رد هر سیگنال.
+* Position Monitoring: نظارت مستمر بر پوزیشن، زیان شناور، اسپرد و شرایط بازار.
+* Account Protection: توقف معاملات در صورت عبور از محدودیت‌های ریسک.
+
+یک نکته آخر: درصدهای پیشنهادی باید قابل تنظیم باشند، اما استراتژی معاملاتی اجازه تغییر آن‌ها را نداشته باشد. فقط تنظیمات مجاز و از پیش تعیین‌شده مدیر ریسک باید بتوانند پارامترهای ریسک را تغییر دهند.
+
+پیشنهاد من: ۱٪ ریسک هر معامله، ۲٪ سقف زیان روزانه، حداکثر سه ضرر متوالی و یک پوزیشن باز؛ با حجم کاملاً پویا و حق وتوی غیرقابل دورزدن M5-Risk.
+== 2026-11-13 15:52 Tehran: DaryaGold hours (owner decision via Boti; the 22:30/00:30 rule of 15:50 is CANCELLED) ==
+- DaryaGold follows forex hours; closed Saturday and Sunday.
+- Mon-Thu: positions may be held overnight; the 00:30 settlement is not a reason to close.
+- Friday: no new entries from 23:30 Tehran; all positions and pending orders closed/cancelled before 01:30 Tehran (forex close).
+- Nothing held over the weekend. Signals outside trading hours = VETO.

@@ -10,13 +10,23 @@ Stored `tier` and `fomc` on an existing window are authoritative and are never o
 
   A  US CPI, US NFP, US Core PCE / PCE; FOMC *decision/statement/presser* (fomc=true);
      Fed Chair speeches (fomc=false). Hard block.
-  B  FOMC *minutes* (fomc=false — not a hard block); PPI, ISM, Retail Sales, GDP;
-     named non-US CPI; other Fed speeches (governors, vice chairs, presidents). Caution + spread check.
+  B  FOMC *minutes* (fomc=false, not an FOMC block); PPI, ISM, Retail Sales, GDP;
+     named non-US CPI; other Fed speeches (governors, vice chairs, presidents).
+     DaryaGold team rule (owner, 2026-11-13): tier B is ALSO a no-entry block, and open positions
+     must be closed before the window starts.
+
+WINDOW SEMANTICS (single source of truth, used by brief.py, bias.py, regime.py and `now`):
+  effective window = union of the stored [start, end) and the DaryaGold floors in
+  tools/broker_daryagold.json `news_buffers` (A: 15 before / 30 after, B: 10 before / 15 after,
+  measured from the official release time). No new entries anywhere inside the effective window.
+  For tier B, close open positions and cancel pending orders BEFORE the effective start.
+  Example: PPI 17:00 stored 16:45-17:15 -> effective 16:45-17:15 (stored is wider than 10/15),
+  so no entries from 16:45 and be flat by 16:45 (not 16:50).
   C  monitor only (claims and other items that are not in the lists above)
 
 Default buffers for the `event` command (minutes before / after `--time`).
 These match data/news_windows.json `window_policy` and do not rewrite stored start/end:
-  A data (US CPI / NFP / PCE)     15 / 15
+  A data (US CPI / NFP / PCE)     15 / 30
   A FOMC (`--time` = statement)   30 / 90  (30 before the statement, 60 after a presser that starts ~30 min later)
   A FOMC (`--time` = presser)     30 / 60  (if the label is a press conference only)
   A Fed Chair speech              15 / 30
@@ -32,7 +42,7 @@ Commands
   event --date 2026-11-13 --time 17:00 --label "US PPI" [--before N --after N] [--tier A|B|C]
   bias  --bias bearish|bullish|neutral --why "..." [--invalidation "..."]
   list  [--date 2026-11-12]                         print windows (merged view, with tier)
-  now   [--at "2026-11-12 17:05"] [--lookahead 30]  is a window active / starting soon? exit 1 only if a hard BLOCK is active
+  now   [--at "2026-11-12 17:05"] [--lookahead 30]  is a window active / starting soon? exit 1 if a tier-A or tier-B no-entry block is active (effective window)
   prune [--days 3]                                  drop windows that ended more than N days ago
 
 This module is stdlib-only (no pandas) so `bias` / `now` cannot stall on a heavy import.
@@ -138,7 +148,7 @@ def action_for(tier, fomc=False):
     if tier == "A":
         return "block"
     if tier == "B":
-        return "caution"
+        return "block"  # DaryaGold team rule 2026-11-13: tier B = no entries + flat before window
     if tier == "C":
         return "monitor"
     return None
@@ -163,7 +173,7 @@ def default_buffers(label, tier=None, fomc=None):
     if t == "A" and re.search(r"\bchair", s):
         return 15, 30, t, False
     if t == "A":
-        return 15, 15, t, False
+        return 15, 30, t, False
     if t == "B" and re.search(rf"\b{_SPEECH}\b", s):
         return 15, 30, t, False
     if t == "B":
@@ -218,7 +228,10 @@ def _merge_meta(a, b):
     fomc = bool(a.get("fomc") or b.get("fomc"))
     if fomc:
         tier = "A"
-    return {"labels": labels, "tier": tier, "fomc": fomc, "action": action_for(tier, fomc)}
+    act = action_for(tier, fomc)
+    if "block" in (a.get("action"), b.get("action")):
+        act = "block"  # keep a broker-level block (DaryaGold: tier B is no-entry too)
+    return {"labels": labels, "tier": tier, "fomc": fomc, "action": act}
 
 def merged(d):
     """Overlapping/adjacent windows merged; labels joined; highest-severity tier kept."""
@@ -231,6 +244,55 @@ def merged(d):
             out[-1][2] = _merge_meta(out[-1][2], meta)
         else:
             out.append([s, e, meta])
+    return out
+
+BROKER_JSON = "/workspace/m5-gold-team/tools/broker_daryagold.json"
+
+def inferred_event_time(start, end, tier, fomc=False):
+    """Best-effort official release time from a stored window that already includes lead-in buffers."""
+    if tier == "A" and fomc:
+        before_used = 30
+    elif tier in ("A", "B"):
+        before_used = 15
+    elif tier == "C":
+        before_used = 5
+    else:
+        before_used = 0
+    event = start + timedelta(minutes=before_used)
+    if event >= end:
+        event = start + (end - start) / 2
+    return event
+
+def effective_bounds(start, end, tier, fomc=False, floors=None):
+    """Union of the stored window and the DaryaGold floor buffers. Never shrinks."""
+    if floors is None:
+        floors = (load_json(BROKER_JSON, {}) or {}).get("news_buffers") or {}
+    f = floors.get(str(tier) if tier else "") or {}
+    before, after = int(f.get("before_min") or 0), int(f.get("after_min") or 0)
+    if before <= 0 and after <= 0:
+        return start, end
+    ev = inferred_event_time(start, end, tier, fomc=fomc)
+    return min(start, ev - timedelta(minutes=before)), max(end, ev + timedelta(minutes=after))
+
+def effective_doc(d, floors=None):
+    """Copy of the news doc with every window widened to its effective bounds (in memory only)."""
+    if floors is None:
+        floors = (load_json(BROKER_JSON, {}) or {}).get("news_buffers") or {}
+    out = dict(d or {}); wins = []
+    for w in (d or {}).get("windows") or []:
+        ww = dict(w)
+        try:
+            s0 = datetime.strptime(ww["start"], FMT).replace(tzinfo=TEH)
+            e0 = datetime.strptime(ww["end"], FMT).replace(tzinfo=TEH)
+        except (KeyError, ValueError, TypeError):
+            wins.append(ww); continue
+        tier = ww.get("tier") if ww.get("tier") in ("A", "B", "C") else classify_tier(ww.get("label") or "")[0]
+        s2, e2 = effective_bounds(s0, e0, tier, bool(ww.get("fomc")), floors)
+        if (s2, e2) != (s0, e0):
+            ww.update(start=s2.strftime(FMT), end=e2.strftime(FMT), buffer_expanded=True,
+                      stored_start=w.get("start"), stored_end=w.get("end"))
+        wins.append(ww)
+    out["windows"] = wins
     return out
 
 def status(d, at=None, lookahead=30):
@@ -328,7 +390,7 @@ def main():
         print("news_bias:", d.get("news_bias"), flush=True)
     elif a.cmd == "now":
         at = datetime.strptime(a.at, "%Y-%m-%d %H:%M").replace(tzinfo=TEH) if a.at else None
-        st = status(d, at, a.lookahead); print(st, flush=True)
+        st = status(effective_doc(d), at, a.lookahead); print(st, flush=True)
         sys.exit(1 if (st.get("action") == "block" or st.get("soon_block")) else 0)
     elif a.cmd == "prune":
         cut = datetime.now(TEH) - timedelta(days=a.days)

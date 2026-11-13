@@ -270,7 +270,8 @@ def plan_from_setup(setup, lv, cfg):
     ref = float(setup["ref_price"]) if setup.get("ref_price") is not None else price
     extreme = setup.get("extreme")
     entry = ref
-    pad = max(float(cfg.get("min_sl_usd") or 1.0), min(2.0, 0.35 * atr))
+    pad = max(float(cfg.get("min_sl_usd") or 1.0), float(cfg.get("min_sl_beyond_structure_usd") or 0.5),
+              min(2.0, 0.35 * atr))
     if side == "SELL":
         anchor = max(ref, float(extreme) if extreme is not None else ref)
         sl = max(anchor + pad, entry + float(cfg.get("min_sl_usd") or 1.0))
@@ -310,58 +311,23 @@ def plan_from_setup(setup, lv, cfg):
 
 
 def inferred_event_time(start, end, tier, fomc=False):
-    """Best-effort official time from a stored window that already includes buffers."""
-    if tier == "A" and fomc:
-        before_used = 30
-    elif tier == "A":
-        before_used = 15
-    elif tier == "B":
-        before_used = 15
-    elif tier == "C":
-        before_used = 5
-    else:
-        before_used = 0
-    event = start + timedelta(minutes=before_used)
-    if event >= end:
-        event = start + (end - start) / 2
-    return event
+    """Delegates to news_windows.py (single source of truth for window semantics)."""
+    import news_windows as _nw
+    return _nw.inferred_event_time(start, end, tier, fomc=fomc)
 
 
 def effective_bounds(start, end, tier, fomc=False, cfg=None):
     """Union of the stored window and the DaryaGold floor buffers. Never shrinks."""
+    import news_windows as _nw
     cfg = cfg or load_config()
-    floors = (cfg.get("news_buffers") or {}).get(str(tier) if tier else "") or {}
-    before = int(floors.get("before_min") or 0)
-    after = int(floors.get("after_min") or 0)
-    if before <= 0 and after <= 0:
-        return start, end
-    event = inferred_event_time(start, end, tier, fomc=fomc)
-    return min(start, event - timedelta(minutes=before)), max(end, event + timedelta(minutes=after))
+    return _nw.effective_bounds(start, end, tier, fomc=fomc, floors=cfg.get("news_buffers") or {})
 
 
 def expand_news_doc(doc, cfg=None):
     """Copy of news_windows.json with start/end widened to effective floors (in memory only)."""
+    import news_windows as _nw
     cfg = cfg or load_config()
-    out = copy.deepcopy(doc or {})
-    wins = []
-    for w in out.get("windows") or []:
-        ww = dict(w)
-        try:
-            start = datetime.strptime(ww["start"], "%Y-%m-%dT%H:%M").replace(tzinfo=TEH)
-            end = datetime.strptime(ww["end"], "%Y-%m-%dT%H:%M").replace(tzinfo=TEH)
-        except (KeyError, ValueError, TypeError):
-            wins.append(ww)
-            continue
-        s2, e2 = effective_bounds(start, end, ww.get("tier"), bool(ww.get("fomc")), cfg)
-        ww["start"] = s2.strftime("%Y-%m-%dT%H:%M")
-        ww["end"] = e2.strftime("%Y-%m-%dT%H:%M")
-        if (s2, e2) != (start, end):
-            ww["buffer_expanded"] = True
-            ww["stored_start"] = w.get("start")
-            ww["stored_end"] = w.get("end")
-        wins.append(ww)
-    out["windows"] = wins
-    return out
+    return _nw.effective_doc(copy.deepcopy(doc or {}), floors=cfg.get("news_buffers") or {})
 
 
 def _hm(s, default="17:00"):

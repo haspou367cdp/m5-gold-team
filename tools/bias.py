@@ -11,7 +11,8 @@ D1 is not used for direction (levels only).
 
 Verdict (first rule that fires wins):
   stale / market closed -> no_data | inside a tier-A (block) window, or one starting within its buffer -> wait
-  tier B is caution + spread check, not an automatic block; tier C is monitor only
+  tier B is ALSO a no-entry block (DaryaGold team rule), and positions must be flat before it; tier C is monitor only
+  windows are the effective (stored ∪ DaryaGold floors) windows from news_windows.effective_doc
   spread abnormal (> 2x typical for that hour and > $0.8) -> wait
   bias neutral -> wait for range edges | price within 0.3*ATR_M5 of a medium/strong level IN the bias direction
   -> near_level (watch for an M5 rejection candle)
@@ -138,9 +139,9 @@ def compute(at=None, pre=20):
     elif not meta.get("market_open", True):
         v = {"code": "market_closed", "fa": "بازار بسته است؛ صبر کن."}
     elif block_now:
-        v = {"code": "wait_news", "fa": f"صبر کن: داخل پنجره‌ی خبری سطح A {win.get('start','')} تا {win.get('end','')} به وقت تهران ({' + '.join(win.get('labels') or [])}).", "until": win.get("end")}
+        v = {"code": "wait_news", "fa": f"صبر کن: داخل پنجره‌ی خبری سطح {win.get('tier') or 'A'} (ورود ممنوع) {win.get('start','')} تا {win.get('end','')} به وقت تهران ({' + '.join(win.get('labels') or [])}).", "until": win.get("end")}
     elif block_soon:
-        v = {"code": "wait_news_soon", "fa": f"صبر کن: {win.get('minutes_to_next')} دقیقه‌ی دیگر پنجره‌ی خبری سطح A {str(win.get('next_start') or '')[-5:]} تا {win.get('next_end')} شروع می‌شود.", "until": win.get("next_end")}
+        v = {"code": "wait_news_soon", "fa": f"صبر کن: {win.get('minutes_to_next')} دقیقه‌ی دیگر پنجره‌ی خبری سطح {win.get('next_tier') or 'A'} {str(win.get('next_start') or '')[-5:]} تا {win.get('next_end')} شروع می‌شود.", "until": win.get("next_end")}
     elif sp["abnormal"]:
         v = {"code": "wait_spread", "fa": f"صبر کن: اسپرد غیرعادی است ({sp['current']} دلار، معمول این ساعت {sp['typical_this_hour']})."}
     elif bias == "neutral":
@@ -164,9 +165,14 @@ def compute(at=None, pre=20):
         else:
             v = {"code": "wait", "fa": "صبر کن: سطح معتبری در جهت بایاس نزدیک قیمت نیست."}
     if win.get("inside") and win.get("action") == "caution":
-        v["news_caution_fa"] = f"خبر سطح B فعال است ({' + '.join(win.get('labels') or [])})؛ احتیاط و کنترل اسپرد، بلوک خودکار نیست."
-    elif win.get("soon_action") == "caution":
-        v["news_caution_fa"] = f"{win.get('minutes_to_next')} دقیقه تا خبر سطح B؛ احتیاط و کنترل اسپرد."
+        v["news_caution_fa"] = f"خبر سطح {win.get('tier')} فعال است ({' + '.join(win.get('labels') or [])})؛ احتیاط و کنترل اسپرد."
+    elif (not win.get("inside")) and win.get("next_action") == "block" and win.get("minutes_to_next") is not None \
+            and win["minutes_to_next"] <= 120:
+        st_ = str(win.get("next_start") or "")[-5:]
+        v["news_caution_fa"] = (f"{win['minutes_to_next']} دقیقه تا پنجره‌ی خبری سطح {win.get('next_tier')} "
+                                f"({st_} تا {win.get('next_end')}، {' + '.join(win.get('next_labels') or [])}). "
+                                f"از {st_} ورود ممنوع است و هر پوزیشن یا اوردر باید پیش از {st_} بسته یا لغو شود.")
+        v["flat_by_tehran"] = st_
     v["near_threshold"] = round(near, 2)
     if not agree and nb and tech != "neutral": v["note_fa"] = f"بایاس تکنیکال {FA[tech]} ولی بایاس خبری {FA.get(nb, nb)} است."
     out["verdict"] = v

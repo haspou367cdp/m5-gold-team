@@ -1,3 +1,15 @@
+== BINDING OWNER OVERRIDES (DaryaGold, 2026-11-13; supersede any number below) ==
+Single source of truth for numbers: tools/broker_daryagold.json; news-window semantics: tools/news_windows.py (effective_doc).
+- Equity 2,085,600 toman (owner-editable). Sizes: half unit 40,000 toman/$1 (margin 500,000), full unit 80,000 toman/$1 (margin 1,000,000); fee 14,000 toman/unit (half-unit fee unconfirmed, 14,000 used); spread ~$0.25; limit entries and SL/TP fills have no spread.
+- Risk (owner's maximum-risk choice): max 10% of equity per trade incl. fee+spread; daily stop 20% of start-of-day equity or 3 losses; max 1 position incl. pending orders; net R:R >= 1.5. The 1% / 0.5% / 2% figures below are the original generic proposal and are NOT in force.
+- SL >= $1 and >= $0.5 beyond the structure level; no SL = VETO. 60 s minimum hold before manual/TP close. Liquidation at 80% loss of the whole portfolio.
+- News: tier A no entries 15 min before to 30 after the release; tier B no entries 10 before to 15 after AND be flat before the window; the effective window is the union with the stored window (e.g. PPI 17:00 stored 16:45-17:15 -> no entries and flat from 16:45). Tier C monitor only.
+- Hours: forex hours, closed Sat/Sun; weekday overnight holds allowed; Friday only no new entries from 2 h before 17:00 New York (23:30 Tehran in US winter) and everything closed before 17:00 NY (01:30 Tehran in US winter), DST-aware. The 22:30/00:30 nightly rule is CANCELLED.
+- Price: DaryaGold ~= Dukascopy bid + $0.3 (+/-0.5), calibrated 2026-11-13 15:37 Tehran.
+- Data freshness: brief.py treats data older than 10 minutes during market hours as stale (NO TRADE); the 2-second figure below is an ideal for live execution, not what our feed can deliver.
+- Both v2 engines FAILED out-of-sample (trend -0.35R, sweep -0.45R): demo only, no statistical edge. Never call a level strong.
+================================================================================
+
 بله. چارچوب فعلی از نظر پوشش عوامل مهم کامل است، اما برای تبدیل‌شدن به یک سیستم اسکالپ قابل‌اجرا و قابل‌بک‌تست، به چند اصلاح اساسی نیاز دارد. مهم‌ترین مشکل آن، کمبود ابزار نیست؛ بلکه هم‌پوشانی شاخص‌ها، تفاوت کیفیت داده‌ها و مشخص‌نبودن نقش هر عامل در تصمیم نهایی است.
 
 پیشنهاد من این است که چارچوب را از یک فهرست بلند از اندیکاتورها و عوامل بازار، به یک سیستم تصمیم‌گیری چندلایه تبدیل کنیم. در این سیستم، هر داده باید وظیفه مشخصی داشته باشد و هیچ اندیکاتوری صرفاً به‌خاطر تأیید سیگنال‌های دیگر، امتیاز اضافی نگیرد.

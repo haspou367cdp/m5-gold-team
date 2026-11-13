@@ -2,7 +2,7 @@
 """regime.py - 4-state regime gate, ADX, VWAP deviation, and two unvalidated setup detectors.
 
 States:
-  news_abnormal         inside a tier-A block window, or a spread anomaly → no trade
+  news_abnormal         inside a tier-A or tier-B effective no-entry window (DaryaGold rule), or a spread anomaly → no trade
   volatility_expansion  high ATR percentile and/or elevated tick volume → wait
   trend                 directional H4/H1 (ADX as optional confirmation) → continuation engine allowed
   range                 otherwise (tight session range or mixed structure) → sweep / mean-reversion engine allowed
@@ -153,13 +153,13 @@ def classify(lv, win=None, spread=None, h4=None, h1=None, m5=None, h1_df=None, m
 
     # --- state 1: news / spread ---
     if win.get("action") == "block" or (win.get("inside") and win.get("tier") == "A"):
-        why = f"داخل پنجره‌ی خبری سطح A {win.get('start','')} تا {win.get('end','')}"
+        why = f"داخل پنجره‌ی خبری سطح {win.get('tier') or 'A'} (ورود ممنوع) {win.get('start','')} تا {win.get('end','')}"
         if win.get("labels"):
             why += f" ({' + '.join(win['labels'])})"
         return _pack("news_abnormal", "خبری / غیرعادی", why, None, rng, adx_h1, adx_m15, atr_pct, rvol, vdev)
     if win.get("soon_block") or win.get("soon_action") == "block":
         return _pack("news_abnormal", "خبری / غیرعادی",
-                     f"{win.get('minutes_to_next')} دقیقه تا پنجره‌ی خبری سطح A",
+                     f"{win.get('minutes_to_next')} دقیقه تا پنجره‌ی خبری سطح {win.get('next_tier') or 'A'} (ورود ممنوع)",
                      None, rng, adx_h1, adx_m15, atr_pct, rvol, vdev)
     if spread.get("abnormal"):
         return _pack("news_abnormal", "خبری / غیرعادی",
@@ -299,8 +299,12 @@ def detect_continuation(lv, bias, regime, m5=None):
     why = (f"رژیم رونددار است و H4 {'صعودی' if side == 'BUY' else 'نزولی'} است. "
            f"قیمت تا {near[1]} ({near[0]:.2f}) عقب نشسته و آخرین کندل M5 در جهت روند بسته شد. "
            "این فقط یک آشکارساز تأییدنشده است.")
+    # structural SL anchor: the pullback extreme of the last 3 M5 bars (plan_from_setup adds >= $1 beyond it,
+    # which also satisfies the DaryaGold rule "SL at least $0.5 beyond structure")
+    recent = m5.iloc[-3:]
+    ext = float(recent.h.max()) if side == "SELL" else float(recent.l.min())
     return {"engine": "continuation", "engine_fa": FA_ENGINE["continuation"],
-            "side": side, "ref_price": round(near[0], 2), "ref_name": near[1],
+            "side": side, "ref_price": round(near[0], 2), "ref_name": near[1], "extreme": round(ext, 2),
             "why_fa": why, "unvalidated": True}
 
 def _sweep_refs(lv):
@@ -401,9 +405,9 @@ def decide(lv, bias, regime, quality=None, journal_note=None):
     else:
         rejects.append("هیچ موتوری برای این رژیم مجاز نیست.")
 
-    # tier B caution does not by itself block, but it is always disclosed
+    # tier B is a block under the DaryaGold rule; any remaining "caution" action (legacy) is disclosed
     if win.get("inside") and win.get("action") == "caution":
-        note = "خبر سطح B فعال است (احتیاط + کنترل اسپرد)؛ بلوک خودکار نیست."
+        note = "خبر فعال است (احتیاط + کنترل اسپرد)."
         if det:
             accepts.append(note)
         else:
