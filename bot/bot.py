@@ -253,6 +253,8 @@ import re
 FA_SIDE = {"BUY": "خرید", "SELL": "فروش"}
 FA_TREND = {"bullish": "صعودی", "bearish": "نزولی", "neutral": "خنثی"}
 _FIXED = [  # long tool sentences -> natural Persian
+    (r"\s*[\(\[]\s*bid\s*[\d.]+\s*[\)\]]", ""),  # owner: show DaryaGold prices only, never the raw feed price
+    (r"\s*\[خام:?\s*[\d.]+\]", ""),
     (r"موتور مجاز ادامه روند است، ولی ستاپ ادامه \(عقب‌نشینی به مرجع \+ شکست ساختار M5 و بازآزمایی\) دیده نشد\.",
      "بازار رونددار است، ولی ستاپ ادامه‌ی روند (اصلاح تا سطح مرجع، بعد شکست ساختار و برگشت به سطح در M5) هنوز شکل نگرفته است."),
     (r"موتور مجاز جاروی نقدینگی / بازگشت به میانگین است، ولی .*?دیده نشد\.",
@@ -271,7 +273,7 @@ _WORDS = [("ادامه روند", "ادامه‌ی روند"), ("جاروی نق
           ("اوردر", "سفارش"), ("پوزیشن", "معامله‌ی باز"), ("تاییدنشده", "تأییدنشده"), ("نیم واحدی", "نیم واحد"),
           ("نسبت خالص", "نسبت سود به ضرر خالص"), ("پاداش", "سود"), ("NO TRADE", "معامله نکنید"),
           ("سطح A", "ردیف A"), ("سطح B", "ردیف B"), ("سطح C", "ردیف C"), ("تایم‌ها", "تایم‌فریم‌ها"),
-          ("رنج سشن", "رنج جلسه‌ی معاملاتی"), ("سشن", "جلسه‌ی معاملاتی"), ("(bid ", "(قیمت خام "), ("bid", "قیمت خام"),
+          ("رنج سشن", "رنج جلسه‌ی معاملاتی"), ("سشن", "جلسه‌ی معاملاتی"),
           ("می شود", "می‌شود"), ("نمی شود", "نمی‌شود"), ("  ", " ")]
 _PRICE = re.compile(r"(?<![\d\-:.])([2-6]\d{3}\.\d{1,3})(?![\d\-:])")
 CFG = None
@@ -326,11 +328,13 @@ def strip_md(t):
 def fa_polish(t):
     """Make tool text read naturally: glossary terms, polite imperative, DaryaGold prices."""
     t = strip_md(t)
+    already_broker = bool(re.search(r"bid\s*[\d.]+|\[خام", t))  # text already in DaryaGold prices
     for a, b in _FIXED:
         t = re.sub(a, b, t)
     for a, b in _WORDS:
         t = t.replace(a, b)
-    t = _PRICE.sub(lambda m: px(float(m.group(1))), t)
+    if not already_broker:
+        t = _PRICE.sub(lambda m: px(float(m.group(1))), t)
     t = re.sub(r"\(([^()]*،[^()]*)\)", lambda m: f"({one_label(m.group(1))})", t)
     return t.strip()
 
@@ -364,8 +368,8 @@ def friday_line():
 
 def price_block(b, q):
     fa = FA_TREND
-    age = f"، داده‌ی {q['age_minutes']} دقیقه پیش" if q.get("age_minutes") is not None else ""
-    L = [f"**قیمت و جهت:** دریاگلد {px(b['price_bid'])} (خام دوکاسکوپی {raw(b['price_bid'])}{age})؛ "
+    age = f" (داده‌ی {q['age_minutes']} دقیقه پیش)" if q.get("age_minutes") is not None else ""
+    L = [f"**قیمت و جهت:** دریاگلد {px(b['price_bid'])}{age}؛ "
          f"جهت کلی {fa.get(b.get('bias'), 'نامشخص')} (H4 {fa.get((b.get('h4') or {}).get('trend'), '؟')}، "
          f"H1 {fa.get((b.get('h1') or {}).get('trend'), '؟')}، M15 {fa.get((b.get('m15') or {}).get('trend'), '؟')})"]
     inv = b.get("invalidation") or {}
