@@ -295,8 +295,9 @@ def render(t):
     t = html.escape(t, quote=False)
     t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
     t = re.sub(r"~~(.+?)~~", r"<i>\1</i>", t)
-    t = re.sub(r"`(.+?)`", r"<code>\1</code>", t)
-    t = fa_num(t)
+    # tap-to-copy prices stay Latin ("3884.2") so they paste into DaryaGold's order box; the rest is Persian
+    parts = re.split(r"`(.+?)`", t)
+    t = "".join(f"<code>{x}</code>" if i % 2 else fa_num(x) for i, x in enumerate(parts))
     # RLM at the start of every line keeps iPhone/Android Telegram in right-to-left order
     return "\n".join(("\u200f" + ln) if ln.strip() else ln for ln in t.split("\n"))
 
@@ -510,22 +511,11 @@ def presession_brief(b, state, name):
     L += friday_flag()
     return "\n".join(L)
 
-def second_target(b, plan):
-    tp = plan.get("tp")
-    if tp is None:
-        return None
-    if plan["side"] == "SELL":
-        c = [l["price"] for l in (b.get("supports") or []) if l["price"] < tp - 0.5]
-        return max(c) if c else None
-    c = [l["price"] for l in (b.get("resistances") or []) if l["price"] > tp + 0.5]
-    return min(c) if c else None
-
 def signal_msg(b, plan, sizing, state, cfg, sample=False):
     """Clean signal card: prices in <code> for tap-to-copy."""
     s = sizing["size"]
     now = now_teh()
     full = s.get("key") == "full_unit"
-    tp2 = second_target(b, plan) if full else None  # a half unit cannot be split
     exp = now + timedelta(minutes=30)
     nw_ = b.get("news_window") or {}
     if nw_.get("next_start"):
@@ -540,12 +530,8 @@ def signal_msg(b, plan, sizing, state, cfg, sample=False):
     L = [f"**{icon} {word} طلا**", f"~~{sub}~~", "",
          f"▸ ورود    `{p1(plan['entry'])}`",
          f"▸ حد ضرر  `{p1(plan['sl'])}`",
-         f"▸ هدف ۱   `{p1(plan['tp'])}`"]
-    if tp2:
-        L.append(f"▸ هدف ۲   `{p1(tp2)}`")
+         f"▸ هدف     `{p1(plan['tp'])}`"]  # DaryaGold cannot partial-close: single target only
     L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(s['net_rr']):.1f}"]
-    if tp2:
-        L.append("~~نیمی در هدف ۱ ببندید، حد ضرر به ورود~~")
     L += friday_flag()
     return "\n".join(L)
 
@@ -555,7 +541,7 @@ def sample_signal(b, cfg, state):
     sgn = -1 if side == "SELL" else 1
     entry = round(bid - sgn * 0.5, 2); sl = round(entry - sgn * 1.6, 2); tp = round(entry + sgn * 4.0, 2)
     sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
-    if not sz.get("ok"):
+    if not sz.get("ok") or float(sz["size"]["net_rr"]) < 1.5:
         return None
     return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg, sample=True)
 
@@ -656,8 +642,6 @@ def main():
     if a.mode == "test":
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-        send(signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why))
-        send(presession_brief(b, state, "am" if t.hour < 14 else "pm"))
         smp = sample_signal(b, cfg, state)
         if smp:
             send(smp)
