@@ -1,0 +1,89 @@
+name: telegram-bot
+
+# All cron times are UTC. Tehran = UTC+3:30 (no DST).
+on:
+  schedule:
+    - cron: "45 7 * * 1-5"     # 11:15 Tehran  pre-London brief
+    - cron: "*/15 8-17 * * 1-5" # 11:30-21:15 Tehran scans every 15 min (16:15 = pre-NY brief)
+    - cron: "0 18 * * 1-5"     # 21:30 Tehran last scan
+    - cron: "0 19-21 * * 1-5"  # 22:30, 23:30, 00:30 Tehran: commands only
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "scheduled | poll | test"
+        default: "test"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          ref: state
+          path: state
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.13"
+      - name: Restore venv
+        id: venv
+        uses: actions/cache@v4
+        with:
+          path: ~/venv
+          key: venv-${{ runner.os }}-${{ steps.py.outputs.python-version }}-${{ hashFiles('bot/requirements.txt') }}
+      - name: Install deps (cache miss only)
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: python -m venv ~/venv && ~/venv/bin/pip install -q -r bot/requirements.txt
+      - name: Restore price cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/*.parquet
+            data/meta.json
+            data/macro.json
+          key: data-${{ github.run_id }}
+          restore-keys: data-
+      - name: Link repo to the toolkit path
+        run: sudo mkdir -p /workspace && sudo ln -sfn "$GITHUB_WORKSPACE" /workspace/m5-gold-team && mkdir -p data
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATE_DIR: ${{ github.workspace }}/state
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          DISPATCH_MODE: ${{ github.event.inputs.mode }}
+        run: |
+          MODE=scheduled
+          [ "$EVENT_SCHEDULE" = "0 19-21 * * 1-5" ] && MODE=poll
+          [ -n "$DISPATCH_MODE" ] && MODE="$DISPATCH_MODE"
+          ~/venv/bin/python bot/bot.py --mode "$MODE"
+      - name: Save price cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/*.parquet
+            data/meta.json
+            data/macro.json
+          key: data-${{ github.run_id }}
+      - name: Save state (orphan 'state' branch, single commit, small JSON only)
+        if: always()
+        run: |
+          cd state
+          git config user.name "m5-bot"; git config user.email "m5-bot@users.noreply.github.com"
+          git add state.json news_windows.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -q --amend -m "bot state" && git push -q --force origin HEAD:state
+          fi

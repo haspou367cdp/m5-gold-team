@@ -14,3 +14,4 @@ backups/
 latest_brief.md
 *.bak
 *.bak_*
+state/
