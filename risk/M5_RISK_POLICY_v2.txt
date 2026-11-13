@@ -1,6 +1,6 @@
 == BINDING OWNER OVERRIDES (DaryaGold, 2026-11-13; supersede any number below) ==
 Single source of truth for numbers: tools/broker_daryagold.json; news-window semantics: tools/news_windows.py (effective_doc).
-- Equity 2,085,600 toman (owner-editable). Sizes: half unit 40,000 toman/$1 (margin 500,000), full unit 80,000 toman/$1 (margin 1,000,000); fee 14,000 toman/unit (half-unit fee unconfirmed, 14,000 used); spread ~$0.25; limit entries and SL/TP fills have no spread.
+- Equity 2,085,600 toman (owner-editable). Sizes: half unit 40,000 toman/$1 (margin 500,000), full unit 80,000 toman/$1 (margin 1,000,000); fee 14,000 toman per trade for both half and full unit (confirmed by owner, 2026-11-13); spread ~$0.25; limit entries and SL/TP fills have no spread.
 - Risk (owner's maximum-risk choice): max 10% of equity per trade incl. fee+spread; daily stop 20% of start-of-day equity or 3 losses; max 1 position incl. pending orders; net R:R >= 1.5. The 1% / 0.5% / 2% figures below are the original generic proposal and are NOT in force.
 - SL >= $1 and >= $0.5 beyond the structure level; no SL = VETO. 60 s minimum hold before manual/TP close. Liquidation at 80% loss of the whole portfolio.
 - News: tier A no entries 15 min before to 30 after the release; tier B no entries 10 before to 15 after AND be flat before the window; the effective window is the union with the stored window (e.g. PPI 17:00 stored 16:45-17:15 -> no entries and flat from 16:45). Tier C monitor only.

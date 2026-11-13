@@ -10,3 +10,7 @@ latest_brief.json
 *.html
 .env
 secrets
+backups/
+latest_brief.md
+*.bak
+*.bak_*

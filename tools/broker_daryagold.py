@@ -517,10 +517,8 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
     known = "" if sp.get("known") is not False else " (اسپرد در این منبع موجود نیست)"
     half = (cfg.get("sizes") or {}).get("half_unit") or {}
     full = (cfg.get("sizes") or {}).get("full_unit") or {}
-    fee_note = ""
-    if half.get("fee_unconfirmed"):
-        fee_note = (f" کارمزد نیم واحدی محافظه‌کارانه {toman(half.get('fee') or 14000)} تومان "
-                    "در نظر گرفته شده (تأییدنشده؛ تا اعلام بروکر).")
+    fee_note = (f" کارمزد هر معامله برای نیم واحدی و یک واحد "
+                f"{toman(half.get('fee') or 14000)} تومان است (تأیید مالک، 2026-11-13).")
     _, _, j = daily_loss_veto(cfg)
     fri = friday or session_entry_block(cfg=cfg)
     liq = int(cfg.get("liquidation_pct") or 80)
@@ -579,8 +577,7 @@ def fa_plan_lines(plan, sizing, cfg):
             f"وجه تضمین {toman(s['margin'])} تومان "
             f"({'قبول' if s['margin'] <= cfg['equity_toman'] else 'بیش از ارزش حساب'}) · "
             f"کارمزد {toman(s['fee'])} تومان"
-            + (" (تأییدنشده)" if s.get("fee_unconfirmed") else "")
-            + f" · هزینه اسپرد محافظه‌کارانه {toman(s['spread_toman'])} تومان."
+            f" · هزینه اسپرد محافظه‌کارانه {toman(s['spread_toman'])} تومان."
         )
     return lines
 
@@ -590,6 +587,10 @@ if __name__ == "__main__":
     cfg = load_config()
     assert cfg["price_offset_usd"] == 0.3
     assert cfg["sizes"]["half_unit"]["fee"] == 14000
+    assert cfg["sizes"]["full_unit"]["fee"] == 14000
+    assert cfg["sizes"]["half_unit"].get("fee_unconfirmed") is False
+    assert "7000" not in (cfg["sizes"]["half_unit"].get("fee_note") or "")
+    assert "unconfirmed" not in (cfg["sizes"]["half_unit"].get("fee_note") or "").lower()
     # full unit should fit a 1.5 USD stop; a very wide stop should drop to half or veto
     s_ok = size_trade(3900, 3901.5, 3894, "SELL", cfg, spread_usd=0.25)
     assert s_ok["ok"], s_ok

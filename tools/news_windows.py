@@ -299,8 +299,8 @@ def status(d, at=None, lookahead=30):
     """Current news-window status. `inside` is true if *any* stored window covers `at`.
     `action` is block/caution/monitor from the highest-severity overlapping window.
     `soon` / `soon_action` describe the next window. Stored start/end already include the official
-    lead-in, so a hard-block 'soon' flag is only raised in the last 5 minutes before a tier-A
-    window starts. exit 1 from `now` only when action==block (or soon_block)."""
+    lead-in, so a hard-block 'soon' flag is only raised in the last 5 minutes before a block
+    window (tier A or B) starts. exit 1 from `now` only when action==block (or soon_block)."""
     at = at or datetime.now(TEH)
     for s, e, meta in merged(d):
         if s <= at < e:

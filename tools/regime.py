@@ -17,7 +17,7 @@ import pandas as pd
 
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
 from m5lib import TEH, load_bars
-from levels import atr
+from levels import atr, fractals
 
 FA_SIDE = {"BUY": "خرید", "SELL": "فروش", "NO TRADE": "بدون معامله"}
 FA_ENGINE = {
@@ -260,8 +260,190 @@ def _near_level_refs(lv, side, atr_m5):
             refs.append((float(l["price"]), l.get("label_fa") or "مقاومت"))
     return refs
 
+SWING_N = 2
+CONT_LOOKBACK = 48
+RETEST_FRESH_BARS = 4
+SWEEP_FRESH_BARS = 8
+# Only a near_level bias verdict can agree with a setup; every wait_* / news / data code blocks.
+SETUP_OK_VERDICT = frozenset({"near_level"})
+
+
+def _confirmed_swings(m5, n=SWING_N, lookback=CONT_LOOKBACK):
+    """Confirmed M5 fractal swings (n bars on each side)."""
+    if m5 is None or len(m5) < 2 * n + 3:
+        return [], []
+    start = max(0, len(m5) - lookback - n)
+    return fractals(m5.iloc[start:], n)
+
+
+def _touch_tol(atr_m5):
+    return max(0.15, 0.10 * float(atr_m5 or 1.0))
+
+
+def _bos_and_retest(m5, side, atr_m5=1.0, lookback=CONT_LOOKBACK):
+    """M5 BOS then retest, or None.
+
+    BOS = M5 close beyond the most recent opposing M5 swing high (BUY) or
+    swing low (SELL) within the pullback. Retest = a later bar touches the
+    broken level and closes back in the trade direction. Unvalidated heuristic.
+    """
+    if m5 is None or len(m5) < 2 * SWING_N + 6:
+        return None
+    H, L = _confirmed_swings(m5, SWING_N, lookback)
+    tol = _touch_tol(atr_m5)
+    if side == "BUY":
+        if not L or not H:
+            return None
+        pb_ts, pb_px = L[-1]
+        after_hi = [h for h in H if h[0] > pb_ts]
+        opposing = after_hi[-1] if after_hi else ([h for h in H if h[0] < pb_ts] or [None])[-1]
+        if opposing is None:
+            return None
+        sw_ts, sw_px = opposing
+        after = m5[m5.index > sw_ts]
+        bos_ts = None
+        for ts, bar in after.iterrows():
+            if float(bar.c) > sw_px:
+                bos_ts = ts
+                break
+        if bos_ts is None:
+            return None
+        later = m5[m5.index > bos_ts]
+        retest_ts = None
+        for ts, bar in later.iterrows():
+            if float(bar.l) <= sw_px + tol and float(bar.c) >= sw_px - 1e-9:
+                retest_ts = ts
+                break
+        if retest_ts is None:
+            return None
+        after_rt = m5[m5.index > retest_ts]
+        if any(float(bar.c) < sw_px for _, bar in after_rt.iterrows()):
+            return None
+        pos = m5.index.get_loc(retest_ts)
+        if isinstance(pos, slice):
+            pos = pos.start
+        if pos < len(m5) - RETEST_FRESH_BARS:
+            return None
+        window = m5[(m5.index >= min(pb_ts, sw_ts)) & (m5.index <= retest_ts)]
+        extreme = float(window.l.min()) if len(window) else pb_px
+        return {"bos_level": round(float(sw_px), 2), "bos_ts": bos_ts,
+                "retest_ts": retest_ts, "extreme": round(extreme, 2),
+                "pullback_extreme": round(float(pb_px), 2)}
+    if side == "SELL":
+        if not H or not L:
+            return None
+        pb_ts, pb_px = H[-1]
+        after_lo = [x for x in L if x[0] > pb_ts]
+        opposing = after_lo[-1] if after_lo else ([x for x in L if x[0] < pb_ts] or [None])[-1]
+        if opposing is None:
+            return None
+        sw_ts, sw_px = opposing
+        after = m5[m5.index > sw_ts]
+        bos_ts = None
+        for ts, bar in after.iterrows():
+            if float(bar.c) < sw_px:
+                bos_ts = ts
+                break
+        if bos_ts is None:
+            return None
+        later = m5[m5.index > bos_ts]
+        retest_ts = None
+        for ts, bar in later.iterrows():
+            if float(bar.h) >= sw_px - tol and float(bar.c) <= sw_px + 1e-9:
+                retest_ts = ts
+                break
+        if retest_ts is None:
+            return None
+        after_rt = m5[m5.index > retest_ts]
+        if any(float(bar.c) > sw_px for _, bar in after_rt.iterrows()):
+            return None
+        pos = m5.index.get_loc(retest_ts)
+        if isinstance(pos, slice):
+            pos = pos.start
+        if pos < len(m5) - RETEST_FRESH_BARS:
+            return None
+        window = m5[(m5.index >= min(pb_ts, sw_ts)) & (m5.index <= retest_ts)]
+        extreme = float(window.h.max()) if len(window) else pb_px
+        return {"bos_level": round(float(sw_px), 2), "bos_ts": bos_ts,
+                "retest_ts": retest_ts, "extreme": round(extreme, 2),
+                "pullback_extreme": round(float(pb_px), 2)}
+    return None
+
+
+def _reversal_bos(m5, side, sweep_ts, lookback=CONT_LOOKBACK):
+    """M5 close beyond the most recent opposing short-term swing after a sweep.
+
+    SELL (swept a high): close below the most recent M5 swing low.
+    BUY (swept a low): close above the most recent M5 swing high.
+    The BOS bar must be at or after the sweep and still recent. Unvalidated.
+    """
+    if m5 is None or sweep_ts is None:
+        return None
+    H, L = _confirmed_swings(m5, SWING_N, lookback)
+    if side == "SELL":
+        lows = [x for x in L if x[0] <= sweep_ts] or [x for x in L if x[0] <= m5.index[-1]]
+        if not lows:
+            return None
+        sw_ts, sw_px = lows[-1]
+        for ts, bar in m5[m5.index > sw_ts].iterrows():
+            if ts < sweep_ts:
+                continue
+            if float(bar.c) < sw_px:
+                pos = m5.index.get_loc(ts)
+                if isinstance(pos, slice):
+                    pos = pos.start
+                if pos < len(m5) - SWEEP_FRESH_BARS:
+                    return None
+                return {"bos_level": round(float(sw_px), 2), "bos_ts": ts}
+        return None
+    if side == "BUY":
+        highs = [x for x in H if x[0] <= sweep_ts] or [x for x in H if x[0] <= m5.index[-1]]
+        if not highs:
+            return None
+        sw_ts, sw_px = highs[-1]
+        for ts, bar in m5[m5.index > sw_ts].iterrows():
+            if ts < sweep_ts:
+                continue
+            if float(bar.c) > sw_px:
+                pos = m5.index.get_loc(ts)
+                if isinstance(pos, slice):
+                    pos = pos.start
+                if pos < len(m5) - SWEEP_FRESH_BARS:
+                    return None
+                return {"bos_level": round(float(sw_px), 2), "bos_ts": ts}
+        return None
+    return None
+
+
+def _when_teh(ts):
+    if getattr(ts, "tz_convert", None):
+        return ts.tz_convert(TEH).strftime("%H:%M")
+    return str(ts)
+
+
+def _pullback_visited_ref(m5, side, refs, atr_m5, price):
+    """True if the recent pullback extreme (or current price) came to a valid ref."""
+    if not refs or m5 is None or len(m5) < 3:
+        return None
+    recent = m5.iloc[-24:] if len(m5) >= 24 else m5
+    pb = float(recent.l.min()) if side == "BUY" else float(recent.h.max())
+    near_pb = min(refs, key=lambda r: abs(pb - r[0]))
+    if abs(pb - near_pb[0]) <= 0.5 * atr_m5:
+        return near_pb
+    near_now = min(refs, key=lambda r: abs(price - r[0]))
+    if abs(price - near_now[0]) <= 0.5 * atr_m5:
+        return near_now
+    return None
+
+
 def detect_continuation(lv, bias, regime, m5=None):
-    """Unvalidated trend-continuation detector. Returns a setup dict or None."""
+    """Unvalidated trend-continuation detector. Returns a setup dict or None.
+
+    Requires a pullback to a valid reference AND an M5 break of structure
+    followed by a retest (close beyond the most recent opposing M5 swing
+    within the pullback, then a later bar that touches the broken level and
+    closes back in the trade direction). No statistical edge is claimed.
+    """
     if (regime or {}).get("code") != "trend" or (regime or {}).get("allowed_engine") != "continuation":
         return None
     h4 = ((bias or {}).get("h4") or {}).get("trend")
@@ -273,7 +455,6 @@ def detect_continuation(lv, bias, regime, m5=None):
     side = "BUY" if h4 == "bullish" else "SELL"
     price = float(lv["price_bid"])
     atr_m5 = float(lv.get("atr_m5_14") or 0) or 1.0
-    # do not chase an extended move
     vdev = (regime or {}).get("vwap_deviation") or vwap_deviation(lv, price)
     if vdev and vdev.get("sigma") is not None:
         if side == "BUY" and vdev["sigma"] > 1.5:
@@ -281,31 +462,30 @@ def detect_continuation(lv, bias, regime, m5=None):
         if side == "SELL" and vdev["sigma"] < -1.5:
             return None
     refs = _near_level_refs(lv, side, atr_m5)
-    if not refs:
-        return None
-    near = min(refs, key=lambda r: abs(price - r[0]))
-    if abs(price - near[0]) > 0.5 * atr_m5:
-        return None
     try:
         m5 = m5 if m5 is not None else load_bars("m5")
     except Exception:
         return None
-    last = m5.iloc[-1]
-    # require the last M5 close to be in the trend direction (no claim this is an edge)
-    if side == "BUY" and not (float(last.c) >= float(last.o)):
+    if m5 is None or len(m5) < 2 * SWING_N + 6:
         return None
-    if side == "SELL" and not (float(last.c) <= float(last.o)):
+    near = _pullback_visited_ref(m5, side, refs, atr_m5, price)
+    if near is None:
         return None
+    conf = _bos_and_retest(m5, side, atr_m5)
+    if conf is None:
+        return None
+    # SL anchor: pullback extreme (plan_from_setup adds >= $1 and >= $0.5 beyond structure)
+    ext = conf["extreme"]
     why = (f"رژیم رونددار است و H4 {'صعودی' if side == 'BUY' else 'نزولی'} است. "
-           f"قیمت تا {near[1]} ({near[0]:.2f}) عقب نشسته و آخرین کندل M5 در جهت روند بسته شد. "
-           "این فقط یک آشکارساز تأییدنشده است.")
-    # structural SL anchor: the pullback extreme of the last 3 M5 bars (plan_from_setup adds >= $1 beyond it,
-    # which also satisfies the DaryaGold rule "SL at least $0.5 beyond structure")
-    recent = m5.iloc[-3:]
-    ext = float(recent.h.max()) if side == "SELL" else float(recent.l.min())
+           f"قیمت تا {near[1]} ({near[0]:.2f}) عقب نشست، سپس در M5 ساختار "
+           f"در {conf['bos_level']:.2f} شکست و بازآزمایی شد "
+           f"(ساعت {_when_teh(conf['retest_ts'])} تهران). "
+           "این فقط یک آشکارساز تأییدنشده است و برتری آماری ندارد.")
     return {"engine": "continuation", "engine_fa": FA_ENGINE["continuation"],
-            "side": side, "ref_price": round(near[0], 2), "ref_name": near[1], "extreme": round(ext, 2),
+            "side": side, "ref_price": round(near[0], 2), "ref_name": near[1],
+            "extreme": ext, "bos_level": conf["bos_level"],
             "why_fa": why, "unvalidated": True}
+
 
 def _sweep_refs(lv):
     highs, lows = [], []
@@ -334,7 +514,12 @@ def _sweep_refs(lv):
     return highs, lows
 
 def detect_sweep(lv, bias, regime, m5=None):
-    """Unvalidated liquidity-sweep / mean-reversion detector. Returns a setup dict or None."""
+    """Unvalidated liquidity-sweep / mean-reversion detector. Returns a setup dict or None.
+
+    Requires a wick beyond a session / opening-range / equal H/L, a close back
+    inside the level, AND an M5 short-term BOS in the reversal direction.
+    No statistical edge is claimed.
+    """
     if (regime or {}).get("code") != "range" or (regime or {}).get("allowed_engine") != "sweep_reversion":
         return None
     try:
@@ -358,78 +543,102 @@ def detect_sweep(lv, bias, regime, m5=None):
                 hits.append((ts, "BUY", ref, name, float(bar.l)))
     if not hits:
         return None
-    ts, side, ref, name, ext = hits[-1]  # most recent
-    # late if price has already travelled more than 1×ATR away from the swept level
-    if abs(price - ref) > 1.0 * atr_m5:
-        return None
-    when = ts.tz_convert(TEH).strftime("%H:%M") if getattr(ts, "tz_convert", None) else str(ts)
-    why = (f"رژیم رنج است. در M5 ساعت {when} تهران، قیمت {name} ({ref:.2f}) را جارو کرد و دوباره به داخل برگشت. "
-           "این فقط یک آشکارساز تأییدنشده است.")
-    return {"engine": "sweep_reversion", "engine_fa": FA_ENGINE["sweep_reversion"],
-            "side": side, "ref_price": round(ref, 2), "ref_name": name, "extreme": round(ext, 2),
-            "bar_tehran": when, "why_fa": why, "unvalidated": True}
+    for ts, side, ref, name, ext in reversed(hits):
+        if abs(price - ref) > 1.0 * atr_m5:
+            continue
+        bos = _reversal_bos(m5, side, ts)
+        if bos is None:
+            continue
+        when = _when_teh(ts)
+        why = (f"رژیم رنج است. در M5 ساعت {when} تهران، قیمت {name} ({ref:.2f}) را جارو کرد "
+               f"و دوباره به داخل برگشت، سپس شکست ساختار کوتاه‌مدت M5 "
+               f"در {bos['bos_level']:.2f} تأیید شد. "
+               "این فقط یک آشکارساز تأییدنشده است و برتری آماری ندارد.")
+        return {"engine": "sweep_reversion", "engine_fa": FA_ENGINE["sweep_reversion"],
+                "side": side, "ref_price": round(ref, 2), "ref_name": name, "extreme": round(ext, 2),
+                "bos_level": bos["bos_level"], "bar_tehran": when,
+                "why_fa": why, "unvalidated": True}
+    return None
+
+
+def bias_allows_setup(bias, side):
+    """A setup may print only when the bias verdict and direction agree with it."""
+    v = (bias or {}).get("verdict") or {}
+    code = v.get("code")
+    fa = v.get("fa") or "صبر."
+    if code not in SETUP_OK_VERDICT:
+        return False, fa
+    bdir = (bias or {}).get("bias")
+    if side == "BUY" and bdir != "bullish":
+        return False, "جهت بازار با خرید هم‌خوان نیست."
+    if side == "SELL" and bdir != "bearish":
+        return False, "جهت بازار با فروش هم‌خوان نیست."
+    if side not in ("BUY", "SELL"):
+        return False, fa
+    return True, None
+
+
+def _no_trade(rejects, accepts=None, engine=None, engine_fa=None):
+    return {"decision": "NO TRADE", "engine": engine, "engine_fa": engine_fa or FA_ENGINE[None],
+            "reasons_accept": list(accepts or []), "reasons_reject": list(rejects),
+            "setup": None, "unvalidated": True}
+
 
 def decide(lv, bias, regime, quality=None, journal_note=None):
-    """BUY / SELL / NO TRADE plus accept/reject reasons. Never claims an edge."""
+    """BUY / SELL / NO TRADE plus accept/reject reasons. Never claims an edge.
+
+    A BUY/SELL is emitted only when the data gate, news gate, regime/engine
+    gate and the bias verdict all agree. Friday/session and sizing vetoes are
+    applied later by brief.py so the printed decision stays a single verdict.
+    """
     accepts, rejects = [], []
     win = (bias or {}).get("news_window") or {}
     spread = (bias or {}).get("spread") or {}
     if quality and not quality.get("ok"):
-        rejects.append(quality.get("fa") or "کیفیت داده قابل قبول نیست.")
-        return {"decision": "NO TRADE", "engine": None, "engine_fa": FA_ENGINE[None],
-                "reasons_accept": [], "reasons_reject": rejects,
-                "unvalidated": True}
+        return _no_trade([quality.get("fa") or "کیفیت داده قابل قبول نیست."])
     code = (regime or {}).get("code")
     if code == "news_abnormal":
-        rejects.append("رژیم خبری / غیرعادی است: " + (regime or {}).get("why", "ورود مجاز نیست."))
-        return {"decision": "NO TRADE", "engine": None, "engine_fa": FA_ENGINE[None],
-                "reasons_accept": [], "reasons_reject": rejects, "unvalidated": True}
+        return _no_trade(["رژیم خبری / غیرعادی است: " + (regime or {}).get("why", "ورود مجاز نیست.")])
     if code == "volatility_expansion":
-        rejects.append("جهش نوسان: " + (regime or {}).get("why", "") + " — صبر تا آرام شدن نوسان.")
-        return {"decision": "NO TRADE", "engine": None, "engine_fa": FA_ENGINE[None],
-                "reasons_accept": [], "reasons_reject": rejects, "unvalidated": True}
+        return _no_trade(["جهش نوسان: " + (regime or {}).get("why", "") + " — صبر تا آرام شدن نوسان."])
     if spread.get("abnormal"):
-        rejects.append(f"اسپرد غیرعادی است ({spread.get('current')} دلار).")
-        return {"decision": "NO TRADE", "engine": None, "engine_fa": FA_ENGINE[None],
-                "reasons_accept": [], "reasons_reject": rejects, "unvalidated": True}
+        return _no_trade([f"اسپرد غیرعادی است ({spread.get('current')} دلار)."])
+    # News block (covers any path where regime was not already news_abnormal)
+    if win.get("action") == "block" or (win.get("inside") and win.get("tier") in ("A", "B")) \
+            or win.get("soon_block") or win.get("soon_action") == "block":
+        return _no_trade([((bias or {}).get("verdict") or {}).get("fa")
+                          or "داخل یا در آستانه‌ی پنجره‌ی خبری (ورود ممنوع)."])
 
     det = None
     if (regime or {}).get("allowed_engine") == "continuation":
         det = detect_continuation(lv, bias, regime)
         if det is None:
-            rejects.append("موتور مجاز ادامه روند است، ولی ستاپ ادامه (عقب‌نشینی به مرجع + کندل M5 هم‌جهت) دیده نشد.")
+            rejects.append("موتور مجاز ادامه روند است، ولی ستاپ ادامه (عقب‌نشینی به مرجع + شکست ساختار M5 و بازآزمایی) دیده نشد.")
     elif (regime or {}).get("allowed_engine") == "sweep_reversion":
         det = detect_sweep(lv, bias, regime)
         if det is None:
-            rejects.append("موتور مجاز جاروی نقدینگی / بازگشت به میانگین است، ولی جاروی تازه‌ی M5 روی سقف/کف سشن، رنج بازگشایی یا سقف/کف برابر دیده نشد.")
+            rejects.append("موتور مجاز جاروی نقدینگی / بازگشت به میانگین است، ولی جاروی تازه‌ی M5 با بسته‌شدن برگشتی به داخل سطح و شکست ساختار کوتاه‌مدت M5 دیده نشد.")
     else:
         rejects.append("هیچ موتوری برای این رژیم مجاز نیست.")
 
-    # tier B is a block under the DaryaGold rule; any remaining "caution" action (legacy) is disclosed
-    if win.get("inside") and win.get("action") == "caution":
-        note = "خبر فعال است (احتیاط + کنترل اسپرد)."
-        if det:
-            accepts.append(note)
-        else:
-            rejects.append(note)
-    elif win.get("soon_action") == "caution":
-        note = f"{win.get('minutes_to_next')} دقیقه تا خبر سطح B (احتیاط)."
-        if det:
-            accepts.append(note)
-        else:
-            rejects.append(note)
-
     if not det:
-        if (bias or {}).get("verdict", {}).get("code") in ("wait_neutral", "wait_level", "wait", "wait_against"):
-            rejects.append((bias["verdict"].get("fa") or "صبر.").split("صبر کن: ")[-1] if False else (bias["verdict"].get("fa") or "صبر."))
-        return {"decision": "NO TRADE", "engine": (regime or {}).get("allowed_engine"),
-                "engine_fa": (regime or {}).get("allowed_engine_fa") or FA_ENGINE[None],
-                "reasons_accept": accepts, "reasons_reject": rejects, "setup": None, "unvalidated": True}
+        vcode = ((bias or {}).get("verdict") or {}).get("code")
+        if vcode and vcode not in SETUP_OK_VERDICT:
+            rejects.append(((bias or {}).get("verdict") or {}).get("fa") or "صبر.")
+        return _no_trade(rejects, accepts, (regime or {}).get("allowed_engine"),
+                         (regime or {}).get("allowed_engine_fa") or FA_ENGINE[None])
+
+    ok, why = bias_allows_setup(bias, det["side"])
+    if not ok:
+        rejects.append(why or "جهت یا حکم صبر با ستاپ هم‌خوان نیست.")
+        return _no_trade(rejects, accepts, (regime or {}).get("allowed_engine"),
+                         (regime or {}).get("allowed_engine_fa") or FA_ENGINE[None])
 
     accepts.append(det["why_fa"])
     accepts.append("سطح‌ها و جهت تأییدنشده‌اند و این موتور برتری آماری ندارد.")
     return {"decision": det["side"], "engine": det["engine"], "engine_fa": det["engine_fa"],
             "reasons_accept": accepts, "reasons_reject": rejects, "setup": det, "unvalidated": True}
+
 
 def fa_indicator_lines(regime, price_fmt=None):
     """Short Persian lines for ADX / ATR percentile / VWAP deviation (no strength words)."""
@@ -453,3 +662,123 @@ def fa_indicator_lines(regime, price_fmt=None):
         lines.append(f"**انحراف VWAP {vdev.get('session_fa') or ''}:** {vdev['distance']:+.2f} دلار{sig} "
                      f"(VWAP {vwap_s}، پروکسی حجم تیک)".replace("  ", " "))
     return lines
+
+def _synth_m5(rows, start="2026-11-13 10:00", tz="Asia/Tehran"):
+    idx = pd.date_range(start, periods=len(rows), freq="5min", tz=tz)
+    o, h, l, c = zip(*rows)
+    return pd.DataFrame({"o": o, "h": h, "l": l, "c": c}, index=idx)
+
+
+def _self_check():
+    # BUY continuation: pullback low, internal swing high, close through it, retest.
+    # Fractal n=2: a swing high at k must be the max of h[k-2:k+3].
+    rows = []
+    px = 3900.0
+    # 0-7: climb to a high, then start pullback
+    for i in range(8):
+        o = px
+        px = px + 1.5
+        rows.append((o, px + 0.2, o - 0.2, px))
+    # 8-14: pullback down to ~3890, form a swing low around bar 16 later
+    for i in range(7):
+        o = px
+        px = px - 2.0
+        rows.append((o, o + 0.2, px - 0.2, px))
+    # Ensure a clear swing low (n=2) at this bar: neighbors higher
+    lo = px
+    rows.append((lo + 0.4, lo + 0.6, lo - 0.3, lo + 0.5))  # swing low candidate
+    # 2 bars after the low (confirmation), small bounce
+    rows.append((lo + 0.5, lo + 1.2, lo + 0.3, lo + 1.0))
+    rows.append((lo + 1.0, lo + 2.0, lo + 0.8, lo + 1.8))
+    # internal swing high (opposing) — this bar's high is max of neighbors
+    sh = lo + 4.0
+    rows.append((lo + 1.8, sh, lo + 1.6, lo + 3.2))  # swing high
+    rows.append((lo + 3.0, lo + 3.3, lo + 2.4, lo + 2.6))
+    rows.append((lo + 2.6, lo + 3.0, lo + 2.2, lo + 2.4))  # confirmation of SH
+    # BOS: close above swing high
+    rows.append((lo + 2.4, sh + 0.8, lo + 2.2, sh + 0.4))
+    # Retest: touch the broken level, close back above
+    rows.append((sh + 0.2, sh + 0.6, sh - 0.2, sh + 0.3))
+    m5 = _synth_m5(rows)
+    conf = _bos_and_retest(m5, "BUY", atr_m5=3.0)
+    assert conf is not None, "BUY BOS+retest should fire on synthetic path"
+    assert conf["extreme"] <= lo + 0.5
+    # Old rule (last candle in direction near a ref) is not enough: drop BOS/retest bars
+    m5_old = m5.iloc[:-4]  # stop before swing-high confirmation / BOS / retest
+    # last bar may be in direction; should NOT be enough
+    assert _bos_and_retest(m5_old, "BUY", atr_m5=3.0) is None
+
+    # SELL mirror
+    srows = []
+    px = 3900.0
+    for i in range(8):
+        o = px
+        px = px - 1.5
+        srows.append((o, o + 0.2, px - 0.2, px))
+    for i in range(7):
+        o = px
+        px = px + 2.0
+        srows.append((o, px + 0.2, o - 0.2, px))
+    hi = px
+    srows.append((hi - 0.4, hi + 0.3, hi - 0.6, hi - 0.5))  # swing high
+    srows.append((hi - 0.5, hi - 0.3, hi - 1.2, hi - 1.0))
+    srows.append((hi - 1.0, hi - 0.8, hi - 2.0, hi - 1.8))
+    sl = hi - 4.0
+    srows.append((hi - 1.8, hi - 1.6, sl, hi - 3.2))  # swing low
+    srows.append((hi - 3.0, hi - 2.4, hi - 3.3, hi - 2.6))
+    srows.append((hi - 2.6, hi - 2.2, hi - 3.0, hi - 2.4))
+    srows.append((hi - 2.4, hi - 2.2, sl - 0.8, sl - 0.4))  # BOS close below SL
+    srows.append((sl - 0.2, sl + 0.2, sl - 0.6, sl - 0.3))  # retest
+    m5s = _synth_m5(srows)
+    confs = _bos_and_retest(m5s, "SELL", atr_m5=3.0)
+    assert confs is not None, "SELL BOS+retest should fire on synthetic path"
+
+    # Sweep close-back-inside alone is not enough; need reversal BOS
+    # Build: swing low, then sweep of a high and close back inside, then close below swing low.
+    wrows = []
+    p = 3900.0
+    for i in range(6):
+        wrows.append((p, p + 0.4, p - 0.4, p + 0.2))
+        p += 0.2
+    # swing low
+    slv = p - 3.0
+    wrows.append((p, p + 0.3, slv, p - 0.5))
+    wrows.append((p - 0.5, p - 0.2, p - 0.8, p - 0.3))
+    wrows.append((p - 0.3, p + 0.2, p - 0.6, p))
+    # climb and sweep a ref high
+    ref = p + 2.0
+    wrows.append((p, ref - 0.2, p - 0.2, ref - 0.4))
+    wrows.append((ref - 0.4, ref - 0.1, ref - 0.6, ref - 0.3))
+    # sweep bar: wick above ref, close back inside
+    sweep_i = len(wrows)
+    wrows.append((ref - 0.3, ref + 0.5, ref - 0.8, ref - 0.4))
+    # no BOS yet
+    m5w = _synth_m5(wrows)
+    sweep_ts = m5w.index[sweep_i]
+    assert _reversal_bos(m5w, "SELL", sweep_ts) is None, "sweep without BOS must not confirm"
+    # add BOS close below swing low
+    wrows.append((ref - 0.4, ref - 0.2, slv - 0.4, slv - 0.2))
+    m5w2 = _synth_m5(wrows)
+    assert _reversal_bos(m5w2, "SELL", sweep_ts) is not None, "sweep + M5 BOS should confirm"
+
+    # bias gate: wait_against cannot agree with a SELL setup
+    ok, _ = bias_allows_setup({"bias": "bearish", "verdict": {"code": "wait_against", "fa": "صبر کن: سطح خلاف جهت."}}, "SELL")
+    assert not ok
+    ok, _ = bias_allows_setup({"bias": "bearish", "verdict": {"code": "near_level", "fa": "نزدیک سطح"}}, "SELL")
+    assert ok
+    ok, _ = bias_allows_setup({"bias": "bearish", "verdict": {"code": "near_level", "fa": "نزدیک سطح"}}, "BUY")
+    assert not ok
+    # decide() must return NO TRADE when bias says wait, even if a setup object is theoretically possible
+    d = decide({"price_bid": 3900, "atr_m5_14": 3},
+               {"bias": "bearish", "h4": {"trend": "bearish"}, "h1": {"trend": "bearish"},
+                "verdict": {"code": "wait_against", "fa": "صبر کن: سطح خلاف جهت."},
+                "news_window": {}, "spread": {}},
+               {"code": "trend", "allowed_engine": "continuation", "allowed_engine_fa": "ادامه روند",
+                "vwap_deviation": None})
+    assert d["decision"] == "NO TRADE", d
+    assert "صبر کن" in " ".join(d["reasons_reject"])
+    print("self-check ok")
+
+
+if __name__ == "__main__":
+    _self_check()

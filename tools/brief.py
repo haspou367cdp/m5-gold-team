@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """brief.py - ONE command for the team: fetch -> levels -> bias -> macro -> regime -> Persian brief.
 
-Prints: تصمیم BUY/SELL/NO TRADE | علت پذیرش/رد | رژیم و موتور مجاز | جهت (H4/H1/M15) | ADR
+Prints: one final تصمیم BUY/SELL/NO TRADE (only if bias, regime, news, data and Friday/session gates all agree; otherwise NO TRADE + blocking reason) | علت پذیرش/رد | رژیم و موتور مجاز | جهت (H4/H1/M15) | ADR
         | سقف/کف مرجع (روز، هفته، ماه، سشن، رنج بازگشایی) | ماکرو | دروازه‌های ریسک دریاگلد
         | سقف‌ها و کف‌ها (بدون برچسب قوی/متوسط) | سطح ابطال | منبع + زمان داده
 Prices are shown in DaryaGold terms (Dukascopy bid + price_offset_usd) with the raw bid in brackets.
@@ -127,10 +127,21 @@ def _apply_broker_gates(decision, lv, b, cfg, session):
             if not sizing.get("ok"):
                 vetoes.append(sizing["reason_fa"])
     out = dict(decision or {})
-    if vetoes and out.get("decision") in ("BUY", "SELL"):
-        out["decision"] = "NO TRADE"
-        out["reasons_reject"] = list(out.get("reasons_reject") or []) + vetoes
-        out["broker_veto"] = True
+    if vetoes:
+        if out.get("decision") in ("BUY", "SELL"):
+            out["decision"] = "NO TRADE"
+            out["broker_veto"] = True
+            out["setup"] = None
+            plan, sizing = None, None
+        existing = list(out.get("reasons_reject") or [])
+        for v in vetoes:
+            if v not in existing:
+                existing.append(v)
+        out["reasons_reject"] = existing
+    # Never attach a trade plan to a NO TRADE verdict
+    if out.get("decision") not in ("BUY", "SELL"):
+        plan, sizing = None, None
+        out["setup"] = None
     out["plan"] = plan
     out["sizing"] = sizing
     out["journal"] = journal
@@ -230,10 +241,6 @@ def main():
     else:
         reasons = decision.get("reasons_reject") or [v.get("fa") or "صبر."]
         lines.append("**علت رد:** " + " ".join(reasons))
-        if decision.get("reasons_accept"):
-            lines.append("**یادداشت:** " + " ".join(decision["reasons_accept"]))
-        if plan:
-            lines += DG.fa_plan_lines(plan, sizing, cfg)
     if v.get("note_fa"):
         lines.append(f"⚠️ {v['note_fa']}")
     if v.get("news_caution_fa"):

@@ -9,8 +9,10 @@
       "margin": 500000,
       "toman_per_usd": 40000,
       "fee": 14000,
-      "fee_unconfirmed": true,
-      "fee_note": "Unconfirmed: 14000 toman is used conservatively for the half unit too, until the broker confirms whether the half-unit fee is 7000 or 14000."
+      "fee_unconfirmed": false,
+      "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
+      "fee_confirmed_by": "owner",
+      "fee_confirmed_at": "2026-11-13"
     },
     "full_unit": {
       "key": "full_unit",
@@ -19,7 +21,9 @@
       "toman_per_usd": 80000,
       "fee": 14000,
       "fee_unconfirmed": false,
-      "fee_note": "Broker-stated fee is 14000 toman per unit."
+      "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
+      "fee_confirmed_by": "owner",
+      "fee_confirmed_at": "2026-11-13"
     }
   },
   "typical_spread_usd": 0.25,
