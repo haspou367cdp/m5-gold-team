@@ -361,7 +361,7 @@ def main():
                 state["equity_toman"] = v
                 send(f"✅ موجودی ثبت شد: {DG.toman(v)} تومان · سقف ریسک هر معامله {DG.toman(v * 0.1)} تومان · توقف روزانه {DG.toman(v * 0.2)} تومان.")
             elif c in ("/loss", "/win"):
-                v = abs(float(args[0].replace(",", "").replace("٬", ""))) if args else 0.0
+                v = abs(float(args[0].replace(",", "").replace("٬", "")))  # amount required (bare tap = no-op)
                 d = state["day"]
                 if c == "/loss":
                     d["losses"] += 1; d["loss_toman"] += v
@@ -372,7 +372,7 @@ def main():
                 send(f"✅ ثبت شد. امروز {d['losses']} ضرر و {d['wins']} سود؛ ضرر خالص {DG.toman(max(net, 0))} تومان."
                      + ("\n⛔ توقف روزانه فعال است؛ تا روز معاملاتی بعد سیگنالی داده نمی‌شود." if stop else ""))
         except (ValueError, IndexError):
-            send("⚠️ عدد نامعتبر است. مثال: /balance 2085600 یا /loss 150000")
+            send("⚠️ عدد لازم است. مثال: /balance 2085600 · /loss 150000 · /win 200000 (چیزی ثبت نشد)")
 
     for c, _ in cmds:
         if c == "/status":
