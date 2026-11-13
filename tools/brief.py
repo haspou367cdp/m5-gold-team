@@ -278,7 +278,7 @@ def main():
     wins = []
     for s, e, meta_w in nw.merged(news_doc):
         if e > now_eval and (s - now_eval).total_seconds() < 86400:
-            tag = {"block": "بلوک", "caution": "احتیاط", "monitor": "پایش"}.get(meta_w.get("action"), meta_w.get("action") or "")
+            tag = {"block": "ورود ممنوع", "caution": "احتیاط", "monitor": "پایش"}.get(meta_w.get("action"), meta_w.get("action") or "")
             wins.append(f"{s:%H:%M}–{e:%H:%M} (سطح {meta_w.get('tier')}، {tag})")
     if wins:
         lines.append("**پنجره‌های خبری (تهران، ۲۴ ساعت آینده، با بافر سخت‌گیرانه‌تر دریاگلد):** " + "، ".join(wins))
