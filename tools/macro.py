@@ -439,15 +439,17 @@ def classify_regime(lv, win=None, spread=None, h4=None, h1=None, **kwargs):
     from regime import classify
     return classify(lv, win=win, spread=spread, h4=h4, h1=h1, **kwargs)
 
-def fmt_hl(block, nd=2):
+def fmt_hl(block, nd=2, price_fmt=None):
     if not block or block.get("high") is None: return "در دسترس نیست"
     def n(x):
+        if price_fmt:
+            return price_fmt(x)
         s = f"{float(x):.{nd}f}".rstrip("0").rstrip(".")
         return s
     extra = " (ناقص)" if block.get("incomplete") else ""
     return f"{n(block['high'])} / {n(block['low'])}{extra}"
 
-def fa_lines(doc, lv=None, win=None, regime=None):
+def fa_lines(doc, lv=None, win=None, regime=None, price_fmt=None):
     """Short Persian lines for the brief (no strength words)."""
     lines = []
     if lv:
@@ -462,15 +464,16 @@ def fa_lines(doc, lv=None, win=None, regime=None):
         ors = lv.get("opening_ranges") or {}
         if regime and regime.get("allowed_engine_fa"):
             lines[-1] = lines[-1] + f" · موتور مجاز: {regime['allowed_engine_fa']}"
-        lines.append("**سقف/کف مرجع:** دیروز " + fmt_hl(ses.get("prev_day"))
-                     + " · هفته " + fmt_hl(st.get("week"))
-                     + " · هفته قبل " + fmt_hl(st.get("prev_week"))
-                     + " · ماه قبل " + fmt_hl(st.get("prev_month"))
-                     + " · آسیا " + fmt_hl(ses.get("asia"))
-                     + " · لندن " + fmt_hl(ses.get("london"))
-                     + " · نیویورک " + fmt_hl(ses.get("ny"))
-                     + " · رنج بازگشایی لندن " + fmt_hl(ors.get("london"))
-                     + " · رنج بازگشایی نیویورک " + fmt_hl(ors.get("ny")))
+        kw = dict(price_fmt=price_fmt)
+        lines.append("**سقف/کف مرجع:** دیروز " + fmt_hl(ses.get("prev_day"), **kw)
+                     + " · هفته " + fmt_hl(st.get("week"), **kw)
+                     + " · هفته قبل " + fmt_hl(st.get("prev_week"), **kw)
+                     + " · ماه قبل " + fmt_hl(st.get("prev_month"), **kw)
+                     + " · آسیا " + fmt_hl(ses.get("asia"), **kw)
+                     + " · لندن " + fmt_hl(ses.get("london"), **kw)
+                     + " · نیویورک " + fmt_hl(ses.get("ny"), **kw)
+                     + " · رنج بازگشایی لندن " + fmt_hl(ors.get("london"), **kw)
+                     + " · رنج بازگشایی نیویورک " + fmt_hl(ors.get("ny"), **kw))
     # macro
     if not doc or (not doc.get("ok") and not doc.get("from_cache")):
         lines.append("**ماکرو:** در دسترس نیست")

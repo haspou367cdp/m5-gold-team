@@ -1,0 +1,52 @@
+{
+  "broker": "DaryaGold",
+  "equity_toman": 2085600,
+  "equity_note": "User-editable. Override with env EQUITY_TOMAN or CLI --equity.",
+  "sizes": {
+    "half_unit": {
+      "key": "half_unit",
+      "label_fa": "نیم واحدی",
+      "margin": 500000,
+      "toman_per_usd": 40000,
+      "fee": 14000,
+      "fee_unconfirmed": true,
+      "fee_note": "Unconfirmed: 14000 toman is used conservatively for the half unit too, until the broker confirms whether the half-unit fee is 7000 or 14000."
+    },
+    "full_unit": {
+      "key": "full_unit",
+      "label_fa": "یک واحد",
+      "margin": 1000000,
+      "toman_per_usd": 80000,
+      "fee": 14000,
+      "fee_unconfirmed": false,
+      "fee_note": "Broker-stated fee is 14000 toman per unit."
+    }
+  },
+  "typical_spread_usd": 0.25,
+  "min_hold_seconds": 60,
+  "min_sl_usd": 1.0,
+  "liquidation_pct": 80,
+  "price_offset_usd": 0.3,
+  "price_offset_uncertainty_usd": 0.5,
+  "calibrated_at": "2026-11-13 15:37 Asia/Tehran",
+  "price_offset_note": "DaryaGold minus Dukascopy bid. Calibrated 2026-11-13 15:37 Tehran from the DaryaGold 1m chart: lows 3886.6 vs bid 3886.28, highs 3897.6 vs 3897.29; uncertainty about ±0.5.",
+  "risk_per_trade_pct_max": 10,
+  "daily_loss_pct_max": 20,
+  "max_consecutive_losses": 3,
+  "max_positions": 1,
+  "min_net_rr": 1.5,
+  "entry_type": "order (limit, no spread)",
+  "news_buffers": {
+    "A": {
+      "before_min": 15,
+      "after_min": 30
+    },
+    "B": {
+      "before_min": 10,
+      "after_min": 15
+    }
+  },
+  "news_buffers_note": "Effective window is the stricter (union) of these floors and the stored start/end in data/news_windows.json. Stored windows are never shrunk or rewritten.",
+  "friday_close_no_entry_hours": 2,
+  "no_hold_over_weekend_or_iranian_holidays": true
+}

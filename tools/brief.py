@@ -2,15 +2,16 @@
 """brief.py - ONE command for the team: fetch -> levels -> bias -> macro -> regime -> Persian brief.
 
 Prints: تصمیم BUY/SELL/NO TRADE | علت پذیرش/رد | رژیم و موتور مجاز | جهت (H4/H1/M15) | ADR
-        | سقف/کف مرجع (روز، هفته، ماه، سشن، رنج بازگشایی) | ماکرو | دروازه‌های ریسک
+        | سقف/کف مرجع (روز، هفته، ماه، سشن، رنج بازگشایی) | ماکرو | دروازه‌های ریسک دریاگلد
         | سقف‌ها و کف‌ها (بدون برچسب قوی/متوسط) | سطح ابطال | منبع + زمان داده
+Prices are shown in DaryaGold terms (Dukascopy bid + price_offset_usd) with the raw bid in brackets.
 Data-quality gate: if price data is missing, or older than 10 minutes while the market is open,
 the brief prints NO TRADE / stop and does not emit a full analysis.
 Writes : /workspace/m5-gold-team/latest_brief.md  and  /workspace/m5-gold-team/latest_brief.json
 Level ranks are unvalidated and are not printed. Signal-only research, not financial advice.
-usage  : python3 brief.py [--no-fetch] [--days N] [--n 4] [--at "YYYY-MM-DD HH:MM"]
+usage  : python3 brief.py [--no-fetch] [--days N] [--n 4] [--at "YYYY-MM-DD HH:MM"] [--equity TOMAN]
 exit   : 0 ok | 2 stale / no-trade data gate (short brief written) | 3 no data at all"""
-import argparse, csv, os, subprocess, sys
+import argparse, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
@@ -18,6 +19,7 @@ from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, marke
 import pandas as pd
 import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
+import broker_daryagold as DG
 
 FA_B = {"bullish": "صعودی ⬆️", "bearish": "نزولی ⬇️", "neutral": "خنثی ↔️"}
 STALE_MIN = 10  # minutes, while the market is open
@@ -94,51 +96,6 @@ def quality_gate(meta):
         return {"ok": True, "code": "ok", "fa": f"تازه (سن {age_f:.1f} دقیقه)", "age_minutes": round(age_f, 1)}
     return {"ok": True, "code": "ok", "fa": "تازه"}
 
-def daily_risk_note():
-    """Hard daily stop is always printed. If today's journal has closed losses, mention the count."""
-    path = f"{ROOT}/journal.csv"
-    if not os.path.exists(path):
-        return "در ژورنال معامله‌ی بسته‌شده‌ای برای امروز دیده نشد."
-    today = datetime.now(TEH).strftime("%Y-%m-%d")
-    losses = 0
-    try:
-        with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                t = (row.get("signal_time_tehran") or row.get("logged_at_tehran") or "")[:10]
-                if t != today:
-                    continue
-                status = (row.get("status") or "").lower()
-                outcome = (row.get("outcome") or "").lower()
-                if "reject" in status or "arm" in status or "cancel" in status:
-                    continue
-                r = row.get("result_R") or ""
-                try:
-                    r_f = float(r)
-                except (TypeError, ValueError):
-                    r_f = None
-                if outcome in ("loss", "sl", "stopped", "lose") or (r_f is not None and r_f < 0):
-                    losses += 1
-    except Exception:
-        return "خواندن ژورنال امروز ممکن نشد."
-    if losses:
-        return f"در ژورنال امروز {losses} ضرر بسته‌شده ثبت شده است."
-    return "در ژورنال معامله‌ی بسته‌شده‌ای برای امروز دیده نشد."
-
-def risk_lines(spread):
-    sp = spread or {}
-    cur = sp.get("current")
-    typ = sp.get("typical_this_hour")
-    cur_s = f"{cur:.2f}" if isinstance(cur, (int, float)) else "نامعلوم"
-    typ_s = f"{typ:.2f}" if isinstance(typ, (int, float)) else "نامعلوم"
-    flag = " — الان غیرعادی است، ورود ممنوع" if sp.get("abnormal") else ""
-    known = "" if sp.get("known") is not False else " (اسپرد در این منبع موجود نیست)"
-    return (f"**دروازه‌های ریسک (اجباری، حساب ۵۰۰ دلار، حجم ۰٫۰۱ لات):** "
-            f"اسپرد فعلی {cur_s} دلار / معمول این ساعت {typ_s} دلار "
-            f"(حد: بیشتر از ۲ برابر معمول همین ساعت و هم‌زمان بالاتر از ۰٫۸۰ دلار → ورود ممنوع){flag}{known} · "
-            f"حد ضرر حداکثر ۵ دلار با حجم ۰٫۰۱ لات · نسبت پاداش به ریسک حداقل ۱٫۵ · "
-            f"توقف روز بعد از ۳ ضرر یا ۱۰ دلار ضرر. "
-            + daily_risk_note())
-
 def _write(md, payload, rc):
     print(md)
     with open(f"{ROOT}/latest_brief.md", "w", encoding="utf-8") as f:
@@ -146,13 +103,50 @@ def _write(md, payload, rc):
     save_json(f"{ROOT}/latest_brief.json", payload)
     sys.exit(rc)
 
+def _apply_broker_gates(decision, lv, b, cfg, friday):
+    """Size any engine setup and apply DaryaGold vetoes (daily stop, Friday close, sizing)."""
+    vetoes = []
+    day_veto, day_why, journal = DG.daily_loss_veto(cfg)
+    if day_veto:
+        vetoes.append(day_why)
+    if friday.get("blocked"):
+        vetoes.append(friday["reason_fa"])
+    setup = (decision or {}).get("setup")
+    plan, sizing = None, None
+    if setup and decision.get("decision") in ("BUY", "SELL"):
+        if setup.get("entry") is not None and setup.get("sl") is not None:
+            plan = {"side": decision["decision"], "entry": float(setup["entry"]),
+                    "sl": float(setup["sl"]), "tp": setup.get("tp"),
+                    "entry_type": cfg.get("entry_type"), "source": "setup", "unvalidated": True}
+        else:
+            plan = DG.plan_from_setup(setup, lv, cfg)
+        if plan:
+            spread = (b.get("spread") or {}).get("current")
+            sizing = DG.size_trade(plan["entry"], plan["sl"], plan.get("tp"), plan["side"],
+                                   cfg, spread_usd=spread)
+            if not sizing.get("ok"):
+                vetoes.append(sizing["reason_fa"])
+    out = dict(decision or {})
+    if vetoes and out.get("decision") in ("BUY", "SELL"):
+        out["decision"] = "NO TRADE"
+        out["reasons_reject"] = list(out.get("reasons_reject") or []) + vetoes
+        out["broker_veto"] = True
+    out["plan"] = plan
+    out["sizing"] = sizing
+    out["journal"] = journal
+    return out, plan, sizing, journal
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-fetch", action="store_true", help="use cached price + macro (no download)")
     ap.add_argument("--days", default=None, help="price look-back in calendar days (default: 3 if cache already covers ~21 calendar days, else 21)")
     ap.add_argument("--n", type=int, default=4, help="levels per side")
     ap.add_argument("--at", help="evaluate news windows at Tehran time (testing)")
+    ap.add_argument("--equity", type=float, default=None,
+                    help="account equity in toman (overrides EQUITY_TOMAN and broker_daryagold.json)")
     a = ap.parse_args()
+    cfg = DG.load_config(equity=a.equity)
+    px = lambda p: DG.fmt_px(p, cfg)
     rc = 0
     if a.days is None:
         # Need ~21 calendar days for 14 full gold sessions; reuse a deep cache and only fetch a short tail.
@@ -200,6 +194,7 @@ def main():
             "generated_at_tehran": now.strftime("%Y-%m-%d %H:%M:%S"),
             "decision": "NO TRADE", "quality": q, "stale": True,
             "as_of_tehran": meta.get("as_of_tehran"), "source": meta.get("source"),
+            "broker": cfg.get("broker"), "equity_toman": cfg.get("equity_toman"),
             "markdown": md,
         }, 2)
 
@@ -211,6 +206,8 @@ def main():
     regime = REG.classify(lv, win=b.get("news_window"), spread=b.get("spread"),
                           h4=b.get("h4"), h1=b.get("h1"))
     decision = REG.decide(lv, b, regime, quality=q)
+    friday = DG.friday_close_block(at or now, cfg)
+    decision, plan, sizing, journal = _apply_broker_gates(decision, lv, b, cfg, friday)
 
     h4t = (b.get("h4") or {}).get("trend", "neutral")
     lines = [
@@ -223,11 +220,14 @@ def main():
             lines.append("**علت پذیرش:** " + " ".join(decision["reasons_accept"]))
         if decision.get("reasons_reject"):
             lines.append("**علت احتیاط:** " + " ".join(decision["reasons_reject"]))
+        lines += DG.fa_plan_lines(plan, sizing, cfg)
     else:
         reasons = decision.get("reasons_reject") or [v.get("fa") or "صبر."]
         lines.append("**علت رد:** " + " ".join(reasons))
         if decision.get("reasons_accept"):
             lines.append("**یادداشت:** " + " ".join(decision["reasons_accept"]))
+        if plan:
+            lines += DG.fa_plan_lines(plan, sizing, cfg)
     if v.get("note_fa"):
         lines.append(f"⚠️ {v['note_fa']}")
     if v.get("news_caution_fa"):
@@ -236,48 +236,52 @@ def main():
     lines.append(f"**جهت:** {FA_B[b['bias']]}  (H4 {FA_B[h4t].split()[0]}، "
                  f"H1 {FA_B[b['h1']['trend']].split()[0]}، M15 {FA_B[b['m15']['trend']].split()[0]}؛ "
                  f"بایاس خبری M5-News: {FA_B.get(b['news_bias'], '—').split()[0] if b['news_bias'] else 'ثبت نشده'})")
-    lines.append(f"**قیمت:** {fmt(lv['price_bid'])} ({'فیوچرز GC=F' if meta.get('fallback') else 'bid'})  ·  "
+    bid = lv["price_bid"]
+    src_kind = "فیوچرز GC=F" if meta.get("fallback") else "دریاگلد"
+    lines.append(f"**قیمت:** {px(bid)} ({src_kind})  ·  "
                  f"ATR پنج‌دقیقه: {lv['atr_m5_14']} دلار · کیفیت داده: {q['fa']}")
-    lines.append(risk_lines(b.get("spread")))
-    lines += MAC.fa_lines(macro, lv, b.get("news_window"), regime)
-    lines += REG.fa_indicator_lines(regime)
+    lines.append(DG.price_convention_fa(cfg))
+    lines += DG.fa_risk_lines(cfg, spread=b.get("spread"), sizing=sizing, friday=friday)
+    lines += MAC.fa_lines(macro, lv, b.get("news_window"), regime, price_fmt=px)
+    lines += REG.fa_indicator_lines(regime, price_fmt=px)
 
     # equal highs / lows (M15)
     eq = lv.get("equal") or {}
     eq_bits = []
     if eq.get("highs"):
-        eq_bits.append("سقف " + "، ".join(f"{e['price']:.2f} (n={e['n']})" for e in eq["highs"][:3]))
+        eq_bits.append("سقف " + "، ".join(f"{px(e['price'])} (n={e['n']})" for e in eq["highs"][:3]))
     if eq.get("lows"):
-        eq_bits.append("کف " + "، ".join(f"{e['price']:.2f} (n={e['n']})" for e in eq["lows"][:3]))
+        eq_bits.append("کف " + "، ".join(f"{px(e['price'])} (n={e['n']})" for e in eq["lows"][:3]))
     if eq_bits:
         lines.append("**برابری سقف/کف M15:** " + " · ".join(eq_bits) + f" · آستانه {eq.get('tolerance')} دلار")
 
     lines.append("**سقف‌های نزدیک:**")
-    lines += [f"- {fmt(l['price'])} · {label(l)}" for l in res] or ["- (سطح نزدیکی در محدوده نیست)"]
+    lines += [f"- {px(l['price'])} · {label(l)}" for l in res] or ["- (سطح نزدیکی در محدوده نیست)"]
     lines.append("**کف‌های نزدیک:**")
-    lines += [f"- {fmt(l['price'])} · {label(l)}" for l in sup] or ["- (سطح نزدیکی در محدوده نیست)"]
+    lines += [f"- {px(l['price'])} · {label(l)}" for l in sup] or ["- (سطح نزدیکی در محدوده نیست)"]
     if inv:
         word = "بالای" if b["bias"] == "bearish" or (b["bias"] == "neutral" and b["technical_bias"] == "bearish") else "زیر"
-        lines.append(f"**ابطال جهت:** بسته شدن کندل M15 {word} {fmt(inv['neutral_level'])} → خنثی؛ "
-                     f"بسته شدن کندل H1 {word} {fmt(inv['off_level'])} → جهت باطل." if inv.get("off_level") else
-                     f"**ابطال جهت:** بسته شدن کندل M15 {word} {fmt(inv['neutral_level'])} → خنثی.")
+        lines.append(f"**ابطال جهت:** بسته شدن کندل M15 {word} {px(inv['neutral_level'])} → خنثی؛ "
+                     f"بسته شدن کندل H1 {word} {px(inv['off_level'])} → جهت باطل." if inv.get("off_level") else
+                     f"**ابطال جهت:** بسته شدن کندل M15 {word} {px(inv['neutral_level'])} → خنثی.")
     if b.get("news_invalidation"):
         lines.append(f"**ابطال خبری (M5-News):** {b['news_invalidation']}")
 
     now_eval = at or datetime.now(TEH)
+    news_doc = DG.expand_news_doc(nw.load(), cfg)
     wins = []
-    for s, e, meta_w in nw.merged(nw.load()):
+    for s, e, meta_w in nw.merged(news_doc):
         if e > now_eval and (s - now_eval).total_seconds() < 86400:
             tag = {"block": "بلوک", "caution": "احتیاط", "monitor": "پایش"}.get(meta_w.get("action"), meta_w.get("action") or "")
             wins.append(f"{s:%H:%M}–{e:%H:%M} (سطح {meta_w.get('tier')}، {tag})")
     if wins:
-        lines.append("**پنجره‌های خبری (تهران، ۲۴ ساعت آینده):** " + "، ".join(wins))
+        lines.append("**پنجره‌های خبری (تهران، ۲۴ ساعت آینده، با بافر سخت‌گیرانه‌تر دریاگلد):** " + "، ".join(wins))
 
     src = meta.get("source", "?"); fb = " ⚠️ منبع جایگزین" if meta.get("fallback") else ""
     lines.append(f"**منبع:** {src}{fb} · داده تا {meta.get('as_of_tehran')} به وقت تهران"
                  + (" · ⛔ داده کهنه است" if meta.get("stale") else "")
                  + (" · ⚠️ این قیمت فیوچرز COMEX است نه اسپات؛ با بروکر چند دلار فرق دارد و اسپرد نامعلوم است." if meta.get("fallback")
-                    else " · قیمت‌ها bid هستند و با بروکر حدود ۱ دلار فرق دارند."))
+                    else " · " + DG.price_convention_fa(cfg)))
     lines.append(DISCLAIMER)
     md = "\n".join(lines)
     payload = {
@@ -285,7 +289,11 @@ def main():
         "evaluated_at_tehran": b["evaluated_at_tehran"],
         "as_of_tehran": meta.get("as_of_tehran"), "source": src, "fallback": meta.get("fallback"),
         "stale": meta.get("stale"), "quality": q,
-        "price_bid": lv["price_bid"], "price_ask": lv.get("price_ask"), "atr_m5": lv["atr_m5_14"],
+        "price_bid": lv["price_bid"],
+        "price_daryagold": DG.to_broker(lv["price_bid"], cfg),
+        "price_offset_usd": cfg.get("price_offset_usd"),
+        "price_offset_uncertainty_usd": cfg.get("price_offset_uncertainty_usd"),
+        "price_ask": lv.get("price_ask"), "atr_m5": lv["atr_m5_14"],
         "bias": b["bias"], "technical_bias": b["technical_bias"], "technical_confidence": b["technical_confidence"],
         "news_bias": b["news_bias"], "h4": b.get("h4"), "h1": b["h1"], "m15": b["m15"],
         "verdict": v, "decision": decision, "regime": regime, "macro": macro,
@@ -294,6 +302,10 @@ def main():
         "opening_ranges": lv.get("opening_ranges"), "equal": lv.get("equal"),
         "session_vwap": lv.get("session_vwap"),
         "news_windows_next_24h": wins, "markdown": md,
+        "broker": cfg.get("broker"),
+        "equity_toman": cfg.get("equity_toman"),
+        "plan": plan, "sizing": sizing, "friday_close": friday,
+        "journal_today": journal,
     }
     _write(md, payload, 0)
 
