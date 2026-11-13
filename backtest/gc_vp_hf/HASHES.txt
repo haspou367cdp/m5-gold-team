@@ -1,0 +1,20 @@
+
+# gc_vp_hf PREREG hashed 2026-11-13 08:23:12 +0330 Asia/Tehran (BEFORE generating any GC levels/outcomes)
+68f3cdda92012d0ad4f07b40a190c061cb3b99f4e24b2be4aeecf220b6f2aea2  gc_vp_hf/PREREG_gc_vp.md
+
+# gc_vp_hf generator + evaluator hashed 2026-11-13 08:24:38 +0330 Asia/Tehran (BEFORE running either)
+3dee30ce57067d28cf911b0da6e1cda01e528a46fb7eba438eb589098e78db57  gc_vp_hf/gen_gc_vp.py
+3f3cb75fe28b2e8a23e6bbf28c5e61b9e85e754d71d7a49e4751d77c33bb7fea  gc_vp_hf/eval_gc_vp.py
+
+# gc_vp_hf eval_gc_vp.py re-hashed 2026-11-13 08:25:00 +0330 Asia/Tehran after DEVIATION 1 (news-window tz crash fixed; crashed before any outcome was computed)
+f11224993489374329150fcbeaea2a287eff34d4e660beab52a59a08322b860f  gc_vp_hf/eval_gc_vp.py
+
+# gc_vp_hf outputs hashed 2026-11-13 08:26:00 +0330 Asia/Tehran (after eval; reading: H_rev no evidence, H_cont positive hint, EXPLORATORY)
+5c09b135c6ff3c58deb29f7c11cbab4c98b5423f1496e302dd43e3a06b4b4f9b  gc_vp_hf/gc_levels.csv
+5177db75ee213005326e7bbf2c291bbea3420c71ade1361c5dcc61e31f42938b  gc_vp_hf/basis_log.csv
+4f020e6a0477f1fc23639757eae77823863b074dd26bf185eca3d66e07de876b  gc_vp_hf/trades_gc_vp.csv
+f490f49012d2b5f25d7cb85801fe800a207a29f8e1656101640445250022e301  gc_vp_hf/eval.log
+ae9d726fa1d3feeac1dd0989958e633bdcdf608edfa9e7297e1523b30a47eb8e  gc_vp_hf/post_checks.py
+f0d37329a8e558c7a7cfdc1c1e794b21170c077cd9ee239e95a0235ec6d13006  gc_vp_hf/summary.md
+# gc_vp_hf summary.md re-hashed 2026-11-13 08:26:05 +0330 Asia/Tehran (Persian date-range wording fix only)
+4b1e474ac3b73a5ba31dd37e4820e8e3a530f06127a556dd465219396b8da4e3  gc_vp_hf/summary.md
