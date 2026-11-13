@@ -56,8 +56,11 @@ export function makeApp(cfg) {
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
       const r = handle(s, text);
       if (r.queue) {
-        if (!s.pending_cmds.some((x) => x.cmd === r.queue)) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full });
-        r.recent = s.last_dispatch && Date.now() - s.last_dispatch < 90000;
+        // a different command always gets its own run (a run already in progress may have pulled the state
+        // before it was queued); only a repeat of a command that is still pending and was dispatched < 90 s ago is skipped
+        const already = s.pending_cmds.some((x) => x.cmd === r.queue);
+        if (!already) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full });
+        r.recent = already && !!s.last_dispatch && Date.now() - s.last_dispatch < 90000;
         if (!r.recent) s.last_dispatch = Date.now();
       }
       return r;

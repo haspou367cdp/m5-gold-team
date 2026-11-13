@@ -124,8 +124,13 @@ check("Tehran clock is UTC+3:30", teh(new Date("2026-11-13T20:30:00Z")).full ===
 // /scan -> queue + dispatch
 DISPATCHED.length = 0; r = await tgSend("/scan");
 check("/scan -> instant ack + workflow dispatch", r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1 && DISPATCHED[0].inputs.mode === "command");
-r = await tgSend("/brief"); check("second command within 90 s: queued, no 2nd dispatch", DISPATCHED.length === 1 && st().pending_cmds.length === 2);
-await tgSend("/scan"); check("duplicate /scan not queued twice", st().pending_cmds.length === 2);
+r = await tgSend("/brief"); check("/scan then /brief within 90 s: both dispatched, both queued", DISPATCHED.length === 2 &&
+  DISPATCHED[1].inputs.mode === "command" && st().pending_cmds.length === 2 && r.out[0].includes("در حال بررسی"));
+r = await tgSend("/scan"); check("repeated /scan within 90 s: deduped (no new dispatch, not queued twice), still acked",
+  DISPATCHED.length === 2 && st().pending_cmds.length === 2 && r.out[0].includes("در حال بررسی"));
+r = await tgSend("/brief"); check("repeated /brief within 90 s: deduped", DISPATCHED.length === 2 && st().pending_cmds.length === 2);
+DB.row.state.last_dispatch = Date.now() - 120000; r = await tgSend("/scan");
+check("same /scan still pending after 90 s: re-dispatched, not queued twice", DISPATCHED.length === 3 && st().pending_cmds.length === 2);
 const before = uid; await tgSend("/help"); uid = before;
 r = await tgSend("/help"); check("Telegram retry (same update_id) ignored", r.out.length === 0); uid += 5;
 // GitHub state API
