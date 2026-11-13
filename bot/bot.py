@@ -257,7 +257,7 @@ _PRICE = re.compile(r"(?<![\d\-:.])([2-6]\d{3}\.\d{1,3})(?![\d\-:])")
 CFG = None
 
 def px(p):
-    """DaryaGold price with the raw Dukascopy bid in brackets (LTR-safe digits)."""
+    """DaryaGold price (LTR-safe Latin digits)."""
     if p is None:
         return "—"
     bid = float(p)
@@ -327,8 +327,6 @@ def fa_polish(t):
 def head(b):
     return (b.get("evaluated_at_tehran") or b.get("generated_at_tehran") or now_teh().strftime("%Y-%m-%d %H:%M"))[:16]
 
-WARN_LINE = ""  # owner (2026-11-13): no disclaimer/warning lines in Telegram messages
-
 def px1(p):
     """Compact DaryaGold price, one decimal."""
     if p is None:
@@ -395,12 +393,6 @@ def short_reason(b, reasons):
         return "ریسک ستاپ بیش از سقف مجاز است"
     return "ستاپ تأییدشده‌ای نیست"
 
-def friday_line():
-    t = now_teh()
-    if t.weekday() == 4 and t.hour >= 22:
-        return ["جمعه: از ۲۳:۳۰ ورود ممنوع؛ همه‌چیز تا ۰۱:۳۰ بسته شود."]
-    return []
-
 def sr_line(b):
     r = (b.get("resistances") or [None])[0]
     s_ = (b.get("supports") or [None])[0]
@@ -445,8 +437,20 @@ def p1(bid):
     return f"{dg:.1f}"
 
 def friday_flag():
+    """Friday-close note from the DST-aware session gate: shown from 1.5 h before the entry cutoff
+    (23:30 Tehran in US winter, 22:30 in US summer) until the forex close (01:30 / 00:30 Tehran)."""
     t = now_teh()
-    return ["🏳️ از ۲۳:۳۰ ورود بسته است"] if (t.weekday() == 4 and t.hour >= 22) else []
+    try:
+        se = DG.session_entry_block(t, CFG)
+        start = datetime.strptime(se["block_start_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+        close = datetime.strptime(se["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+    except Exception:
+        return []
+    if start - timedelta(minutes=90) <= t < start:
+        return [f"🏳️ از {start:%H:%M} ورود بسته است"]
+    if start <= t < close:
+        return [f"🏳️ ورود بسته است؛ همه‌چیز تا {close:%H:%M} بسته شود"]
+    return []
 
 def hilo(b):
     r = (b.get("resistances") or [None])[0]

@@ -133,5 +133,17 @@ check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) 
 
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)
+# Friday flag follows the DST-aware session gate (winter cutoff 23:30, close 01:30; summer 22:30 / 00:30)
+def flag_at(dt):
+    CLOCK[0] = dt; return B.friday_flag()
+_c = CLOCK[0]
+check("Friday flag: none on Friday afternoon", flag_at(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)) == [])
+check("Friday flag: winter warning 22:30 -> 23:30", "23:30" in "".join(flag_at(datetime(2026, 11, 13, 22, 30, tzinfo=B.TEH))))
+check("Friday flag: Saturday 00:30 still closing (01:30)", "01:30" in "".join(flag_at(datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH))))
+check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 2, 0, tzinfo=B.TEH)) == [])
+check("Friday flag: summer cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 7, 17, 21, 30, tzinfo=B.TEH))))
+check("Friday flag: none on a Wednesday night", flag_at(datetime(2026, 11, 11, 22, 45, tzinfo=B.TEH)) == [])
+CLOCK[0] = _c
+
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)
