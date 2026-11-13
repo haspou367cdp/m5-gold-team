@@ -23,7 +23,7 @@ import broker_daryagold as DG
 
 FA_B = {"bullish": "صعودی ⬆️", "bearish": "نزولی ⬇️", "neutral": "خنثی ↔️"}
 STALE_MIN = 10  # minutes, while the market is open
-DISCLAIMER = "_سطح‌ها و جهت تاییدنشده‌اند و برتری آماری ندارند. این تحلیل است، نه توصیه‌ی مالی._"
+DISCLAIMER = "_بدون مزیت آماری؛ اول دمو._"
 
 def fmt(p):
     if p is None:

@@ -28,7 +28,7 @@ NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "11:44"), "pm": ("16:10", "16:44")}
 WARN = ("⚠️ سطح‌ها و جهت کلی تأیید نشده‌اند و مزیت آماری ثابت‌شده‌ای ندارند؛ هر دو روش معاملاتی در آزمون روی داده‌های جدید رد شدند. "
-        "پیش از معامله‌ی واقعی، روی حساب آزمایشی (دمو) امتحان کنید.\nاین تحلیل است، نه توصیه‌ی مالی")
+        "پیش از معامله‌ی واقعی، روی حساب آزمایشی (دمو) امتحان کنید.")
 HELP = """**🤖 راهنمای بات طلای دریاگلد**
 
 /scan — بررسی کامل بازار؛ اگر ستاپی از همه‌ی کنترل‌ها بگذرد سیگنال می‌دهد، وگرنه «معامله نکنید» را با دلیلش می‌گوید.
@@ -344,7 +344,7 @@ def fa_polish(t):
 def head(b):
     return (b.get("evaluated_at_tehran") or b.get("generated_at_tehran") or now_teh().strftime("%Y-%m-%d %H:%M"))[:16]
 
-WARN_LINE = "~~این تحلیل است، نه توصیه‌ی مالی. مزیت آماری ثابت‌شده ندارد؛ اول روی دمو امتحان کنید.~~"
+WARN_LINE = "~~بدون مزیت آماری؛ اول دمو.~~"
 
 def px1(p):
     """Compact DaryaGold price, one decimal."""
@@ -450,24 +450,63 @@ def short_brief(b, state, cfg, reasons=None, title=None):
     L.append(WARN_LINE)
     return "\n".join(L)
 
-def signal_msg(b, plan, sizing, state, cfg):
-    s = sizing["size"]; eq = float(state["equity_toman"])
-    t = head(b)[11:16]
-    size_fa = "نیم‌واحد" if s.get("key") == "half_unit" else "یک‌واحد"
+def second_target(b, plan):
+    """Next structural level beyond TP1 in the trade direction (bid terms), or None."""
+    tp = plan.get("tp")
+    if tp is None:
+        return None
+    if plan["side"] == "SELL":
+        c = [l["price"] for l in (b.get("supports") or []) if l["price"] < tp - 0.5]
+        return max(c) if c else None
+    c = [l["price"] for l in (b.get("resistances") or []) if l["price"] > tp + 0.5]
+    return min(c) if c else None
+
+def signal_msg(b, plan, sizing, state, cfg, title_prefix=""):
+    """Clean signal only: entry, SL, TP(s), size, risk, R:R, expiry, one-line warning."""
+    s = sizing["size"]
+    now = now_teh()
+    t = now.strftime("%H:%M")
+    full = s.get("key") == "full_unit"
+    size_fa = "یک‌واحد" if full else "نیم‌واحد"
     p2 = lambda x: (f"{DG.to_broker(float(x), CFG):.2f}".rstrip("0").rstrip(".") if CFG else str(x))
-    L = [f"**{'🟢' if plan['side'] == 'BUY' else '🔴'} سیگنال {FA_SIDE[plan['side']]} طلا** · {t}",
+    tp2 = second_target(b, plan) if full else None  # a half unit cannot be split
+    # expiry: 30 minutes, but never into the next no-entry news window
+    exp = now + timedelta(minutes=30)
+    nw_ = b.get("news_window") or {}
+    if nw_.get("next_start"):
+        try:
+            ns = datetime.strptime(nw_["next_start"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+            if now < ns < exp:
+                exp = ns
+        except ValueError:
+            pass
+    side_icon = "🟢" if plan["side"] == "BUY" else "🔴"
+    L = [f"**{side_icon} {title_prefix}سیگنال {FA_SIDE[plan['side']]} طلا** · {t}",
          f"ورود: {p2(plan['entry'])} (سفارش محدود)",
          f"حد ضرر: {p2(plan['sl'])}",
-         f"حد سود: {p2(plan['tp'])}",
-         f"حجم: {size_fa}",
-         f"ریسک: {DG.toman(s['risk_toman'])} تومان ({DG.pct_of(s['risk_toman'], eq)}٪ حساب)",
-         f"نسبت سود به ضرر: {s['net_rr']}"]
-    nn = next_news(b)
-    if nn:
-        L.append(f"خبر بعدی: {nn}؛ پیش از آن سفارش را لغو و معامله را ببندید.")
+         (f"حد سود ۱: {p2(plan['tp'])} · حد سود ۲: {p2(tp2)}" if tp2 else f"حد سود: {p2(plan['tp'])}"),
+         f"حجم: {size_fa} · ریسک: {DG.toman(s['risk_toman'])} تومان · نسبت سود به ضرر: {s['net_rr']}"]
+    if tp2:
+        L.append("تقسیم: در حد سود ۱ نیمی از معامله را ببندید و حد ضرر بقیه را به نقطه‌ی ورود ببرید؛ "
+                 "اگر دریاگلد بستن بخشی از معامله را اجازه نمی‌دهد، فقط حد سود ۱ را بگذارید.")
+    L.append(f"اعتبار تا: {exp:%H:%M}؛ اگر تا آن زمان سفارش پر نشد، لغو کنید.")
     L += friday_line()
     L.append(WARN_LINE)
     return "\n".join(L)
+
+def sample_signal(b, cfg, state):
+    """Synthetic signal from the current price, only to preview the format (never a real signal)."""
+    bid = float(b["price_bid"])
+    side = "SELL" if b.get("bias") == "bearish" else "BUY"
+    sgn = -1 if side == "SELL" else 1
+    entry = round(bid - sgn * 0.5, 2)
+    sl = round(entry - sgn * 1.6, 2)
+    tp = round(entry + sgn * 4.0, 2)
+    sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
+    if not sz.get("ok"):
+        return None
+    return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg,
+                      title_prefix="نمونه‌ی آزمایشی، سیگنال واقعی نیست · ")
 
 def status_msg(state, news_ok):
     d = state["day"]
@@ -568,8 +607,10 @@ def main():
     if a.mode == "test":
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-        body = signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why, title="📊 گزارش آزمایشی طلا")
-        send(body)
+        send(signal_msg(b, plan, sizing, state, cfg) if ok else short_brief(b, state, cfg, reasons=why, title="📊 گزارش آزمایشی طلا"))
+        smp = sample_signal(b, cfg, state)
+        if smp:
+            send(smp)
     elif a.mode == "scheduled" and DG.forex_open(t, cfg):
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
