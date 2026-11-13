@@ -1,0 +1,20 @@
+{
+ "equity_toman": 2085600,
+ "tg_offset": 194707588,
+ "presession_sent": {
+  "2026-11-13-pm": true
+ },
+ "signals_sent": [],
+ "day": {
+  "date": "2026-11-13",
+  "losses": 0,
+  "loss_toman": 0,
+  "wins": 0,
+  "win_toman": 0,
+  "records": []
+ },
+ "news_fetched_at": "2026-11-13 16:29",
+ "last_verdict": "NO TRADE",
+ "last_run_tehran": "2026-11-13 17:26",
+ "updated_at_tehran": "2026-11-13 17:26:55"
+}
