@@ -64,6 +64,7 @@ jobs:
           STATE_DIR: ${{ github.workspace }}/state
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
+          BOT_ECHO: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: |
           MODE=scheduled
           [ "$EVENT_SCHEDULE" = "0 19-21 * * 1-5" ] && MODE=poll

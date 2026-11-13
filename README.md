@@ -30,7 +30,7 @@ python3 tools/brief.py --equity 2085600
 
 Each run: reads Telegram commands, refreshes the news calendar (ForexFactory weekly feed via `tools/ff_calendar.py`, every 3 h; USD events, Fed speakers = tier B, unclassified High impact = B), runs `tools/brief.py`, then an **automated risk check that replaces M5-Risk**: BUY/SELL from the brief, price data ≤10 min old and not the futures fallback, calendar ≤30 h old, outside A/B news windows, Friday rule (no entries from 23:30, flat by 01:30), daily stop (3 losses or 20% net loss from `/loss` `/win`), half/full unit only, risk ≤10% of equity incl. 14,000 toman fee, net R:R ≥ 1.5, SL ≥ $1. A signal is sent **only** if every gate passes, and the same signal is never sent twice.
 
-Commands (answered at the next run, so up to ~15 min delay; only the owner's chat id is answered): `/scan`, `/brief`, `/balance <toman>`, `/loss <toman>`, `/win <toman>`, `/status`, `/help`.
+Commands (answered at the next run, so up to ~15 min delay; only the owner's chat id is answered): `/scan`, `/brief`, `/balance <toman>`, `/loss <toman>`, `/win <toman>`, `/undo`, `/status`, `/help`.
 
 Secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (GitHub Actions secrets only, never in the repo). State (equity, Telegram offset, sent signals, today's results, news windows) lives in `state.json`/`news_windows.json` on the orphan branch `state` (one force-pushed commit, no secrets). Price parquet cache lives in the Actions cache. Budget: ~45 runs × ~22 weekdays ≈ 1,000 of the 2,000 free minutes per month.
 
