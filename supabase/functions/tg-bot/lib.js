@@ -166,7 +166,9 @@ export async function verifyOidc(req, fetchJwks) {
   if (!m) return null;
   const [h, p, sig] = m[1].split(".");
   if (!sig) return null;
-  const head = JSON.parse(new TextDecoder().decode(b64u(h))), claims = JSON.parse(new TextDecoder().decode(b64u(p)));
+  let head, claims;
+  try { head = JSON.parse(new TextDecoder().decode(b64u(h))); claims = JSON.parse(new TextDecoder().decode(b64u(p))); }
+  catch { return null; }   // garbage token -> 401, not 500
   if (head.alg !== "RS256") return null;
   if (!JWKS || Date.now() - JWKS_AT > 3.6e6 || !JWKS.keys.some((k) => k.kid === head.kid)) {
     JWKS = await (fetchJwks ? fetchJwks() : fetch(`${OIDC_ISS}/.well-known/jwks`).then((r) => r.json())); JWKS_AT = Date.now();

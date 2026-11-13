@@ -5,7 +5,7 @@ import { render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort } fr
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
-const DB = { row: { state: {}, news: null, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
+const DB = { row: { state: { equity_toman: 2085600, signals_sent: [], presession_sent: { "2026-11-13-pm": true } }, news: { windows: [] }, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
 const SENT = [], DISPATCHED = [];
 let failHtml = false, ghStatus = 204, raceOnce = false;
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
@@ -77,17 +77,15 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 }
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
-  import_state: { equity_toman: 2085600, tg_offset: 9, signals_sent: [], presession_sent: { "2026-11-13-pm": true } },
-  import_news: { windows: [] }, set_webhook: true, announce: true })).json();
-check("setup: secrets stored, state migrated, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
-  o.imported && o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
-  st().equity_toman === 2085600 && !("tg_offset" in st()) && DB.row.news && DB.hook.max_connections === 1 &&
+  set_webhook: true, announce: true })).json();
+check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
+  o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
+  st().equity_toman === 2085600 && DB.hook.max_connections === 1 &&
   DB.hook.secret_token === DB.vault.tg_webhook_secret && DB.hook.url === FN + "/tg");
 SENT.length = 0;
-o = await (await gh("/admin/setup", "POST", { import_state: { equity_toman: 1 }, set_webhook: true, announce: true })).json();
-check("setup again: no re-import, no second announcement", !o.imported && SENT.length === 0 && st().equity_toman === 2085600);
-check("polling offset kept: updates below it are skipped", st().min_update_id === 9 && (await tgSend("/help")).out.length === 0);
-uid = 9;
+o = await (await gh("/admin/setup", "POST", { set_webhook: true, announce: true })).json();
+check("setup again: no second announcement, state untouched", SENT.length === 0 && st().equity_toman === 2085600);
+check("garbage bearer token -> 401", (await app(new Request(FN + "/state", { headers: { authorization: "Bearer x.y.z" } }), jw)).status === 401);
 // webhook auth + chat filter
 check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).status === 403);
 const v0 = DB.row.version;

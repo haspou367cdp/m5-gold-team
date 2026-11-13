@@ -1,7 +1,7 @@
 // m5-gold-bot Edge Function: Telegram webhook + state API for the GitHub runner.
 //   POST .../tg            Telegram webhook (X-Telegram-Bot-Api-Secret-Token checked against Vault; only CHAT_ID)
 //   GET|POST .../state     GitHub Actions only (OIDC JWT: this repo, main branch)
-//   POST .../admin/setup   GitHub Actions only: store secrets in Vault, migrate state, set webhook, announce once
+//   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE } from "./lib.js";
@@ -52,7 +52,7 @@ export function makeApp(cfg) {
     const text = (m.text || "").trim();
     if (String((m.chat || {}).id || "") !== CHAT_ID || !text.startsWith("/")) return new Response("ok");
     const res = await mutate(async (s) => {
-      if ((s.seen_updates || []).includes(u.update_id) || u.update_id < (s.min_update_id || 0)) return null;   // retry / already answered by polling
+      if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
       const r = handle(s, text);
       if (r.queue) {
@@ -80,14 +80,6 @@ export function makeApp(cfg) {
     if (b.gh_token) { await rpc("bot_set_secret", { p_name: "gh_dispatch_token", p_value: b.gh_token }); out.gh_token = "stored"; }
     SEC = null;
     const env = await secrets();
-    const row = await loadRow();
-    if (b.import_state && (!row.state || !Object.keys(row.state).length)) {
-      const s = normalize(b.import_state);
-      if (s.tg_offset) s.min_update_id = s.tg_offset;   // updates below the old polling offset were already answered
-      delete s.tg_offset;
-      out.imported = await rpc("bot_save", { p_state: s, p_version: row.version });
-    }
-    if (b.import_news && !row.news) await rpc("bot_merge", { p_patch: {}, p_done: [], p_news: b.import_news });
     if (b.set_webhook) {
       const hook = `${origin}/tg`;
       const r = await tg(env, "setWebhook", { url: hook, secret_token: env.WEBHOOK, allowed_updates: ["message"],

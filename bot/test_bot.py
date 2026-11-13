@@ -11,10 +11,8 @@ import bot as B, broker_daryagold as DG
 
 JOURNAL = f"{B.ROOT}/journal.csv"
 j_before = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
-SENT, UPDATES, FAIL_HTML = [], [], [False]
+SENT, FAIL_HTML = [], [False]
 def fake_tg(method, **p):
-    if method == "getUpdates":
-        r = {"ok": True, "result": list(UPDATES)}; UPDATES.clear(); return r
     if method == "sendMessage":
         if FAIL_HTML[0] and p.get("parse_mode") == "HTML":
             return {"ok": False, "description": "Bad Request: can't parse entities"}

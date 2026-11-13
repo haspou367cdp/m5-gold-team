@@ -7,7 +7,7 @@ refreshes the news calendar, runs tools/brief.py, applies the automated DaryaGol
 sends a message only when needed, and writes state.json; the workflow pushes the bot-owned keys back.
 
 modes : scheduled  - full check; sends a signal only if every gate passes (deduped); pre-session briefs
-        command    - answer queued /scan or /brief only ("poll" = old alias)
+        command    - answer queued /scan or /brief only
         test       - send one sample signal (labelled «نمونه»), nothing else
 env   : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, STATE_DIR (state.json + news_windows.json pulled from Supabase)
 Signal-only research. Never places trades. Not financial advice."""
@@ -539,7 +539,7 @@ def in_window(name, t):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["scheduled", "command", "poll", "test"], default="scheduled")
+    ap.add_argument("--mode", choices=["scheduled", "command", "test"], default="scheduled")
     a = ap.parse_args()
     global CFG
     cfg = CFG = DG.load_config()

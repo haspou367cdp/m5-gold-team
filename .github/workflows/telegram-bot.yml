@@ -37,23 +37,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup (store secrets in Supabase Vault, migrate state, set Telegram webhook)
+      - name: Setup (store secrets in Supabase Vault, set Telegram webhook)
         if: github.event.inputs.mode == 'setup'
         env:
           TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GH: ${{ secrets.GH_DISPATCH_TOKEN }}
           ANNOUNCE: ${{ vars.ANNOUNCE == '1' && '1' || '0' }}
         run: |
-          git fetch -q --depth=1 origin state || true
           umask 077
           trap 'rm -f "$RUNNER_TEMP/setup.json"' EXIT
           python3 - <<'PY' > "$RUNNER_TEMP/setup.json"
-          import json, os, subprocess
-          def show(p):
-              try: return json.loads(subprocess.check_output(["git", "show", f"FETCH_HEAD:{p}"], stderr=subprocess.DEVNULL))
-              except Exception: return None
+          import json, os
           print(json.dumps({"telegram_token": os.environ["TG"], "gh_token": os.environ.get("GH") or None,
-                            "import_state": show("state.json"), "import_news": show("news_windows.json"),
                             "set_webhook": True, "announce": os.environ["ANNOUNCE"] == "1"}))
           PY
           TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=m5-gold-bot" | jq -r .value)
