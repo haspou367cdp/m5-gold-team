@@ -37,19 +37,21 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup (store secrets in Supabase Vault, set Telegram webhook)
+      - name: Setup (store secrets in Supabase Vault, set Telegram webhook and command menu)
         if: github.event.inputs.mode == 'setup'
         env:
           TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GH: ${{ secrets.GH_DISPATCH_TOKEN }}
           ANNOUNCE: ${{ vars.ANNOUNCE == '1' && '1' || '0' }}
+          SEND_HELP: ${{ vars.SEND_HELP == '1' && '1' || '0' }}
         run: |
           umask 077
           trap 'rm -f "$RUNNER_TEMP/setup.json"' EXIT
           python3 - <<'PY' > "$RUNNER_TEMP/setup.json"
           import json, os
           print(json.dumps({"telegram_token": os.environ["TG"], "gh_token": os.environ.get("GH") or None,
-                            "set_webhook": True, "announce": os.environ["ANNOUNCE"] == "1"}))
+                            "set_webhook": True, "set_commands": True, "send_help": os.environ["SEND_HELP"] == "1",
+                            "announce": os.environ["ANNOUNCE"] == "1"}))
           PY
           TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=m5-gold-bot" | jq -r .value)
           echo "::add-mask::$TOKEN"

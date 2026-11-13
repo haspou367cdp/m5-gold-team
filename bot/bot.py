@@ -200,10 +200,10 @@ def risk_check(b, state, cfg, news_ok):
         age = (now_teh() - datetime.strptime(last["at"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)).total_seconds() / 60
         closed = any(f"{d['date']} {r.get('at', '')}" >= last["at"] for r in d.get("records", []))
         if 0 <= age < SIGNAL_LOCK_MIN and not closed:
-            reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، /loss یا /win را بفرستید.")
+            reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، `/loss` یا `/win` را بفرستید.")
     cap_loss = eq * float(cfg.get("daily_loss_pct_max", 20)) / 100
     if int(d.get("losses") or 0) >= int(cfg.get("max_consecutive_losses", 3)):
-        reasons.append(f"توقف روزانه فعال است: امروز {d['losses']} معامله‌ی زیان‌ده ثبت شده است.")
+        reasons.append(f"توقف روزانه فعال است: امروز {d['losses']} ضرر ثبت شده است.")
     if float(d.get("loss_toman") or 0) - float(d.get("win_toman") or 0) >= cap_loss:
         reasons.append(f"توقف روزانه فعال است: ضرر خالص امروز به {DG.toman(cap_loss)} تومان (۲۰٪ حساب) رسیده است.")
     if not plan or not sizing or not sizing.get("ok") or not sizing.get("size"):
@@ -282,7 +282,9 @@ def render(t):
     t = re.sub(r"~~(.+?)~~", r"<i>\1</i>", t)
     # tap-to-copy prices stay Latin ("3884.2") so they paste into DaryaGold's order box; the rest is Persian
     parts = re.split(r"`(.+?)`", t)
-    t = "".join(f"<code>{x}</code>" if i % 2 else fa_num(x) for i, x in enumerate(parts))
+    # a command inside code ("/loss 150000") gets LRM on both sides so "/" stays with it in right-to-left lines
+    t = "".join((f"\u200e<code>{x}</code>\u200e" if x.startswith("/") else f"<code>{x}</code>") if i % 2 else fa_num(x)
+                for i, x in enumerate(parts))
     # RLM at the start of every line keeps iPhone/Android Telegram in right-to-left order
     return "\n".join(("\u200f" + ln) if ln.strip() else ln for ln in t.split("\n"))
 

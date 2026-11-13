@@ -4,7 +4,7 @@
 //   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
-import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE } from "./lib.js";
+import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS } from "./lib.js";
 
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
@@ -89,6 +89,13 @@ export function makeApp(cfg) {
       out.webhook_url_ok = info.url === hook; out.pending_update_count = info.pending_update_count;
       out.last_error = info.last_error_message || null;
     }
+    if (b.set_commands) {
+      // one menu for everyone: clear narrower menus that would shadow the default one, then set it
+      for (const x of [{ scope: { type: "all_private_chats" } }, { language_code: "fa" }, { scope: { type: "chat", chat_id: Number(CHAT_ID) } }])
+        await tg(env, "deleteMyCommands", x);
+      out.commands = !!(await tg(env, "setMyCommands", { commands: COMMANDS })).ok;
+    }
+    if (b.send_help) out.help_sent = await send(env, HELP);
     if (b.announce) {
       const s = normalize((await loadRow()).state);
       if (!s.announced_at && out.webhook_url_ok) {

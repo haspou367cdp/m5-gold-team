@@ -29,7 +29,7 @@ const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, 
 export function render(t) {
   t = esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/~~(.+?)~~/g, "<i>$1</i>");
   const parts = t.split(/`(.+?)`/);
-  t = parts.map((x, i) => (i % 2 ? `<code>${x}</code>` : faNum(x))).join("");
+  t = parts.map((x, i) => (i % 2 ? (x.startsWith("/") ? `\u200e<code>${x}</code>\u200e` : `<code>${x}</code>`) : faNum(x))).join("");
   return t.split("\n").map((l) => (l.trim() ? "\u200f" + l : l)).join("\n");
 }
 export function toman(n) {
@@ -56,18 +56,23 @@ export function parseAmount(args) {
 export const HELP = `**🤖 راهنما**
 ~~بات طلای دریاگلد~~
 
-/scan  بررسی بازار و سیگنال
-/brief  وضعیت بازار
-/balance 2085600  ثبت موجودی
-/loss 150000  ثبت زیان امروز
-/win 200000  ثبت سود امروز
-/undo  حذف آخرین ثبت
-/status  وضعیت سیستم
+**بازار**
+\`/scan\`  بررسی بازار و سیگنال
+\`/brief\`  خلاصه‌ی بازار
 
-⚡ دستورها فوری جواب می‌گیرند؛ /scan و /brief حدود یک دقیقه
-⏱ بررسی خودکار هر ۱۵ دقیقه، دوشنبه تا جمعه ۱۱:۳۰ تا ۲۱:۳۰
-🔕 بررسی‌های خودکار فقط وقتی پیام می‌دهند که سیگنال باشد`;
-export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~فهرست دستورها: /help~~";
+**حساب**
+\`/status\`  وضعیت حساب و سیستم
+\`/balance 2085600\`  ثبت موجودی
+\`/loss 150000\`  ثبت ضرر
+\`/win 200000\`  ثبت سود
+\`/undo\`  حذف آخرین ثبت
+
+~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
+// Telegram menu (setMyCommands): short, same wording as /help, no examples
+export const COMMANDS = [["scan", "بررسی بازار و سیگنال"], ["brief", "خلاصه‌ی بازار"], ["status", "وضعیت حساب و سیستم"],
+  ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["help", "راهنما"]]
+  .map(([command, description]) => ({ command, description }));
+export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
 
 // ---------------- state ----------------
 export function normalize(s, now = teh()) {
@@ -91,12 +96,12 @@ export function statusMsg(s) {
   const d = s.day, sig = s.signals_sent[s.signals_sent.length - 1];
   return ["**📋 وضعیت**", `~~آخرین بررسی ${(s.last_run_tehran || "—").slice(-5)}~~`, "",
     `💼 موجودی ${tomanShort(s.equity_toman)} تومان`,
-    `📉 امروز ${d.losses || 0} زیان · ${d.wins || 0} سود`,
+    `📉 امروز ${d.losses || 0} ضرر · ${d.wins || 0} سود`,
     `🎯 آخرین سیگنال: ${sig ? sig.at.slice(-5) : "هنوز نه"}`,
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
-    "⏱ بررسی هر ۱۵ دقیقه، دوشنبه تا جمعه ۱۱:۳۰ تا ۲۱:۳۰"].join("\n");
+    "⏱ بررسی خودکار دوشنبه تا جمعه، ۱۱:۱۵ تا ۲۱:۳۰"].join("\n");
 }
-const BAD = "**⚠️ چیزی ثبت نشد**\n~~مبلغ مثبت را بنویسید~~\n\n/loss 150000\n/win 200000\n/balance 2085600\n/undo  حذف آخرین ثبت";
+const BAD = "**⚠️ چیزی ثبت نشد**\n~~مبلغ را به تومان بنویسید، مثل:~~\n\n`/loss 150000`\n`/win 200000`\n`/balance 2085600`";
 
 // Pure command handler: mutates state, returns {reply, queue?}.
 export function handle(s, text, now = teh()) {
@@ -118,20 +123,20 @@ export function handle(s, text, now = teh()) {
       if (c === "/loss") { d.losses += 1; d.loss_toman += v; } else { d.wins += 1; d.win_toman += v; }
       const net = d.loss_toman - d.win_toman;
       const stop = d.losses >= 3 || net >= s.equity_toman * 0.2;
-      return { reply: [c === "/loss" ? "**📉 زیان ثبت شد**" : "**📈 سود ثبت شد**", `~~${toman(v)} تومان~~`, "",
-        `امروز ${d.losses} زیان · ${d.wins} سود`,
+      return { reply: [c === "/loss" ? "**📉 ضرر ثبت شد**" : "**📈 سود ثبت شد**", `~~${toman(v)} تومان~~`, "",
+        `امروز ${d.losses} ضرر · ${d.wins} سود`,
         net > 0 ? `ضرر خالص امروز ${tomanShort(net)} تومان` : `سود خالص امروز ${tomanShort(-net)} تومان`,
         ...(stop ? ["", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود"] : [])].join("\n") };
     }
   } catch (e) { return { reply: BAD }; }
   if (c === "/undo") {
     const r = d.records.pop();
-    if (!r) return { reply: "**↩️ چیزی برای حذف نیست**\n~~امروز سود یا زیانی ثبت نشده~~" };
+    if (!r) return { reply: "**↩️ چیزی برای حذف نیست**\n~~امروز سود یا ضرری ثبت نشده~~" };
     if (r.type === "loss") { d.losses = Math.max(0, d.losses - 1); d.loss_toman = Math.max(0, d.loss_toman - r.toman); }
     else { d.wins = Math.max(0, d.wins - 1); d.win_toman = Math.max(0, d.win_toman - r.toman); }
-    return { reply: `**↩️ آخرین ثبت حذف شد**\n~~${r.type === "loss" ? "زیان" : "سود"} ${toman(r.toman)} تومان~~\n\nامروز ${d.losses} زیان · ${d.wins} سود` };
+    return { reply: `**↩️ آخرین ثبت حذف شد**\n~~${r.type === "loss" ? "ضرر" : "سود"} ${toman(r.toman)} تومان~~\n\nامروز ${d.losses} ضرر · ${d.wins} سود` };
   }
-  return { reply: "**❔ دستور ناشناخته**\n~~فهرست دستورها: /help~~" };
+  return { reply: "**❔ دستور ناشناخته**\n~~راهنما:~~ `/help`" };
 }
 
 // ---------------- telegram + github ----------------

@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort } from "./lib.js";
+import { HELP, render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -36,6 +36,8 @@ globalThis.fetch = async (url, init = {}) => {
       if (failHtml && b.parse_mode) return J({ ok: false });
       SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } });
     }
+    if (url.endsWith("/setMyCommands")) { DB.menu = b.commands; return J({ ok: true }); }
+    if (url.endsWith("/deleteMyCommands")) { (DB.menuDeleted = DB.menuDeleted || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
   }
@@ -68,6 +70,7 @@ const st = () => DB.row.state;
 
 // formatting parity with bot.py
 check("render: bold/italic/code, Persian digits, Latin code, RLM", render("**a 1.5**\n`3884.2` 2,085,600") === "\u200f<b>a ۱٫۵</b>\n\u200f<code>3884.2</code> ۲٬۰۸۵٬۶۰۰");
+check("render: command in code isolated with LRM", render("`/loss 150000`  ثبت ضرر") === "\u200f\u200e<code>/loss 150000</code>\u200e  ثبت ضرر");
 check("render escapes HTML", render("<x> & y").includes("&lt;x&gt; &amp;"));
 check("toman / tomanShort", toman(2085600) === "2٬085٬600" && tomanShort(2085600) === "2.09 میلیون" && tomanShort(417120) === "417 هزار");
 for (const [a, v] of [[["۲٬۰۸۵٬۶۰۰"], 2085600], [["2,085,600", "تومان"], 2085600], [["150", "000"], 150000], [["۱۵۰۰۰۰"], 150000]])
@@ -77,7 +80,10 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 }
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
-  set_webhook: true, announce: true })).json();
+  set_webhook: true, set_commands: true, announce: true })).json();
+check("setup menu: 8 commands, same wording as /help, no examples or digits", o.commands && DB.menu.length === 8 &&
+  DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
+  (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
   o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
   st().equity_toman === 2085600 && DB.hook.max_connections === 1 &&
@@ -85,18 +91,24 @@ check("setup: secrets stored, webhook set, announced once", o.telegram_token ===
 SENT.length = 0;
 o = await (await gh("/admin/setup", "POST", { set_webhook: true, announce: true })).json();
 check("setup again: no second announcement, state untouched", SENT.length === 0 && st().equity_toman === 2085600);
+SENT.length = 0;
+o = await (await gh("/admin/setup", "POST", { send_help: true })).json();
+check("setup send_help: exactly the /help card once", o.help_sent && SENT.length === 1 && SENT[0].text.includes("راهنما"));
+SENT.length = 0;
 check("garbage bearer token -> 401", (await app(new Request(FN + "/state", { headers: { authorization: "Bearer x.y.z" } }), jw)).status === 401);
 // webhook auth + chat filter
 check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).status === 403);
 const v0 = DB.row.version;
 check("other chat ignored", (await tgSend("/balance 1", 999)).out.length === 0 && DB.row.version === v0);
-let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f"));
+let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f") &&
+  r.out[0].includes("\u200f\u200e<code>/loss 150000</code>\u200e  ثبت ضرر") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
+  !/زیان|۱۱:۳۰/.test(r.out[0]) && r.out[0].split("\n").every((l) => !l.trim() || l.startsWith("\u200f")));
 r = await tgSend("/balance ۲٬۰۸۵٬۶۰۰"); check("/balance Persian digits", st().equity_toman === 2085600 && r.out[0].includes("۲٬۰۸۵٬۶۰۰"));
 for (const bad of ["/balance", "/balance -5", "/balance nan", "/loss", "/loss 0", "/win abc"]) {
   const before = JSON.stringify([st().equity_toman, st().day]);
   r = await tgSend(bad); check(`invalid '${bad}' rejected`, r.out[0].includes("چیزی ثبت نشد") && JSON.stringify([st().equity_toman, st().day]) === before);
 }
-r = await tgSend("/loss ۱۵۰۰۰۰"); check("/loss", st().day.losses === 1 && st().day.loss_toman === 150000 && r.out[0].includes("زیان ثبت شد"));
+r = await tgSend("/loss ۱۵۰۰۰۰"); check("/loss", st().day.losses === 1 && st().day.loss_toman === 150000 && r.out[0].includes("ضرر ثبت شد"));
 raceOnce = true; r = await tgSend("/win 150 000"); check("/win with space (survives a concurrent GitHub write)", st().day.win_toman === 150000 && r.out.length === 1);
 r = await tgSend("/undo"); check("/undo last (win)", st().day.wins === 0 && st().day.losses === 1);
 await tgSend("/undo"); r = await tgSend("/undo"); check("/undo empty safe", r.out[0].includes("چیزی برای حذف"));
@@ -104,7 +116,7 @@ await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/l
 check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
 DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
 await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
-r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ زیان"));
+r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("۱۱:۱۵ تا ۲۱:۳۰"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
 check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
