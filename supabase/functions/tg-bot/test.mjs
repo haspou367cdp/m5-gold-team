@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -23,7 +23,7 @@ globalThis.fetch = async (url, init = {}) => {
       DB.row.state = a.p_state; DB.row.version++; return J(true);
     }
     if (fn === "bot_merge") {
-      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow", "last_price", "friday_reminder_sent"];   // = SQL bot_merge allowed
+      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow", "last_price", "friday_reminder_sent", "levels"];   // = SQL bot_merge allowed
       for (const k of keys) if (k in a.p_patch) DB.row.state[k] = a.p_patch[k];
       DB.row.state.pending_cmds = (DB.row.state.pending_cmds || []).filter((x) => !a.p_done.includes(x.id));
       if (a.p_news) DB.row.news = a.p_news; DB.row.version++;
@@ -82,7 +82,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 11 commands (incl. /offset), same wording as /help, no examples or digits", o.commands && DB.menu.length === 11 && DB.menu.some((c) => c.command === "offset") &&
+check("setup menu: 12 commands (incl. /levels and /offset), same wording as /help, no examples or digits", o.commands && DB.menu.length === 12 && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -176,7 +176,7 @@ r = await tgSend("/shadow"); check("/shadow summary: counts, R, toman, DaryaGold
   r.out[0].includes("+۱٫۰R") && r.out[0].includes("+۱۳۲٬۰۰۰") && r.out[0].includes("<code>3894.5</code>") && r.out[0].includes("نوسان، خبر") && !/زیان|قوی/.test(r.out[0]));
 const g2 = await (await gh("/state")).json(); await gh("/state", "POST", { patch: { shadow: [{ at: "x", status: "pending" }] }, done_cmds: [] });
 check("GitHub may merge 'shadow' but not equity/trades", st().shadow.length === 1 && st().equity_toman === 2954400 && Array.isArray(st().trades) && g2.state.day.start_equity === 2954400);
-check("/help lists /trade and /shadow", HELP.includes("/trade sell 3914.07 3909.61 1") && HELP.includes("/shadow") && HELP.includes("بررسی سیگنال"));
+check("/help lists /trade, /shadow and /levels", HELP.includes("/trade sell 3914.07 3909.61 1") && HELP.includes("/shadow") && HELP.includes("`/levels`") && HELP.includes("بررسی سیگنال"));
 // HTML fallback
 failHtml = true; r = await tgSend("/help"); failHtml = false;
 check("HTML failure -> plain-text fallback", r.out.length === 1 && !r.out[0].includes("<b>"));
@@ -198,10 +198,30 @@ CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pen
 r = await tgSend("/scan"); check("Saturday /scan: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
   r.out[0].includes("دوشنبه ۰۱:۳۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
 r = await tgSend("/brief"); check("Saturday /brief: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+r = await tgSend("/levels"); check("Saturday /levels with no snapshot: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0 && (st().pending_cmds || []).every((x) => x.cmd !== "/levels"));
+const LVBLOCK = "طلا  `3900.3`\nH4 نزولی  ·  H1 خنثی  ·  روند نامشخص\n\nبالا\n▸ `3910.3`  (+10.0)  مهم\n  سقف دیروز + سوئینگ H4  ·  2 تماس M15\n  پهنه  `3909.9`–`3910.7`";
+DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("Saturday /levels with stored snapshot: served with age, no dispatch", r.out.length === 1 && r.out[0].includes("سن داده") && r.out[0].includes("<code>3900.3</code>") && r.out[0].includes("H4 نزولی") && !r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/scan"); check("Friday after the 01:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 CLOCK = U("2026-11-13T20:15:00Z"); DB.row.state.last_dispatch = 0; r = await tgSend("/scan");
 check("Friday 23:45 (entries closed, market open): /scan still analysed (bot answers «جمعه‌شب»)", DISPATCHED.length === 1 && r.out[0].includes("در حال بررسی"));
 DB.row.state.pending_cmds = [];
+// weekday /levels: fresh snapshot is served instantly; stale queues like /scan
+CLOCK = U("2026-11-11T10:30:00Z");  // Wednesday 14:00 Tehran
+DISPATCHED.length = 0;
+DB.row.state.last_dispatch = 0;
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("weekday /levels with a fresh snapshot: instant card, no dispatch", r.out.length === 1 && r.out[0].includes("<code>3900.3</code>") && r.out[0].includes("سطوح") && !r.out[0].includes("در حال بررسی") && DISPATCHED.length === 0);
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:00:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("weekday /levels with a stale snapshot: ack + dispatch like /scan", r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1 && st().pending_cmds.some((x) => x.cmd === "/levels"));
+r = await tgSend("/levels");
+check("repeated stale /levels within 90 s: deduped, still acked", DISPATCHED.length === 1 && st().pending_cmds.filter((x) => x.cmd === "/levels").length === 1 && r.out[0].includes("در حال بررسی"));
+DB.row.state.pending_cmds = [];
+check("levelsFresh helper", levelsFresh({ computed_at_tehran: "2026-11-11 13:50:00" }, CLOCK) && !levelsFresh({ computed_at_tehran: "2026-11-11 13:00:00" }, CLOCK));
+check("faDate Jalali matches Python (11 Nov 2026 = 20 Aban)", faDate(CLOCK).includes("آبان"));
 CLOCK = U("2026-11-14T08:00:00Z"); SENT.length = 0; let h = await (await app(new Request(FN + "/health"))).json();
 check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۱:۳۰") && h.build && SENT.length === 0);
 CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
@@ -227,6 +247,8 @@ await tgSend("/offset 0.4");
 r = await tgSend("/offset 0.5", 999); check("/offset from another chat ignored", r.out.length === 0 && st().dg_offset === 0.4);
 await gh("/state", "POST", { patch: { dg_offset: 9, last_price: { bid: 3901, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may merge last_price but never dg_offset", st().dg_offset === 0.4 && st().last_price.bid === 3901);
+await gh("/state", "POST", { patch: { levels: { block: "x", computed_at_tehran: "2026-11-11 14:00:00" }, dg_offset: 1 }, done_cmds: [] });
+check("GitHub may merge levels but never dg_offset", st().levels && st().levels.block === "x" && st().dg_offset === 0.4);
 // ---- /shadow Asia line
 const asiaS = { shadow: [{ at: "2026-11-11 09:04", side: "SELL", entry: 3900, sl: 3902, tp: 3896, offset: 0.3, gates: ["asia"], session: "asia", status: "tp", R: 2, toman: 306000 },
   { at: "2026-11-11 15:00", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["news"], status: "sl", R: -1, toman: -174000 }] };

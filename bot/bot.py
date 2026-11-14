@@ -2,12 +2,12 @@
 """bot.py - Telegram front-end for the M5 gold toolkit, run by GitHub Actions (no server).
 
 The Supabase Edge Function (supabase/functions/tg-bot) owns Telegram input (webhook); Postgres holds the state; pg_cron owns the schedule.
-Each run: the workflow pulls state from Supabase into STATE_DIR, this script answers queued /scan and /brief,
+Each run: the workflow pulls state from Supabase into STATE_DIR, this script answers queued /scan, /brief and /levels,
 refreshes the news calendar, runs tools/brief.py, applies the automated DaryaGold risk check (replaces M5-Risk),
 sends a message only when needed, and writes state.json; the workflow pushes the bot-owned keys back.
 
 modes : scheduled  - full check; sends a signal only if every gate passes (deduped); pre-session briefs
-        command    - answer queued /scan or /brief only
+        command    - answer queued /scan, /brief or /levels only
         test       - send one sample signal (labelled «نمونه»), nothing else
 env   : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, STATE_DIR (state.json + news_windows.json pulled from Supabase)
 Signal-only research. Never places trades. Not financial advice."""
@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 TEH = ZoneInfo("Asia/Tehran")
 import broker_daryagold as DG
 import shadow as SH
+import level_view as LVIEW
 
 STATE_DIR = os.environ.get("STATE_DIR", f"{ROOT}/state")
 STATE_JSON = f"{STATE_DIR}/state.json"
@@ -474,8 +475,6 @@ def friday_flag():
     return []
 
 NY = ZoneInfo("America/New_York")
-NEAR_MIN_USD = 1.0   # a "nearest" level closer than max(0.3 x ATR M5, $1) to price is skipped (next one shown)
-
 def day_start(t):
     """Forex trading day start: 17:00 New York (DaryaGold/MT server 00:00; 01:30 Tehran in US winter, 00:30 in summer)."""
     ny = t.astimezone(NY)
@@ -497,48 +496,61 @@ def day_hilo(t):
         print("day_hilo unavailable:", type(e).__name__)
         return None
 
-def near_levels(b):
-    """Nearest resistance above / support below that is at least max(0.3 x ATR M5, $1) from price."""
-    bid = float(b["price_bid"])
-    gap = max(0.3 * float(b.get("atr_m5") or 0), NEAR_MIN_USD)
-    res = sorted((l for l in b.get("resistances") or [] if l.get("price") is not None), key=lambda l: float(l["price"]))
-    sup = sorted((l for l in b.get("supports") or [] if l.get("price") is not None), key=lambda l: -float(l["price"]))
-    r = next((l for l in res if float(l["price"]) - bid >= gap), None)
-    s_ = next((l for l in sup if bid - float(l["price"]) >= gap), None)
-    return r, s_
+def levels_snap(b, state=None):
+    """The one stored snapshot. Never recompute."""
+    return (b or {}).get("levels") or ((state or {}).get("levels") if state is not None else None)
 
-def hilo(b):
-    """Day high/low (from candles) and, separately, the nearest levels."""
+def near_levels(b, state=None):
+    """Nearest above / below = the top items of /levels (same snapshot, not a second pick)."""
+    n = (levels_snap(b, state) or {}).get("nearest") or {}
+    return n.get("above"), n.get("below")
+
+def hilo(b, state=None):
+    """Day high/low from candles only (not the short level set)."""
     L = []
     hl = day_hilo(now_teh())
     if hl:
         L.append(f"سقف روز  {p1(hl[0])}   ·   کف روز  {p1(hl[1])}")
-    r, s_ = near_levels(b)
-    parts = ([f"مقاومت نزدیک  {p1(r['price'])}"] if r else []) + ([f"حمایت نزدیک  {p1(s_['price'])}"] if s_ else [])
-    if parts:
-        L.append("   ·   ".join(parts))
     return L
 
+def levels_block(b, state=None):
+    snap = levels_snap(b, state)
+    if snap and snap.get("block"):
+        return snap["block"]
+    return "داده‌ی سطوح در دسترس نیست"
+
+def levels_card(b, state, title="سطوح"):
+    """Dedicated /levels message: the shared block, plus the age of the stored snapshot."""
+    t = now_teh()
+    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
+    snap = levels_snap(b, state)
+    if snap and not LVIEW.is_fresh(snap, t):
+        age = LVIEW.age_minutes(snap, t)
+        if age is not None and age >= 0:
+            mins = int(round(age))
+            L.append(f"سن داده  {mins} دقیقه")
+            L.append("")
+    L.append(levels_block(b, state))
+    return "\n".join(L)
+
 def short_brief(b, state, cfg, reasons=None, title=None):
-    """/scan without a signal: title, one-line reason, price. Nothing else."""
+    """/scan without a signal: title, one-line reason, then the same levels block as /levels."""
     if b.get("error") or b.get("price_bid") is None:
         return "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~"
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     rs = reasons if reasons else (dec.get("reasons_reject") or [])
     return "\n".join(["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "",
-                      f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(b.get('bias'), '↔️')}"])
+                      levels_block(b, state)])
 
 def market_summary(b, state, title):
-    """/brief and the pre-session briefs: price, trend, day high/low, nearest levels, today's remaining news,
+    """/brief and the pre-session briefs: the shared levels block, today's remaining news,
     balance and today's loss cap. Never a signal."""
     t = now_teh()
     L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
     if b.get("error") or b.get("price_bid") is None:
         L.append("داده‌ی قیمت در دسترس نیست")
     else:
-        bias = b.get("bias")
-        L.append(f"طلا  **{p1(b['price_bid'])}**  {ARROW.get(bias, '↔️')} {FA_TREND.get(bias, '')}".rstrip())
-        L += hilo(b)
+        L.append(levels_block(b, state))
     now = t.strftime("%H:%M")
     wins = [(a, z) for a, z in _windows(b) if a >= now or z > now]
     L.append("")
@@ -550,6 +562,7 @@ def market_summary(b, state, title):
     L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} · سقف ضرر امروز {toman_short(day_cap(state, CFG))}"]
     L += friday_flag()
     return "\n".join(L)
+
 
 def presession_brief(b, state, name):
     return market_summary(b, state, "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود")
@@ -684,8 +697,8 @@ def main():
     cfg = CFG = DG.load_config()
     state = load_state()
     apply_offset(state, cfg)
-    # /scan and /brief are queued by the Supabase Edge Function (Telegram webhook); every other command is answered there.
-    pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief")]
+    # /scan, /brief and /levels are queued by the Edge Function; every other command is answered there.
+    pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief", "/levels")]
     cmds = [(x["cmd"], []) for x in pending]
     state["done_cmds"] = [x["id"] for x in state.get("pending_cmds") or []]
     print(f"mode={a.mode} commands={[c for c, _ in cmds]}")
@@ -700,6 +713,11 @@ def main():
             state["last_verdict"] = dec.get("decision") if isinstance(dec, dict) else dec
             if brief.get("price_bid") is not None and not brief.get("error"):   # for the /trade sanity check
                 state["last_price"] = {"bid": round(float(brief["price_bid"]), 2), "at": now_teh().strftime("%Y-%m-%d %H:%M")}
+            if brief.get("levels"):
+                state["levels"] = brief["levels"]
+            elif not brief.get("error") and brief.get("price_bid") is not None:
+                # tests / older briefs may omit the snapshot; never invent a second computation
+                pass
         return brief
 
     def emit_signal(b, plan, sizing, on_request=False):
@@ -716,7 +734,14 @@ def main():
 
     closed = weekend_closed(now_teh(), cfg)
     for c, _ in cmds:
-        if closed:   # queued just before the close: never analyse stale weekend data
+        if c == "/levels":
+            # Weekend: never re-analyse. Serve the last stored snapshot (with its age) or the closed line.
+            if closed:
+                snap = state.get("levels")
+                send(levels_card({"levels": snap}, state) if snap else closed_line(now_teh(), cfg))
+            else:
+                send(levels_card(get_brief(), state))
+        elif closed:   # queued just before the close: never analyse stale weekend data
             send(closed_line(now_teh(), cfg))
         elif c == "/brief":
             b = get_brief()

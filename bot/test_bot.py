@@ -8,6 +8,7 @@ os.environ.pop("GITHUB_ACTIONS", None)
 os.environ["TELEGRAM_BOT_TOKEN"] = "TEST"; os.environ["TELEGRAM_CHAT_ID"] = "111"
 sys.path.insert(0, os.path.dirname(__file__))
 import bot as B, broker_daryagold as DG
+import level_view as LVIEW
 
 JOURNAL = f"{B.ROOT}/journal.csv"
 j_before = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
@@ -24,13 +25,58 @@ cfg = B.CFG = DG.load_config()
 NEWS_OK = [True]
 B.prepare_news = lambda state, force=False: NEWS_OK[0]
 
+
+def mk_levels(price_bid=3880.0, computed_at="2026-11-11 14:00:00", **kw):
+    """Shared snapshot fixture: 2 above + 2 below, H4/H1 disagree. Same object every card prints."""
+    dg = round(price_bid + 0.3, 2)
+    above = [
+        {"price": 3895.0, "price_dg": 3895.3, "zone_dg": [3894.9, 3895.7], "side": "resistance",
+         "kinds": ["PDH", "H4 swing high"], "label_fa": "سقف دیروز + سوئینگ H4",
+         "touches_m15_3d": 2, "strength": "medium", "tag": "مهم", "distance": round(3895.3 - dg, 2)},
+        {"price": 3910.0, "price_dg": 3910.3, "zone_dg": [3909.9, 3910.7], "side": "resistance",
+         "kinds": ["Round $50"], "label_fa": "عدد رُند",
+         "touches_m15_3d": 1, "strength": "weak", "tag": "معمولی", "distance": round(3910.3 - dg, 2)},
+    ]
+    below = [
+        {"price": 3870.0, "price_dg": 3870.3, "zone_dg": [3869.9, 3870.7], "side": "support",
+         "kinds": ["H1 swing low"], "label_fa": "سوئینگ H1",
+         "touches_m15_3d": 3, "strength": "medium", "tag": "مهم", "distance": round(3870.3 - dg, 2)},
+        {"price": 3850.0, "price_dg": 3850.3, "zone_dg": [3849.9, 3850.7], "side": "support",
+         "kinds": ["Round $100"], "label_fa": "عدد رُند",
+         "touches_m15_3d": 0, "strength": "weak", "tag": "معمولی", "distance": round(3850.3 - dg, 2)},
+    ]
+    # closer support first (nearest below)
+    below = sorted(below, key=lambda x: -x["price"])
+    # actually 3870 is closer than 3850; already in that order. For the 3887.545 brief test we override.
+    if price_bid > 3885:
+        below = [
+            {"price": 3880.2, "price_dg": 3880.5, "zone_dg": [3880.1, 3880.9], "side": "support",
+             "kinds": ["H1 swing low"], "label_fa": "سوئینگ H1",
+             "touches_m15_3d": 2, "strength": "medium", "tag": "مهم", "distance": round(3880.5 - dg, 2)},
+            {"price": 3870.0, "price_dg": 3870.3, "zone_dg": [3869.9, 3870.7], "side": "support",
+             "kinds": ["Round $50"], "label_fa": "عدد رُند",
+             "touches_m15_3d": 1, "strength": "weak", "tag": "معمولی", "distance": round(3870.3 - dg, 2)},
+        ]
+    snap = {
+        "computed_at_tehran": computed_at,
+        "price_bid": price_bid, "price_dg": dg,
+        "trend": {"H4": {"trend": "نزولی"}, "H1": {"trend": "خنثی"}, "overall": "روند نامشخص", "disagree": True},
+        "short": {"above": above, "below": below},
+        "nearest": {"above": above[0], "below": below[0]},
+    }
+    snap.update(kw)
+    if "block" not in kw:
+        snap["block"] = LVIEW.format_block(snap)
+    return snap
+
 def mk_brief(side="SELL", entry=3880.0, sl=3881.6, tp=3876.0, **kw):
     sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
     b = {"decision": {"decision": side, "reasons_reject": []}, "price_bid": entry, "bias": "bearish",
          "plan": {"side": side, "entry": entry, "sl": sl, "tp": tp}, "sizing": sz,
          "quality": {"ok": True, "age_minutes": 1}, "fallback": False, "news_window": {},
          "session_entry": {"blocked": False}, "resistances": [{"price": 3885.0}], "supports": [{"price": 3870.0}],
-         "news_windows_next_24h": ["16:45–17:15 US x"]}
+         "news_windows_next_24h": ["16:45–17:15 US x"],
+         "levels": mk_levels(price_bid=entry)}
     b.update(kw); return b
 BRIEF = [mk_brief()]
 B.run_brief = lambda state: copy.deepcopy(BRIEF[0])
@@ -141,19 +187,46 @@ BRIEF[0] = mk_brief(entry=3887.545, sl=3889.2, tp=3882.0, atr_m5=1.6,
                     resistances=[{"price": 3888.1}, {"price": 3895.0}], supports=[{"price": 3887.465}, {"price": 3880.2}],
                     news_windows_next_24h=["16:45–17:15 (B)", "18:40–19:05 (B)", "19:30–19:50 (B)", "20:15–21:00 (B)", "22:00–22:30 (B)", "03:15–04:00 (B)"])
 out = run("command", ["/brief"]); br = out[0] if out else ""
-check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "<code>" not in br and "فروش طلا" not in br)
-check("/brief: day high/low from candles, DaryaGold +0.3", "سقف روز  ۳۹۲۳٫۳" in br and "کف روز  ۳۸۷۵٫۲" in br)
-check("/brief: nearest levels skip a level closer than max(0.3 ATR, $1)", "مقاومت نزدیک  ۳۸۹۵٫۳" in br and "حمایت نزدیک  ۳۸۸۰٫۵" in br and "۳۸۸۸٫۴" not in br)
+check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "فروش طلا" not in br)
+check("/brief: shared levels block with Latin tap-to-copy prices", "<code>3895.3</code>" in br and "<code>3880.5</code>" in br and "۳۸۸۸٫۴" not in br)
+check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "H4 نزولی" in br and "H1 خنثی" in br and "روند نامشخص" in br)
+check("/brief: no day-candle hilo and no glued-level skip line", "سقف روز" not in br and "مقاومت نزدیک" not in br and "حمایت نزدیک" not in br)
 check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
 check("/brief: balance and today's loss cap from the day's start equity", "موجودی ۲٫۹۵ میلیون" in br and "سقف ضرر امروز ۲۰۰ هزار" in br)
 check("/brief: no 'strong'/قوی, no زیان", not any(w in br for w in ["قوی", "strong", "زیان"]))
-BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"})
+check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز + سوئینگ H4" in br and "سوئینگ H1" in br)
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"},
+                    levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 18:50:00"))
 out = run("command", ["/scan"]); sc = out[0] if out else ""
-check("/scan no trade: title + one reason + price only", "معامله نه" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
-      len([l for l in sc.split("\n") if l.strip()]) == 3 and "سقف" not in sc and "موجودی" not in sc)
+check("/scan no trade: title + one reason + the same levels block", "معامله نه" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
+      BRIEF[0]["levels"]["block"].split("\n")[0].startswith("طلا") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
+check("/scan and /brief share nearest prices", "<code>3895.3</code>" in sc and "<code>3870.3</code>" in sc)
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
-BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, resistances=[{"price": 3895.0}], supports=[{"price": 3870.0}])
-out = run("scheduled"); check("pre-session brief uses the same summary (day high/low + nearest levels)", len(out) == 1 and "نیویورک" in out[0] and "سقف روز" in out[0] and "حمایت نزدیک" in out[0])
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]},
+                    levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 16:15:00"))
+out = run("scheduled"); pre = out[0] if out else ""
+check("pre-session brief uses the same levels block as /levels", len(out) == 1 and "نیویورک" in pre and "<code>3895.3</code>" in pre and "H4 نزولی" in pre and "سقف روز" not in pre)
+
+# identical block across /brief /scan /levels /pre-session
+CLOCK[0] = datetime(2026, 11, 11, 18, 50, tzinfo=B.TEH)
+st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
+snap = mk_levels(price_bid=3887.545, computed_at="2026-11-11 18:50:00")
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, price_bid=3887.545, levels=snap)
+br2 = run("command", ["/brief"])[0]
+sc2 = run("command", ["/scan"])[0]
+lv2 = run("command", ["/levels"])[0]
+st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
+CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
+pre2 = run("scheduled")[0]
+def has_block(card, s=snap):
+    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "H4 نزولی", "H1 خنثی", "روند نامشخص", "سقف دیروز + سوئینگ H4"))
+check("same levels+trend in /brief, /scan, /levels and the pre-session brief",
+      has_block(br2) and has_block(sc2) and has_block(lv2) and has_block(pre2))
+check("/levels card title and no حساب footer", "سطوح" in lv2 and "موجودی" not in lv2)
+check("state stores the same snapshot (no second computation)", state().get("levels", {}).get("block") == snap["block"])
+a, btm = B.near_levels(BRIEF[0])
+check("near_levels is the top of /levels", a["price_dg"] == 3895.3 and btm["price_dg"] == 3880.5)
+
 check("forex day start: 17:00 New York = 01:30 Tehran (winter) / 00:30 (summer)",
       B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 01:30" and
       B.day_start(datetime(2026, 11, 13, 1, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 01:30" and
@@ -245,6 +318,19 @@ for when, nm in [(datetime(2026, 11, 14, 1, 45, tzinfo=B.TEH), "Saturday 01:45")
     CLOCK[0] = when; CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
     check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 01:30), no analysis",
           len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۱:۳۰" in x for x in out) and CALLS[0] == 0)
+
+# /levels on the weekend: never re-analyse; last snapshot (with age) or the same closed line
+CLOCK[0] = datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH)
+st = state(); st.pop("levels", None); json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
+out = run("command", ["/levels"])
+check("Saturday /levels with no snapshot: same closed line, no analysis",
+      len(out) == 1 and out[0].count("\n") == 0 and "بازار بسته است" in out[0] and "دوشنبه ۰۱:۳۰" in out[0] and CALLS[0] == 0)
+snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
+st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
+out = run("command", ["/levels"])
+check("Saturday /levels with a stored snapshot: served with age, no analysis",
+      len(out) == 1 and CALLS[0] == 0 and "سن داده" in out[0] and "<code>3895.3</code>" in out[0] and "H4 نزولی" in out[0] and "بازار بسته است" not in out[0])
+
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
     check(f"weekend scheduled run {when:%a %H:%M}: silent, no analysis", run("scheduled") == [] and CALLS[0] == 0)
@@ -281,6 +367,48 @@ fresh(dg_offset=0.4); CLOCK[0] = datetime(2026, 11, 16, 9, 30, tzinfo=B.TEH); ru
 check("shadow entry records the offset in use (0.4)", state()["shadow"][-1]["offset"] == 0.4)
 os.environ.pop("DG_OFFSET_USD", None); B.CFG = cfg = DG.load_config()
 check("last_price stored for the /trade check", state()["last_price"] == {"bid": 3880.0, "at": "2026-11-16 09:30"})
+
+
+# ---- shared snapshot: signal-engine inputs unchanged; trend / filter rules
+cfg_lv = DG.load_config()
+full = [
+    {"price": 3900.0, "side": "resistance", "kinds": ["M15 swing high", "VWAP"], "strength": "strong", "score": 7, "touches_m15_3d": 2},
+    {"price": 3910.0, "side": "resistance", "kinds": ["PDH", "H4 swing high"], "strength": "medium", "score": 4, "touches_m15_3d": 1},
+    {"price": 3890.0, "side": "support", "kinds": ["EMA20 M15"], "strength": "weak", "score": 1, "touches_m15_3d": 0},
+    {"price": 3880.0, "side": "support", "kinds": ["H1 swing low", "London OR low"], "strength": "strong", "score": 8, "touches_m15_3d": 3},
+]
+lv = {"price_bid": 3895.0, "atr_h1_14": 8.0, "atr_m5_14": 2.0, "cluster_tol": 0.5,
+      "levels": [dict(x) for x in full],
+      "structure": {"prev_week": {"high": 4020.0, "low": 3800.0}},
+      "ema": {"H4": {"ema20": 3890.0, "ema50": 3900.0, "close": 3888.0},
+              "H1": {"ema20": 3898.0, "ema50": 3890.0, "close": 3899.0}},
+      "swings": {"H4": {"highs": [(0, 3920.0), (1, 3910.0)], "lows": [(0, 3880.0), (1, 3870.0)]},
+                 "H1": {"highs": [(0, 3900.0), (1, 3910.0)], "lows": [(0, 3870.0), (1, 3880.0)]}}}
+before = [dict(x) for x in lv["levels"]]
+snap = LVIEW.snapshot(lv, cfg_lv, now=datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH))
+check("snapshot does not mutate the full cluster list (signal inputs unchanged)", lv["levels"] == before)
+kinds_short = {k for row in snap["short"]["above"] + snap["short"]["below"] for k in row["kinds"]}
+check("short view drops M15/VWAP/EMA and keeps PDH/H4/H1/OR",
+      "M15 swing high" not in kinds_short and "VWAP" not in kinds_short and "EMA20 M15" not in kinds_short
+      and "PDH" in kinds_short and "H4 swing high" in kinds_short and "H1 swing low" in kinds_short and "London OR low" in kinds_short)
+check("prev-week levels are in the short view only (not injected into compute clusters)",
+      any("Prev week high" in (r["kinds"] or []) or r.get("label_fa") == "سقف هفته‌ی قبل" for r in snap["short"]["above"])
+      and all("Prev week" not in "".join(x.get("kinds") or []) for x in lv["levels"]))
+# H4: LH/LL + bearish EMA -> نزولی; H1: HH/HL + bullish EMA -> صعودی; disagree -> نامشخص
+check("trend: H4 down + H1 up => نامشخص (structure + EMA)",
+      snap["trend"]["H4"]["trend"] == "نزولی" and snap["trend"]["H1"]["trend"] == "صعودی" and snap["trend"]["overall"] == "روند نامشخص")
+# mixed structure -> خنثی even if EMA agrees
+lv2 = dict(lv, swings={"H4": {"highs": [(0, 3920.0), (1, 3910.0)], "lows": [(0, 3870.0), (1, 3880.0)]},
+                       "H1": lv["swings"]["H1"]})
+tr2 = LVIEW.trend_of(lv2)
+check("mixed H4 swings => خنثی even with bearish EMA", tr2["H4"]["trend"] == "خنثی")
+check("format_block never prints قوی or a 0–100 score", "قوی" not in snap["block"] and "score" not in snap["block"] and " ۱۲ " not in snap["block"])
+# risk_check ignores the display snapshot
+s = B.load_state()
+ok1, *_ = B.risk_check(mk_brief(), s, cfg, True)
+b_no = mk_brief(); b_no.pop("levels", None)
+ok2, *_ = B.risk_check(b_no, s, cfg, True)
+check("risk_check result is the same with or without the display snapshot", ok1 is True and ok1 == ok2)
 
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)

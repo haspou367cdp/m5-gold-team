@@ -9,7 +9,7 @@ export const OIDC_ISS = "https://token.actions.githubusercontent.com";
 export const OIDC_AUD = "m5-gold-bot";
 const DEFAULT_EQUITY = 2085600;
 export const BOT_KEYS = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow",
-  "last_price", "friday_reminder_sent"];
+  "last_price", "friday_reminder_sent", "levels"];
 export const DEFAULT_OFFSET = 0.3;   // DaryaGold ≈ Dukascopy bid + dg_offset (bot_state.state.dg_offset, set by /offset)
 const RATE = { 1: 80000, 0.5: 40000 }, FEE = 14000;
 
@@ -90,6 +90,7 @@ export const HELP = `**🤖 راهنما**
 **بازار**
 \`/scan\`  بررسی سیگنال
 \`/brief\`  خلاصه‌ی بازار
+\`/levels\`  سطوح
 \`/shadow\`  سیگنال‌های ردشده
 
 **حساب**
@@ -103,7 +104,7 @@ export const HELP = `**🤖 راهنما**
 
 ~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
-export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["shadow", "سیگنال‌های ردشده"],
+export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["levels", "سطوح"], ["shadow", "سیگنال‌های ردشده"],
   ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
@@ -195,6 +196,52 @@ export function shadowMsg(s) {
 }
 const BAD = "**⚠️ چیزی ثبت نشد**\n~~مبلغ را به تومان بنویسید، مثل:~~\n\n`/loss 150000`\n`/win 200000`\n`/balance 2085600`";
 
+
+// ---------------- shared levels snapshot (computed in Python; never recomputed here) ----------------
+const FRESH_MIN = 15;
+const FA_MONTH = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+  "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
+function jalali(gy, gm, gd) {
+  const gdm = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  const gy2 = gm > 2 ? gy + 1 : gy;
+  let days = 355666 + 365 * gy + Math.floor((gy2 + 3) / 4) - Math.floor((gy2 + 99) / 100)
+    + Math.floor((gy2 + 399) / 400) + gd + gdm[gm - 1];
+  let jy = -1595 + 33 * Math.floor(days / 12053); days %= 12053;
+  jy += 4 * Math.floor(days / 1461); days %= 1461;
+  if (days > 365) { jy += Math.floor((days - 1) / 365); days = (days - 1) % 365; }
+  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
+  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
+  return [jy, jm, jd];
+}
+export function faDate(d = new Date()) {
+  const n = teh(d);
+  const [y, m, day] = n.date.split("-").map(Number);
+  const [, jm, jd] = jalali(y, m, day);
+  return `${FA_WD[n.dow]} ${jd} ${FA_MONTH[jm - 1]}`;
+}
+export function levelsAgeMin(snap, at = new Date()) {
+  if (!snap || !snap.computed_at_tehran) return null;
+  const t = Date.parse(String(snap.computed_at_tehran).slice(0, 19).replace(" ", "T") + "+03:30");
+  if (!Number.isFinite(t)) return null;
+  return (at - t) / 60000;
+}
+export function levelsFresh(snap, at = new Date(), limit = FRESH_MIN) {
+  const a = levelsAgeMin(snap, at);
+  return a != null && a >= 0 && a <= limit;
+}
+export function levelsMsg(snap, at = new Date()) {
+  const n = teh(at);
+  const lines = ["**سطوح**", `~~${faDate(at)} · ${n.hm}~~`, ""];
+  if (snap && !levelsFresh(snap, at)) {
+    const age = levelsAgeMin(snap, at);
+    if (age != null && age >= 0) {
+      lines.push(`سن داده  ${Math.round(age)} دقیقه`, "");
+    }
+  }
+  lines.push(snap && snap.block ? snap.block : "داده‌ی سطوح در دسترس نیست");
+  return lines.join("\n");
+}
+
 // Pure command handler: mutates state, returns {reply, queue?}.
 export function handle(s, text, now = teh(), at = new Date()) {
   const parts = text.trim().split(/\s+/);
@@ -203,6 +250,12 @@ export function handle(s, text, now = teh(), at = new Date()) {
   if (c === "/start" || c === "/help") return { reply: HELP };
   if (c === "/status") return { reply: statusMsg(s) };
   if (c === "/scan" || c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
+  if (c === "/levels") {
+    if (weekendClosed(at))
+      return { reply: (s.levels && s.levels.block) ? levelsMsg(s.levels, at) : closedLine(at) };
+    if (levelsFresh(s.levels, at)) return { reply: levelsMsg(s.levels, at) };
+    return { queue: c };
+  }
   if (c === "/offset") {
     const cur = offsetOf(s);
     if (!args.length)

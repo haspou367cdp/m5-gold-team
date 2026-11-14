@@ -20,6 +20,7 @@ import pandas as pd
 import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
 import broker_daryagold as DG
+import level_view as LVIEW
 
 FA_B = {"bullish": "صعودی ⬆️", "bearish": "نزولی ⬇️", "neutral": "خنثی ↔️"}
 STALE_MIN = 10  # minutes, while the market is open
@@ -224,6 +225,7 @@ def main():
     decision = REG.decide(lv, b, regime, quality=q)
     session = DG.session_entry_block(at or now, cfg)
     decision, plan, sizing, journal = _apply_broker_gates(decision, lv, b, cfg, session)
+    snap = LVIEW.snapshot(lv, cfg)
 
     h4t = (b.get("h4") or {}).get("trend", "neutral")
     lines = [
@@ -267,10 +269,8 @@ def main():
     if eq_bits:
         lines.append("**برابری سقف/کف M15:** " + " · ".join(eq_bits) + f" · آستانه {eq.get('tolerance')} دلار")
 
-    lines.append("**سقف‌های نزدیک:**")
-    lines += [f"- {px(l['price'])} · {label(l)}" for l in res] or ["- (سطح نزدیکی در محدوده نیست)"]
-    lines.append("**کف‌های نزدیک:**")
-    lines += [f"- {px(l['price'])} · {label(l)}" for l in sup] or ["- (سطح نزدیکی در محدوده نیست)"]
+    lines.append("**سطوح (نمای کوتاه، همان بلاک /levels):**")
+    lines.append(snap["block"])
     if inv:
         word = "بالای" if b["bias"] == "bearish" or (b["bias"] == "neutral" and b["technical_bias"] == "bearish") else "زیر"
         lines.append(f"**ابطال جهت:** بسته شدن کندل M15 {word} {px(inv['neutral_level'])} → خنثی؛ "
@@ -308,7 +308,7 @@ def main():
         "bias": b["bias"], "technical_bias": b["technical_bias"], "technical_confidence": b["technical_confidence"],
         "news_bias": b["news_bias"], "h4": b.get("h4"), "h1": b["h1"], "m15": b["m15"],
         "verdict": v, "decision": decision, "regime": regime, "macro": macro,
-        "resistances": res, "supports": sup, "invalidation": inv, "news_window": b["news_window"],
+        "resistances": res, "supports": sup, "levels": snap, "invalidation": inv, "news_window": b["news_window"],
         "spread": b["spread"], "structure": lv.get("structure"),
         "opening_ranges": lv.get("opening_ranges"), "equal": lv.get("equal"),
         "session_vwap": lv.get("session_vwap"),
