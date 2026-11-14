@@ -506,8 +506,10 @@ def with_group(**kw):
 
 BRIEF[0] = mk_brief(); B.run_brief = lambda state: (CALLS.__setitem__(0, CALLS[0] + 1), copy.deepcopy(BRIEF[0]))[1]
 with_group(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
-check("signal is mirrored to the group, same text",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "فروش طلا" in out[0])
+check("signal is mirrored without the toman risk line; unit size stays",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "فروش طلا" in out[0] and "فروش طلا" in out[1] and
+      "ریسک" in out[0] and "تومان" in out[0] and "ریسک" not in out[1] and "تومان" not in out[1] and
+      ("یک واحد" in out[1] or "نیم واحد" in out[1]) and "<code>" in out[1] and "حد ضرر" in out[1] and "هدف" in out[1])
 with_group(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); CALLS[0] = 0; out = run("scheduled")
 check("Friday reminder stays private",
       len(out) == 1 and SENT_TO == [OWNER] and "ورود جدید بسته است" in out[0] and CALLS[0] == 0)
@@ -538,8 +540,9 @@ check("pre-session brief is mirrored without balance or the daily loss cap",
       len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[0] and "موجودی" in out[0] and "سقف ضرر امروز" in out[0] and
       "نیویورک" in out[1] and "موجودی" not in out[1] and "سقف ضرر" not in out[1])
 with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
-check("11:15 signal and London brief are both mirrored; brief balance stays private",
-      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and out[0] == out[1] and
+check("11:15 signal and London brief are both mirrored; signal risk and brief balance stay private",
+      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and "فروش طلا" in out[1] and
+      "تومان" in out[0] and "تومان" not in out[1] and ("یک واحد" in out[1] or "نیم واحد" in out[1]) and
       "لندن" in out[2] and "موجودی" in out[2] and "لندن" in out[3] and "موجودی" not in out[3] and "سقف ضرر" not in out[3])
 out = run("test")
 check("sample signal stays private", len(out) == 1 and SENT_TO == [OWNER] and "نمونه" in out[0])
@@ -566,6 +569,16 @@ pub = B.public_card("brief", br)
 check("public_card keeps the market card and drops only the balance line",
       "خلاصه‌ی بازار" in (pub or "") and "موجودی" in br and "موجودی" not in (pub or "") and "سقف ضرر امروز" not in (pub or ""))
 check("public_card drops error cards", B.public_card("scan", "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~") is None)
+sig = B.signal_msg(mk_brief(), {"side": "SELL", "entry": 3880, "sl": 3881.6, "tp": 3876},
+                   DG.size_trade(3880, 3881.6, 3876, "SELL", cfg, spread_usd=0.25), state(), cfg)
+ps = B.public_card("signal", sig)
+check("public_card keeps direction, prices and unit size; drops risk in toman",
+      "فروش طلا" in (ps or "") and "ورود" in (ps or "") and "حد ضرر" in (ps or "") and "هدف" in (ps or "") and
+      ("یک واحد" in (ps or "") or "نیم واحد" in (ps or "")) and "نسبت" in (ps or "") and
+      "ریسک" in sig and "تومان" in sig and "ریسک" not in (ps or "") and "تومان" not in (ps or ""))
+half = "نیم واحد · ریسک 80 هزار تومان · نسبت 1.9"
+check("public_card keeps نیم واحد when stripping risk",
+      B.public_card("signal", half) == "نیم واحد · نسبت 1.9")
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

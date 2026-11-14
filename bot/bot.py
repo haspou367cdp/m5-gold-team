@@ -122,13 +122,24 @@ def send_chat(chat, text):
     return ok
 
 def public_card(kind, text):
-    """Group copy of a mirrored card. Drops personal balance/loss-cap and error cards."""
+    """Group copy of a mirrored card. Drops personal balance/loss-cap, signal risk in toman, and error cards."""
     if not text:
         return None
     if "داده‌ی قیمت در دسترس نیست" in text:
         return None
     if kind in ("brief", "presession"):
         lines = [ln for ln in text.split("\n") if not ("موجودی" in ln and "سقف ضرر امروز" in ln)]
+        while lines and lines[-1] == "":
+            lines.pop()
+        return "\n".join(lines)
+    if kind == "signal":
+        lines = []
+        for ln in text.split("\n"):
+            ln = re.sub(r"(?:^| · )ریسک [^·\n]*تومان", "", ln)
+            ln = re.sub(r"^ · ", "", ln)
+            if "تومان" in ln:
+                continue
+            lines.append(ln)
         while lines and lines[-1] == "":
             lines.pop()
         return "\n".join(lines)
@@ -766,7 +777,7 @@ def main():
         if key in [x["key"] for x in state["signals_sent"]] and not on_request:
             print("signal already sent:", key)
             return False
-        ok = send(signal_msg(b, plan, sizing, state, cfg), also=channel_chat(state))
+        ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg), state)
         if ok and key not in [x["key"] for x in state["signals_sent"]]:
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
         return ok
