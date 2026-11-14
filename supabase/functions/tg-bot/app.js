@@ -4,10 +4,12 @@
 //   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
-import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS } from "./lib.js";
+import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine } from "./lib.js";
 
+export const BUILD = "2026-11-14-weekend-offset";
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
+  const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
   const hdr = { apikey: KEY, authorization: `Bearer ${KEY}`, "content-type": "application/json" };
   const rpc = async (fn, args = {}) => {
     const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method: "POST", headers: hdr, body: JSON.stringify(args) });
@@ -54,7 +56,7 @@ export function makeApp(cfg) {
     const res = await mutate(async (s) => {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
-      const r = handle(s, text);
+      const r = handle(s, text, teh(), clock());
       if (r.queue) {
         // a different command always gets its own run (a run already in progress may have pulled the state
         // before it was queued); only a repeat of a command that is still pending and was dispatched < 90 s ago is skipped
@@ -126,7 +128,11 @@ export function makeApp(cfg) {
         const b = await req.json();
         return Response.json(await rpc("bot_merge", { p_patch: b.patch || {}, p_done: b.done_cmds || [], p_news: b.news_windows || null }));
       }
-      if (p.endsWith("/health")) return Response.json({ ok: true, service: "m5-gold-bot" });
+      if (p.endsWith("/health")) {   // public, read-only: lets a deploy be checked without touching Telegram
+        const closed = weekendClosed(clock());
+        return Response.json({ ok: true, service: "m5-gold-bot", build: BUILD, tehran: teh().full, market_closed: closed,
+          ...(closed ? { closed_line: closedLine(clock()) } : {}) });
+      }
       return new Response("not found", { status: 404 });
     } catch (e) {
       console.error("tg-bot error:", String(e && e.message || e));

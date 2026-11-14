@@ -34,6 +34,15 @@ def load_config(equity=None):
         cfg = dict(cfg)
         cfg["equity_toman"] = float(equity)
     cfg["equity_toman"] = float(cfg["equity_toman"])
+    off = os.environ.get("DG_OFFSET_USD")   # live recalibration (bot_state dg_offset via bot.py, /offset in Telegram)
+    if off not in (None, ""):
+        try:
+            v = float(off)
+            if abs(v) <= 5:
+                cfg = dict(cfg)
+                cfg["price_offset_usd"] = v
+        except ValueError:
+            pass
     return cfg
 
 

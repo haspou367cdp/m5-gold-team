@@ -26,10 +26,10 @@ python3 tools/brief.py --equity 2085600
 ## Telegram bot (Supabase + GitHub Actions, free, no server)
 Architecture (all free tiers, no card):
 - **Supabase project `m5-gold-bot`** (eu-central-1):
-  - Edge Function `tg-bot` (`supabase/functions/tg-bot/`) is the Telegram **webhook**: `/status /help /start /balance /loss /win /trade /undo /shadow` are answered instantly; `/scan` and `/brief` get «در حال بررسی…» and the function dispatches the GitHub workflow (answer in ~1 min). Only chat 45639251 is answered and Telegram's `secret_token` header is checked.
+  - Edge Function `tg-bot` (`supabase/functions/tg-bot/`) is the Telegram **webhook**: `/status /help /start /balance /loss /win /trade /undo /shadow /offset` are answered instantly; on the weekend (Friday after the close, Saturday, Sunday before the open) `/scan` and `/brief` get one line «🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۲:۳۰» and nothing is dispatched; `/scan` and `/brief` get «در حال بررسی…» and the function dispatches the GitHub workflow (answer in ~1 min). Only chat 45639251 is answered and Telegram's `secret_token` header is checked.
   - Postgres table `public.bot_state` (one row, jsonb) is the **single source of truth** for state (equity, today's results, queued commands, sent signals, briefs sent, news calendar). RLS on, no policies: only the service role (inside the function) can read/write. Writes from Telegram use optimistic versioning; the GitHub run merges only its own keys (`bot_merge`).
   - Secrets live in **Supabase Vault** (`telegram_bot_token`, `gh_dispatch_token`, `tg_webhook_secret`), readable only by the service role.
-  - **pg_cron + pg_net** dispatch the workflow on the Tehran schedule (UTC crons `45 7 * * 1-5`, `*/15 8-17 * * 1-5`, `0 18 * * 1-5` = 11:15, 11:30–21:15 every 15 min, 21:30 Tehran, Mon–Fri).
+  - **pg_cron + pg_net** dispatch the workflow on the Tehran schedule (UTC crons `45 7 * * 1-5`, `*/15 8-17 * * 1-5`, `0 18 * * 1-5` = 11:15, 11:30–21:15 every 15 min, 21:30 Tehran, Mon–Fri; `*/30 0-7 * * 1-5` = 03:30–11:00 Tehran every 30 min, Asia shadow log only, never sends; `0 20 * * 5` = Friday 23:30 Tehran close reminder).
 - **GitHub Actions** (`.github/workflows/telegram-bot.yml`) runs the analysis (`bot/bot.py` → `tools/brief.py` + automated risk check). It pulls/pushes state from the Edge Function using a GitHub **OIDC token** (no shared secret; only this repo's `main` branch is accepted). No Telegram polling.
 - The GitHub `schedule:` stays as a fallback only; repo variable `SUPABASE_CRON=1` skips it at job level (no minutes).
 
@@ -42,6 +42,13 @@ Each run: answers queued `/scan` `/brief`, refreshes the news calendar (ForexFac
   Trades are stored in `bot_state.state.trades` (last 300). `journal.csv` stays on the box only (git-ignored): `python3 tools/sync_trades.py state.json` appends any new `/trade` rows (idempotent by `signal_id`).
 - Shadow log (silent, research only): on scheduled runs, if entries were blocked by a gate (news A/B window or soon, volatility spike, abnormal spread, Friday/session) the setup is recomputed with the gates off (`tools/shadow.py`, `ignore_gates=True`; live gates unchanged). If that setup passes every non-gate check (sizing, R:R ≥ 1.5, SL ≥ $1, daily stop, 1-position lock) it is stored in `bot_state.state.shadow` (last 300; one open at a time). Later runs resolve it from 1-minute bid bars: limit fill within 30 min (else `unfilled`), then TP / SL (same bar = SL) or `expired` at market after 4 h or at the Friday close. Result in R and in toman for one full unit (80,000/$, 14,000 fee). `/shadow` shows the totals and the last 3.
 
+### Weekend, Friday close, Asia, /offset (2026-11-14)
+- Friday: no new entries from 23:30 Tehran (DST-aware session gate in `brief.py`, unchanged). The Friday 23:30 run sends one reminder «🏳️ جمعه: ورود جدید بسته است / همه‌ی معامله‌ها و سفارش‌ها را تا ۰۱:۳۰ ببندید» (once, `friday_reminder_sent`) and does no analysis.
+- Weekend: Edge Function and `bot.py` answer `/scan` `/brief` with the closed line (reopen = Sunday 18:00 New York from `broker_daryagold.json`, Monday 02:30 Tehran in winter, 01:30 in summer). Scheduled runs need `forex_open`, so they send nothing on the weekend. `GET /health` shows `market_closed` and the line (read-only, no Telegram).
+- Asia (weekdays 03:30–11:15 Tehran): scheduled runs are **log-only**. A setup that passes every live check is stored as a shadow entry (`gates: ["asia"]`), a gate-blocked one as usual; both get `session: "asia"`. Nothing is sent; `/scan` on request still answers. `/shadow` has an «آسیا» line.
+- `/trade` sanity check: one warning line (trade still recorded, `warned: true`) when exit = entry, the move is over $40, or entry/exit is more than $50 from the last analysed DaryaGold price (`last_price`, if under 24 h old).
+- `/offset` shows the DaryaGold offset; `/offset 0.4` sets `bot_state.state.dg_offset` (−5…5, Persian digits ok; owner chat only). The next run applies it (`bot.py` → `p1()`, and `brief.py` via env `DG_OFFSET_USD`); default 0.3 from `broker_daryagold.json`. GitHub can never overwrite it.
+
 Amounts accept Persian or Latin digits, separators and «تومان» (e.g. `/loss ۱۵۰٬۰۰۰`); invalid or non-positive amounts are rejected and nothing is recorded.
 
 Secrets: GitHub secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GH_DISPATCH_TOKEN`; the setup run copies the two tokens into Supabase Vault. Nothing secret is in the repo.
@@ -53,4 +60,4 @@ If Supabase is down: GitHub runs fail visibly (red) and send nothing. To fall ba
 Tests (offline, mocked network; never touch journal.csv):
 `node supabase/functions/tg-bot/test.mjs` and `STATE_DIR=$(mktemp -d) python3 bot/test_bot.py`.
 
-Budget: Supabase free (Edge Function invocations ≪ 500k/month, DB ≪ 500 MB); GitHub ~45 scheduled runs × 22 weekdays + /scan runs ≈ 1,000–1,200 of 2,000 free minutes. Note: Supabase pauses free projects after 7 days without activity; the 15-min schedule keeps it active on weekdays.
+Budget: Supabase free (Edge Function invocations ≪ 500k/month, DB ≪ 500 MB); GitHub ~41 + 16 (Asia) scheduled runs × 22 weekdays + 4 Friday reminders + /scan runs ≈ 1,300–1,500 of 2,000 free minutes (each ~30 s run bills 1 minute). Note: Supabase pauses free projects after 7 days without activity; the 15-min schedule keeps it active on weekdays.

@@ -8,7 +8,9 @@ const WORKFLOW = "telegram-bot.yml";
 export const OIDC_ISS = "https://token.actions.githubusercontent.com";
 export const OIDC_AUD = "m5-gold-bot";
 const DEFAULT_EQUITY = 2085600;
-export const BOT_KEYS = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow"];
+export const BOT_KEYS = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow",
+  "last_price", "friday_reminder_sent"];
+export const DEFAULT_OFFSET = 0.3;   // DaryaGold ≈ Dukascopy bid + dg_offset (bot_state.state.dg_offset, set by /offset)
 const RATE = { 1: 80000, 0.5: 40000 }, FEE = 14000;
 
 // ---------------- time (Tehran = UTC+3:30, no DST since 2022) ----------------
@@ -18,6 +20,34 @@ export function teh(d = new Date()) {
   const date = `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}`;
   const hm = `${p(t.getUTCHours())}:${p(t.getUTCMinutes())}`;
   return { date, hm, full: `${date} ${hm}`, dow: t.getUTCDay() };
+}
+
+// ---------------- forex hours (DaryaGold = forex, DST via New York; tools/broker_daryagold.json session) ----------------
+// Open Sunday 18:00 NY, close Friday 17:00 NY, daily break 17:00-18:00 NY.
+const NY_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+function nyClock(d) {
+  const p = Object.fromEntries(NY_FMT.formatToParts(d).map((x) => [x.type, x.value]));
+  return { wd: WD[p.weekday], min: Number(p.hour) * 60 + Number(p.minute) };
+}
+export function forexOpen(d = new Date()) {
+  const { wd, min } = nyClock(d);
+  if (wd === 6) return false;
+  if (wd === 0) return min >= 18 * 60;
+  if (wd === 5) return min < 17 * 60;
+  return !(min >= 17 * 60 && min < 18 * 60);
+}
+// weekend closure (Friday after the close, Saturday, Sunday before the open, New York time), not the daily break
+export const weekendClosed = (d = new Date()) => !forexOpen(d) && [5, 6, 0].includes(nyClock(d).wd);
+export function reopenAt(d = new Date()) {
+  let t = new Date(Math.ceil(d.getTime() / 300000) * 300000);
+  for (let i = 0; i < 4 * 288 && !forexOpen(t); i++) t = new Date(t.getTime() + 300000);
+  return t;
+}
+const FA_WD = ["یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه"];
+export function closedLine(d = new Date()) {
+  const r = teh(reopenAt(d));
+  return `🔒 بازار بسته است؛ بازگشایی ${FA_WD[r.dow]} ${r.hm}`;
 }
 
 // ---------------- formatting (port of bot/bot.py) ----------------
@@ -69,11 +99,12 @@ export const HELP = `**🤖 راهنما**
 \`/loss 150000\`  ثبت ضرر
 \`/win 200000\`  ثبت سود
 \`/undo\`  حذف آخرین ثبت
+\`/offset\`  اختلاف قیمت دریاگلد
 
 ~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
 export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["shadow", "سیگنال‌های ردشده"],
-  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["help", "راهنما"]]
+  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
 
@@ -123,8 +154,25 @@ export function parseTrade(args) {
   const gross = Math.round((exit - entry) * dir * RATE[units]);
   return { side: dir > 0 ? "buy" : "sell", entry, exit, units, gross, net: gross - FEE, fee: FEE };
 }
+// /trade sanity check: warn (the trade is still recorded) when the input looks wrong
+export const offsetOf = (s) => (Number.isFinite(Number(s.dg_offset)) && s.dg_offset !== null && s.dg_offset !== "" ? Number(s.dg_offset) : DEFAULT_OFFSET);
+export function marketPrice(s, at = new Date()) {   // DaryaGold price from the last analysis run, if < 24 h old
+  const lp = s.last_price;
+  if (!lp || !Number(lp.bid) || !lp.at) return null;
+  const t = Date.parse(String(lp.at).replace(" ", "T") + ":00+03:30");
+  if (!(at - t < 24 * 3.6e6)) return null;
+  return Math.round((Number(lp.bid) + offsetOf(s)) * 100) / 100;
+}
+export function tradeWarn(t, s, at = new Date()) {
+  const w = [];
+  if (t.exit === t.entry) w.push("ورود و خروج یکی است");
+  if (Math.abs(t.exit - t.entry) > 40) w.push("حرکت قیمت بیش از ۴۰ دلار است");
+  const m = marketPrice(s, at);
+  if (m && (Math.abs(t.entry - m) > 50 || Math.abs(t.exit - m) > 50)) w.push("قیمت‌ها بیش از ۵۰ دلار با بازار فاصله دارند");
+  return w.length ? `⚠️ ${w.join("؛ ")}؛ اگر اشتباه است \`/undo\`` : null;
+}
 const BAD_TRADE = "**⚠️ معامله ثبت نشد**\n~~جهت، ورود، خروج و حجم (۱ یا ۰٫۵) را بنویسید، مثل:~~\n\n`/trade sell 3914.07 3909.61 1`\n`/trade buy 3894.11 3898.99 0.5`";
-const GATE_FA = { news: "خبر", volatility: "نوسان", spread: "اسپرد", friday: "جمعه", session: "ساعت" };
+const GATE_FA = { news: "خبر", volatility: "نوسان", spread: "اسپرد", friday: "جمعه", session: "ساعت", asia: "آسیا" };
 const RES_FA = { tp: "هدف", sl: "حد ضرر", expired: "پایان مهلت", unfilled: "پر نشد", pending: "در انتظار", open: "باز" };
 export function shadowMsg(s) {
   const e = (s.shadow || []);
@@ -135,29 +183,45 @@ export function shadowMsg(s) {
   const px = (v, off) => (Number(v) + Number(off ?? 0.3)).toFixed(2).replace(/\.?0+$/, "");
   const last = e.slice(-3).reverse().map((x) => `${x.at.slice(5, 10).replace("-", "/")} ${x.at.slice(-5)} ${x.side === "BUY" ? "خرید" : "فروش"} \`${px(x.entry, x.offset)}\` · ${(x.gates || []).map((g) => GATE_FA[g] || g).join("، ")} · ${RES_FA[x.status] || x.status}` +
     (["tp", "sl", "expired"].includes(x.status) ? ` ${Number(x.R) > 0 ? "+" : ""}${Number(x.R).toFixed(1)}R` : ""));
+  const asia = done.filter((x) => x.session === "asia"), aR = asia.reduce((a, x) => a + Number(x.R || 0), 0);
+  const aAll = e.filter((x) => x.session === "asia").length;
   return ["**🕶 سیگنال‌های ردشده**", "~~ستاپ‌هایی که فقط فیلتر جلویشان را گرفت~~", "",
     `بسته‌شده ${done.length} · هدف ${n("tp")} · حد ضرر ${n("sl")} · پایان مهلت ${n("expired")}`,
     `پر نشد ${n("unfilled")} · باز ${n("pending") + n("open")}`,
     ...(done.length ? [`جمع ${R > 0 ? "+" : ""}${R.toFixed(1)}R · یک واحد ${signed(T)} تومان`] : []),
+    aAll ? `آسیا: بسته‌شده ${asia.length} · هدف ${asia.filter((x) => x.status === "tp").length} · حد ضرر ${asia.filter((x) => x.status === "sl").length}` +
+      (asia.length ? ` · جمع ${aR > 0 ? "+" : ""}${aR.toFixed(1)}R` : "") : "آسیا: هنوز موردی ثبت نشده",
     "", "**آخرین‌ها**", ...last].join("\n");
 }
 const BAD = "**⚠️ چیزی ثبت نشد**\n~~مبلغ را به تومان بنویسید، مثل:~~\n\n`/loss 150000`\n`/win 200000`\n`/balance 2085600`";
 
 // Pure command handler: mutates state, returns {reply, queue?}.
-export function handle(s, text, now = teh()) {
+export function handle(s, text, now = teh(), at = new Date()) {
   const parts = text.trim().split(/\s+/);
   const c = parts[0].split("@")[0].toLowerCase(), args = parts.slice(1);
   const d = s.day;
   if (c === "/start" || c === "/help") return { reply: HELP };
   if (c === "/status") return { reply: statusMsg(s) };
-  if (c === "/scan" || c === "/brief") return { queue: c };
+  if (c === "/scan" || c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
+  if (c === "/offset") {
+    const cur = offsetOf(s);
+    if (!args.length)
+      return { reply: `**🎚 اختلاف قیمت دریاگلد**\n~~قیمت دریاگلد = قیمت مرجع + ${cur} دلار~~\n\nبرای تغییر: \`/offset 0.4\`` };
+    const t = digits(args.join("")).replace(/[−–]/g, "-");
+    const v = /^[-+]?\d+(\.\d+)?$/.test(t) ? Math.round(parseFloat(t) * 100) / 100 : NaN;
+    if (!(Math.abs(v) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset 0.4`" };
+    s.dg_offset = v;
+    s.dg_offset_at = now.full;
+    return { reply: `**🎚 اختلاف قیمت ثبت شد**\n~~از ${cur} به ${v} دلار؛ از بررسی بعدی اعمال می‌شود~~` };
+  }
   if (c === "/shadow") return { reply: shadowMsg(s) };
   if (c === "/trade") {
     let t;
     try { t = parseTrade(args); } catch (e) { return { reply: BAD_TRADE }; }
+    const warn = tradeWarn(t, s, at);
     const n = s.trades.filter((x) => x.date === now.date).length + 1;
     const eqBefore = Number(s.equity_toman);
-    const tr = { id: `${now.date}-T${n}-${t.side.toUpperCase()}`, date: now.date, at: now.hm, ...t,
+    const tr = { id: `${now.date}-T${n}-${t.side.toUpperCase()}`, date: now.date, at: now.hm, ...t, ...(warn ? { warned: true } : {}),
       equity_before: eqBefore, equity_after: eqBefore + t.net };
     s.equity_toman = tr.equity_after;
     s.trades.push(tr);
@@ -172,7 +236,8 @@ export function handle(s, text, now = teh()) {
       `نتیجه‌ی خالص ${signed(t.net)} تومان`,
       `موجودی جدید ${toman(s.equity_toman)} تومان`, "",
       `امروز ${d.losses} ضرر · ${d.wins} سود`,
-      ...(stop ? ["", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود"] : [])].join("\n") };
+      ...(stop ? ["", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود"] : []),
+      ...(warn ? ["", warn] : [])].join("\n") };
   }
   try {
     if (c === "/balance") {

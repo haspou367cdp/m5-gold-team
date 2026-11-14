@@ -10,6 +10,8 @@ on:
     - cron: "45 7 * * 1-5"      # 11:15 Tehran pre-London brief
     - cron: "*/15 8-17 * * 1-5" # 11:30-21:15 Tehran every 15 min (16:15 = pre-NY brief)
     - cron: "0 18 * * 1-5"      # 21:30 Tehran last check
+    - cron: "0 20 * * 5"        # Friday 23:30 Tehran: close reminder (entries closed, flat by 01:30)
+    - cron: "*/30 0-7 * * 1-5"  # 03:30-11:00 Tehran every 30 min: Asia shadow log only (never sends)
   workflow_dispatch:
     inputs:
       mode:
@@ -130,7 +132,7 @@ jobs:
           python3 - <<'PY' > /tmp/push.json
           import json, os
           s = json.load(open("state/state.json"))
-          keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow"]
+          keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow", "last_price", "friday_reminder_sent"]
           out = {"patch": {k: s[k] for k in keys if k in s}, "done_cmds": s.get("done_cmds", [])}
           if os.path.exists("state/news_windows.json"):
               out["news_windows"] = json.load(open("state/news_windows.json"))

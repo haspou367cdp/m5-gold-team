@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -23,7 +23,7 @@ globalThis.fetch = async (url, init = {}) => {
       DB.row.state = a.p_state; DB.row.version++; return J(true);
     }
     if (fn === "bot_merge") {
-      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow"];
+      const keys = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow", "last_price", "friday_reminder_sent"];   // = SQL bot_merge allowed
       for (const k of keys) if (k in a.p_patch) DB.row.state[k] = a.p_patch[k];
       DB.row.state.pending_cmds = (DB.row.state.pending_cmds || []).filter((x) => !a.p_done.includes(x.id));
       if (a.p_news) DB.row.news = a.p_news; DB.row.version++;
@@ -55,7 +55,8 @@ async function jwt(claims) {
   return `${h}.${p}.${sig}`;
 }
 const good = { iss: "https://token.actions.githubusercontent.com", aud: "m5-gold-bot", repository: "haspou367cdp/m5-gold-team", ref: "refs/heads/main", exp: Date.now() / 1000 + 300 };
-const app = makeApp({ url: SB, key: "service" });
+let CLOCK = new Date("2026-11-11T10:30:00Z");   // Wednesday 14:00 Tehran (market open)
+const app = makeApp({ url: SB, key: "service", clock: () => CLOCK });
 const FN = SB + "/functions/v1/tg-bot";
 const gh = async (path, method = "GET", body) => app(new Request(FN + path, { method, body: body && JSON.stringify(body),
   headers: { authorization: "Bearer " + (await jwt(good)) } }), jw);
@@ -81,7 +82,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 10 commands, same wording as /help, no examples or digits", o.commands && DB.menu.length === 10 &&
+check("setup menu: 11 commands (incl. /offset), same wording as /help, no examples or digits", o.commands && DB.menu.length === 11 && DB.menu.some((c) => c.command === "offset") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -184,5 +185,53 @@ const req = async (c) => new Request(FN + "/state", { headers: { authorization: 
 for (const [n, c] of [["other repo", { repository: "evil/x" }], ["other branch", { ref: "refs/heads/dev" }], ["wrong audience", { aud: "x" }], ["expired", { exp: 1 }]])
   check(`OIDC: ${n} rejected`, !(await verifyOidc(await req({ ...good, ...c }), jw)));
 const t = await jwt(good);
+// ---- market hours / weekend (DST via New York)
+const U = (x) => new Date(x);
+check("forex hours: Sat closed, Fri 23:45 Tehran open, Sat 01:45 Tehran closed, Mon 02:00 closed, Mon 02:35 open",
+  !forexOpen(U("2026-11-14T08:00:00Z")) && forexOpen(U("2026-11-13T20:15:00Z")) && !forexOpen(U("2026-11-13T22:15:00Z")) &&
+  !forexOpen(U("2026-11-15T22:30:00Z")) && forexOpen(U("2026-11-15T23:05:00Z")));
+check("weekendClosed: weekend yes, daily 1-hour break no", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-13T22:05:00Z")) &&
+  !weekendClosed(U("2026-11-11T22:15:00Z")) && !weekendClosed(U("2026-11-11T10:30:00Z")) && weekendClosed(U("2026-11-15T22:30:00Z")));
+check("closed line: reopen Monday 02:30 Tehran (winter) / 01:30 (summer)", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه 02:30" &&
+  closedLine(U("2026-07-18T08:00:00Z")).endsWith("دوشنبه 01:30") && render(closedLine(U("2026-11-14T08:00:00Z"))).includes("۰۲:۳۰"));
+CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pending_cmds.length;
+r = await tgSend("/scan"); check("Saturday /scan: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
+  r.out[0].includes("دوشنبه ۰۲:۳۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
+r = await tgSend("/brief"); check("Saturday /brief: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/scan"); check("Friday after the 01:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+CLOCK = U("2026-11-13T20:15:00Z"); DB.row.state.last_dispatch = 0; r = await tgSend("/scan");
+check("Friday 23:45 (entries closed, market open): /scan still analysed (bot answers «جمعه‌شب»)", DISPATCHED.length === 1 && r.out[0].includes("در حال بررسی"));
+DB.row.state.pending_cmds = [];
+CLOCK = U("2026-11-14T08:00:00Z"); SENT.length = 0; let h = await (await app(new Request(FN + "/health"))).json();
+check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه") && h.build && SENT.length === 0);
+CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
+check("/health on a weekday: market open", h.market_closed === false && !h.closed_line);
+// ---- /trade sanity check (warn, still record)
+day0(); DB.row.state.last_price = { bid: 3900, at: teh(CLOCK).full }; DB.row.state.dg_offset = undefined;
+r = await tgSend("/trade buy 3900.3 3903.3 1"); check("/trade normal: no warning", !r.out[0].includes("⚠️") && st().trades.length === 1 && !st().trades[0].warned);
+r = await tgSend("/trade sell 3900 3900 1"); check("/trade exit = entry: one warning line, still recorded", r.out[0].includes("ورود و خروج یکی است") && r.out[0].includes("/undo") &&
+  r.out[0].split("\n").filter((l) => l.includes("⚠️")).length === 1 && st().trades.length === 2 && st().trades[1].warned);
+r = await tgSend("/trade buy ۳۹۰۰ ۳۹۴۵ ۰٫۵"); check("/trade move > $40 (Persian digits): warning, recorded", r.out[0].includes("بیش از ۴۰ دلار") && st().trades.length === 3);
+r = await tgSend("/trade sell 3990 3985 1"); check("/trade > $50 from the last known price: warning", r.out[0].includes("بیش از ۵۰ دلار با بازار") && st().trades.length === 4);
+DB.row.state.last_price = { bid: 3900, at: "2026-11-09 10:00" }; r = await tgSend("/trade sell 3990 3985 1");
+check("/trade: stale price (> 24 h) -> no distance warning", !r.out[0].includes("⚠️") && st().trades.length === 5);
+check("tradeWarn/marketPrice pure: uses dg_offset, combines reasons in one line", marketPrice({ last_price: { bid: 3900, at: teh(CLOCK).full }, dg_offset: 0.5 }, CLOCK) === 3900.5 &&
+  tradeWarn({ entry: 3800, exit: 3800 }, { last_price: { bid: 3900, at: teh(CLOCK).full } }, CLOCK).split("؛").length === 3);
+day0();
+// ---- /offset (owner chat only)
+r = await tgSend("/offset"); check("/offset shows the default 0.3", r.out[0].includes("۰٫۳") && r.out[0].includes("<code>/offset 0.4</code>"));
+r = await tgSend("/offset ۰٫۴"); check("/offset ۰٫۴ (Persian digits) sets 0.4", st().dg_offset === 0.4 && r.out[0].includes("ثبت شد") && r.out[0].includes("۰٫۴"));
+for (const bad of ["/offset abc", "/offset 9", "/offset 0.4 0.5x"]) { r = await tgSend(bad); check(`/offset rejects '${bad}'`, st().dg_offset === 0.4 && r.out[0].includes("ثبت نشد")); }
+r = await tgSend("/offset -0.2"); check("/offset accepts a negative offset", st().dg_offset === -0.2);
+await tgSend("/offset 0.4");
+r = await tgSend("/offset 0.5", 999); check("/offset from another chat ignored", r.out.length === 0 && st().dg_offset === 0.4);
+await gh("/state", "POST", { patch: { dg_offset: 9, last_price: { bid: 3901, at: "2026-11-11 14:00" } }, done_cmds: [] });
+check("GitHub may merge last_price but never dg_offset", st().dg_offset === 0.4 && st().last_price.bid === 3901);
+// ---- /shadow Asia line
+const asiaS = { shadow: [{ at: "2026-11-11 09:04", side: "SELL", entry: 3900, sl: 3902, tp: 3896, offset: 0.3, gates: ["asia"], session: "asia", status: "tp", R: 2, toman: 306000 },
+  { at: "2026-11-11 15:00", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["news"], status: "sl", R: -1, toman: -174000 }] };
+check("/shadow: Asia line with its own counts; empty Asia says so", shadowMsg(asiaS).includes("آسیا: بسته‌شده 1 · هدف 1 · حد ضرر 0 · جمع +2.0R") &&
+  shadowMsg({ shadow: [asiaS.shadow[1]] }).includes("آسیا: هنوز موردی ثبت نشده") && !/زیان|قوی/.test(shadowMsg(asiaS)));
+check("/help lists /offset; no زیان or قوی", HELP.includes("`/offset`") && !/زیان|قوی/.test(HELP));
 check("OIDC: tampered payload rejected", !(await verifyOidc(new Request("https://x", { headers: { authorization: "Bearer " + t.split(".")[0] + "." + enc({ ...good, x: 1 }) + "." + t.split(".")[2] } }), jw)));
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

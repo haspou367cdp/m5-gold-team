@@ -30,6 +30,7 @@ CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
+ASIA = ("03:30", "11:15")   # weekday Asia session (Tehran): scheduled runs only log shadow setups, never send anything
 # /help, /status, /balance, /loss, /win, /undo are answered by the Supabase Edge Function (supabase/functions/tg-bot).
 
 # ---------------- state ----------------
@@ -51,6 +52,19 @@ def load_state():
     s["presession_sent"] = {k: v for k, v in s["presession_sent"].items() if k >= today}
     s["signals_sent"] = s["signals_sent"][-20:]
     return s
+
+def apply_offset(state, cfg):
+    """bot_state dg_offset (set by /offset in Telegram) overrides the file's price_offset_usd, for this run and brief.py."""
+    v = state.get("dg_offset")
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return cfg
+    if abs(v) > 5:
+        return cfg
+    cfg["price_offset_usd"] = v
+    os.environ["DG_OFFSET_USD"] = str(v)
+    return cfg
 
 def save_state(s):
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -581,7 +595,7 @@ def sample_signal(b, cfg, state):
 shadow_bars = SH.m1_bars          # hooks (mocked in tests)
 shadow_candidate = SH.candidate
 
-def shadow_step(state, b, cfg, news_ok, now, record=True):
+def shadow_step(state, b, cfg, news_ok, now, record=True, session=None, valid=None):
     """Resolve open shadow entries from later candles, then (if this run was blocked only by a gate)
     record the setup that would otherwise have been a signal. Never sends anything."""
     sh = list(state.get("shadow") or [])
@@ -599,7 +613,14 @@ def shadow_step(state, b, cfg, news_ok, now, record=True):
     gates = SH.gates_active(b) if record and not b.get("error") else []
     dec = b.get("decision")
     side = dec.get("decision") if isinstance(dec, dict) else dec
-    if gates and side not in ("BUY", "SELL") and not SH.has_open(sh):
+    tag = {"session": session} if session else {}
+    if valid and not SH.has_open(sh):
+        # Asia: a setup that passed every live check is logged instead of sent (log-only window)
+        plan, sizing = valid
+        e = dict(SH.new_entry(now, plan, sizing, ["asia"], DG.offset_usd(cfg) or 0.0), **tag)
+        sh.append(e)
+        print(f"shadow: recorded {e['side']} {e['entry']} sl {e['sl']} tp {e['tp']} (valid setup, {session} log-only)")
+    elif gates and side not in ("BUY", "SELL") and not SH.has_open(sh):
         try:
             cdec, plan, sizing = shadow_candidate(cfg)
         except Exception as e:
@@ -610,7 +631,7 @@ def shadow_step(state, b, cfg, news_ok, now, record=True):
                       session_entry={"blocked": False})
             ok, _, _, why = risk_check(cf, state, cfg, news_ok)
             if ok:
-                e = SH.new_entry(now, plan, sizing, gates, DG.offset_usd(cfg) or 0.0)
+                e = dict(SH.new_entry(now, plan, sizing, gates, DG.offset_usd(cfg) or 0.0), **tag)
                 sh.append(e)
                 print(f"shadow: recorded {e['side']} {e['entry']} sl {e['sl']} tp {e['tp']} gates={gates}")
             else:
@@ -618,6 +639,37 @@ def shadow_step(state, b, cfg, news_ok, now, record=True):
         else:
             print(f"shadow: gates={gates}, but no setup without them")
     state["shadow"] = sh[-SH.KEEP:]
+
+# ---------------- weekend / Friday close ----------------
+def weekend_closed(t, cfg):
+    """Weekend closure (Friday after the close, Saturday, Sunday before the open, New York time), not the daily break."""
+    return not DG.forex_open(t, cfg) and t.astimezone(DG.session_cfg(cfg)["tz"]).weekday() in (4, 5, 6)
+
+def reopen_at(t, cfg):
+    x = t.replace(second=0, microsecond=0) + timedelta(minutes=(-t.minute) % 5)
+    for _ in range(4 * 288):
+        if DG.forex_open(x, cfg):
+            break
+        x += timedelta(minutes=5)
+    return x.astimezone(TEH)
+
+def closed_line(t, cfg):
+    r = reopen_at(t, cfg)
+    return f"🔒 بازار بسته است؛ بازگشایی {FA_WEEKDAY[r.weekday()]} {r:%H:%M}"
+
+def friday_reminder(t, cfg):
+    """Close reminder text while the Friday entry cutoff is active (23:30-01:30 Tehran in US winter), else None."""
+    try:
+        se = DG.session_entry_block(t, cfg)
+    except Exception:
+        return None
+    if not (se.get("friday_window") and se.get("forex_open")):
+        return None
+    close = datetime.strptime(se["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+    return f"**🏳️ جمعه: ورود جدید بسته است**\n~~همه‌ی معامله‌ها و سفارش‌ها را تا {close:%H:%M} ببندید~~"
+
+def in_asia(t):
+    return t.weekday() < 5 and ASIA[0] <= t.strftime("%H:%M") < ASIA[1]
 
 # ---------------- main ----------------
 def in_window(name, t):
@@ -631,6 +683,7 @@ def main():
     global CFG
     cfg = CFG = DG.load_config()
     state = load_state()
+    apply_offset(state, cfg)
     # /scan and /brief are queued by the Supabase Edge Function (Telegram webhook); every other command is answered there.
     pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief")]
     cmds = [(x["cmd"], []) for x in pending]
@@ -645,6 +698,8 @@ def main():
             brief = run_brief(state)
             dec = brief.get("decision")
             state["last_verdict"] = dec.get("decision") if isinstance(dec, dict) else dec
+            if brief.get("price_bid") is not None and not brief.get("error"):   # for the /trade sanity check
+                state["last_price"] = {"bid": round(float(brief["price_bid"]), 2), "at": now_teh().strftime("%Y-%m-%d %H:%M")}
         return brief
 
     def emit_signal(b, plan, sizing, on_request=False):
@@ -659,8 +714,11 @@ def main():
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
         return ok
 
+    closed = weekend_closed(now_teh(), cfg)
     for c, _ in cmds:
-        if c == "/brief":
+        if closed:   # queued just before the close: never analyse stale weekend data
+            send(closed_line(now_teh(), cfg))
+        elif c == "/brief":
             b = get_brief()
             send(brief_msg(b, state))
         elif c == "/scan":
@@ -678,6 +736,18 @@ def main():
         smp = sample_signal(b, cfg, state)
         if smp:
             send(smp)
+    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and friday_reminder(t, cfg):
+        # Friday after the entry cutoff: one short close reminder, no analysis, no signal
+        tag = f"{t:%Y-%m-%d}"
+        if state.get("friday_reminder_sent") not in (tag, (t - timedelta(days=1)).strftime("%Y-%m-%d")):
+            if send(friday_reminder(t, cfg)):
+                state["friday_reminder_sent"] = tag
+    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and in_asia(t):
+        # Asia: log-only. Shadow setups are recorded and resolved; nothing is ever sent.
+        b = get_brief()
+        ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
+        print("asia log-only:", "valid setup (not sent)" if ok else " | ".join(why)[:300])
+        shadow_step(state, b, cfg, news_ok, t, record=not ok, session="asia", valid=(plan, sizing) if ok else None)
     elif a.mode == "scheduled" and DG.forex_open(t, cfg):
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)

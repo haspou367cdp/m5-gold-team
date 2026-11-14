@@ -126,6 +126,7 @@ check("Saturday: scheduled run silent", run("scheduled") == [])
 
 # ---- (g) HTML escaping + fallback + length
 r = B.render("**x** <script> & `1.5` 2.5"); check("HTML escaped", "&lt;script&gt;" in r and "&amp;" in r and "<code>1.5</code>" in r and "۲٫۵" in r)
+CLOCK[0] = datetime(2026, 11, 12, 12, 0, tzinfo=B.TEH)
 FAIL_HTML[0] = True; out = run("command", ["/brief"]); FAIL_HTML[0] = False
 check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "طلا" in out[0])
 SENT.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
@@ -216,6 +217,65 @@ run("scheduled"); check("shadow: later run resolves the open entry (TP)", state(
 B.shadow_candidate = lambda cfg: (_ for _ in ()).throw(RuntimeError("boom"))
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["v"]}, regime={"code": "volatility_expansion"})
 out = run("scheduled"); check("shadow: a failing counterfactual never breaks the run", out == [] and state()["last_run_tehran"] == "2026-11-11 18:50")
+
+# ---- (j) Friday close reminder, weekend, Asia log-only, dg_offset, last_price (2026-11-14)
+B.shadow_candidate = lambda cfg: CAND[0]; B.shadow_bars = lambda since: []
+CALLS = [0]
+B.run_brief = lambda state: (CALLS.__setitem__(0, CALLS[0] + 1), copy.deepcopy(BRIEF[0]))[1]
+def fresh(**kw):
+    st = state(); st.update(shadow=[], signals_sent=[], presession_sent={}, friday_reminder_sent=None); st.pop("dg_offset", None)
+    st["day"].update(losses=0, loss_toman=0, wins=0, win_toman=0, records=[]); st.update(kw); json.dump(st, open(B.STATE_JSON, "w"))
+fresh(); BRIEF[0] = mk_brief()
+CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
+check("Friday 22:00 (before the cutoff): normal signal", len(out) == 1 and "فروش طلا" in out[0])
+fresh(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); CALLS[0] = 0; out = run("scheduled")
+check("Friday 23:30: one short close reminder (flat by 01:30), no signal, no analysis", len(out) == 1 and "ورود جدید بسته است" in out[0] and "۰۱:۳۰" in out[0] and
+      "<code>" not in out[0] and len([l for l in out[0].split("\n") if l.strip()]) == 2 and CALLS[0] == 0 and state()["signals_sent"] == [])
+CLOCK[0] = datetime(2026, 11, 13, 23, 45, tzinfo=B.TEH); a1 = run("scheduled")
+CLOCK[0] = datetime(2026, 11, 14, 0, 45, tzinfo=B.TEH); a2 = run("scheduled")
+check("close reminder sent once (23:45 and Saturday 00:45 silent)", a1 == [] and a2 == [])
+fresh(); CLOCK[0] = datetime(2026, 7, 17, 23, 30, tzinfo=B.TEH); out = run("scheduled")
+check("summer Friday 23:30: reminder says flat by 00:30", len(out) == 1 and "۰۰:۳۰" in out[0])
+fresh(); BRIEF[0] = mk_brief(session_entry={"blocked": True, "friday_window": True}, decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
+CLOCK[0] = datetime(2026, 11, 14, 0, 45, tzinfo=B.TEH); out = run("command", ["/scan"])
+check("Saturday 00:45 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
+BRIEF[0] = mk_brief()
+for when, nm in [(datetime(2026, 11, 14, 1, 45, tzinfo=B.TEH), "Saturday 01:45"), (datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), "Saturday noon"),
+                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 2, 0, tzinfo=B.TEH), "Monday 02:00")]:
+    CLOCK[0] = when; CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
+    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 02:30), no analysis",
+          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۲:۳۰" in x for x in out) and CALLS[0] == 0)
+for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
+    CLOCK[0] = when; CALLS[0] = 0
+    check(f"weekend scheduled run {when:%a %H:%M}: silent, no analysis", run("scheduled") == [] and CALLS[0] == 0)
+check("daily break is not a weekend closure; weekday market open", not B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
+      not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
+# Asia: log-only
+check("Asia window 03:30-11:15 weekdays only", B.in_asia(datetime(2026, 11, 16, 3, 30, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 16, 3, 29, tzinfo=B.TEH)) and
+      not B.in_asia(datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH)) and B.in_asia(datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 14, 9, 0, tzinfo=B.TEH)))
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 9, 4, tzinfo=B.TEH); out = run("scheduled"); sh = state()["shadow"]
+check("Asia 09:04 valid SELL: nothing sent, logged as shadow (session=asia, gate asia), no signal lock",
+      out == [] and len(sh) == 1 and sh[0]["session"] == "asia" and sh[0]["gates"] == ["asia"] and sh[0]["side"] == "SELL" and state()["signals_sent"] == [])
+fresh(); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["news"]}, plan=None, sizing=None, regime={"code": "news_abnormal"},
+                             news_window={"inside": True, "action": "block", "tier": "B", "end": "2026-11-16 09:30"})
+CAND[0] = cand(); out = run("scheduled"); sh = state()["shadow"]
+check("Asia news-blocked setup: logged with session=asia, nothing sent", out == [] and len(sh) == 1 and sh[0]["gates"] == ["news"] and sh[0]["session"] == "asia")
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH); out = run("scheduled")
+check("Asia 11:00: no pre-session brief, no signal", out == [] and state()["presession_sent"] == {})
+fresh(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
+check("11:15 (Asia over): signal + London brief as before", len(out) == 2 and any("فروش طلا" in x for x in out) and any("لندن" in x for x in out) and not state()["shadow"])
+fresh(); CLOCK[0] = datetime(2026, 11, 16, 9, 0, tzinfo=B.TEH); out = run("command", ["/scan"])
+check("/scan on request in Asia still answers (only scheduled runs are silent)", len(out) == 1)
+# dg_offset from bot_state
+fresh(dg_offset=0.5); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); out = run("scheduled")
+check("dg_offset 0.5 from state: signal prices = bid + 0.5", len(out) == 1 and "<code>3880.5</code>" in out[0] and "<code>3876.5</code>" in out[0])
+check("dg_offset passed to brief.py (env) and load_config honours it", os.environ.get("DG_OFFSET_USD") == "0.5" and DG.load_config()["price_offset_usd"] == 0.5)
+fresh(dg_offset="bad"); B.CFG = cfg = DG.load_config(); os.environ.pop("DG_OFFSET_USD", None); cfg2 = B.apply_offset({"dg_offset": 9}, DG.load_config())
+check("invalid dg_offset ignored (default 0.3 stays)", cfg2["price_offset_usd"] == 0.3 and B.apply_offset({"dg_offset": "x"}, DG.load_config())["price_offset_usd"] == 0.3)
+fresh(dg_offset=0.4); CLOCK[0] = datetime(2026, 11, 16, 9, 30, tzinfo=B.TEH); run("scheduled")
+check("shadow entry records the offset in use (0.4)", state()["shadow"][-1]["offset"] == 0.4)
+os.environ.pop("DG_OFFSET_USD", None); B.CFG = cfg = DG.load_config()
+check("last_price stored for the /trade check", state()["last_price"] == {"bid": 3880.0, "at": "2026-11-16 09:30"})
 
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)
