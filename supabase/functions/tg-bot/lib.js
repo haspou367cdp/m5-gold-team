@@ -335,14 +335,18 @@ export async function tg(env, method, body) {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return r.json().catch(() => ({ ok: false }));
 }
-export async function send(env, text) {
+export function channelChat(s) {
+  const id = s && s.channel_id != null && s.channel_id !== "" ? String(s.channel_id).trim() : "";
+  return id && id !== String(CHAT_ID) ? id : "";
+}
+export async function send(env, text, chatId = CHAT_ID) {
   const html = render(text);
-  let r = await tg(env, "sendMessage", { chat_id: CHAT_ID, text: html, parse_mode: "HTML", disable_web_page_preview: true });
-  if (!r.ok) {  // never lose a message over formatting
+  let r = await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", disable_web_page_preview: true });
+  if (!r || !r.ok) {  // never lose a message over formatting
     const plain = html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-    r = await tg(env, "sendMessage", { chat_id: CHAT_ID, text: plain, disable_web_page_preview: true });
+    r = await tg(env, "sendMessage", { chat_id: chatId, text: plain, disable_web_page_preview: true });
   }
-  return !!r.ok;
+  return !!(r && r.ok);
 }
 export async function dispatch(env, mode) {
   if (!env.GH_DISPATCH_TOKEN) return { ok: false, why: "no GH_DISPATCH_TOKEN" };

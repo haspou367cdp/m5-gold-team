@@ -92,8 +92,16 @@ def tg(method, **params):
             time.sleep(2)
     return None
 
-def send(text):
-    if not CHAT:
+def channel_chat(state=None):
+    """Mirror target from bot_state.channel_id (the BAROBAX group). Empty if unset or equal to the owner chat."""
+    raw = (state or {}).get("channel_id")
+    if raw is None or raw == "":
+        return ""
+    cid = str(raw).strip()
+    return cid if cid and cid != str(CHAT) else ""
+
+def send_chat(chat, text):
+    if not chat:
         print("[no chat id] message not sent:\n" + text)
         return False
     text = render(text)
@@ -102,15 +110,25 @@ def send(text):
         cut = text.rfind("\n", 0, 3900) if len(text) > 3900 else len(text)
         cut = cut if cut > 0 else min(len(text), 3900)
         part, text = text[:cut], text[cut:].lstrip("\n")
-        r = tg("sendMessage", chat_id=CHAT, text=part, parse_mode="HTML", disable_web_page_preview="true")
+        r = tg("sendMessage", chat_id=chat, text=part, parse_mode="HTML", disable_web_page_preview="true")
         good = bool(r and r.get("ok"))
         if os.environ.get("BOT_ECHO") == "1":
             print("----- sent text -----\n" + part + "\n---------------------")
         if not good:  # never lose a message over formatting
-            r = tg("sendMessage", chat_id=CHAT, text=html.unescape(re.sub(r"<[^>]+>", "", part)), disable_web_page_preview="true")
+            r = tg("sendMessage", chat_id=chat, text=html.unescape(re.sub(r"<[^>]+>", "", part)), disable_web_page_preview="true")
             good = bool(r and r.get("ok"))
         print(f"telegram send: {'ok message_id=' + str(r['result']['message_id']) if good else 'FAILED ' + str((r or {}).get('description'))}")
         ok = ok and good
+    return ok
+
+def send(text, *, also=None):
+    """Send to the owner. If also is set, also try that chat; a failure there never changes the owner result."""
+    ok = send_chat(CHAT, text)
+    if also and str(also) != str(CHAT):
+        try:
+            send_chat(also, text)
+        except Exception as e:
+            print(f"telegram group send failed: {type(e).__name__}")
     return ok
 
 # ---------------- news calendar ----------------
@@ -727,7 +745,7 @@ def main():
         if key in [x["key"] for x in state["signals_sent"]] and not on_request:
             print("signal already sent:", key)
             return False
-        ok = send(signal_msg(b, plan, sizing, state, cfg))
+        ok = send(signal_msg(b, plan, sizing, state, cfg), also=channel_chat(state))
         if ok and key not in [x["key"] for x in state["signals_sent"]]:
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
         return ok
@@ -738,9 +756,9 @@ def main():
             # Weekend: never re-analyse. Serve the last stored snapshot (with its age) or the closed line.
             if closed:
                 snap = state.get("levels")
-                send(levels_card({"levels": snap}, state) if snap else closed_line(now_teh(), cfg))
+                send(levels_card({"levels": snap}, state) if snap else closed_line(now_teh(), cfg), also=channel_chat(state))
             else:
-                send(levels_card(get_brief(), state))
+                send(levels_card(get_brief(), state), also=channel_chat(state))
         elif closed:   # queued just before the close: never analyse stale weekend data
             send(closed_line(now_teh(), cfg))
         elif c == "/brief":
@@ -785,7 +803,7 @@ def main():
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"
                 if in_window(name, t) and not state["presession_sent"].get(tag):
-                    if send(presession_brief(b, state, name)):
+                    if send(presession_brief(b, state, name), also=channel_chat(state)):
                         state["presession_sent"][tag] = True
     state["last_run_tehran"] = t.strftime("%Y-%m-%d %H:%M")
     save_state(state)

@@ -12,12 +12,14 @@ import level_view as LVIEW
 
 JOURNAL = f"{B.ROOT}/journal.csv"
 j_before = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
-SENT, FAIL_HTML = [], [False]
+SENT, SENT_TO, FAIL_HTML, FAIL_CHANNEL = [], [], [False], [False]
 def fake_tg(method, **p):
     if method == "sendMessage":
+        if str(p.get("chat_id")) != str(B.CHAT) and FAIL_CHANNEL[0]:
+            return {"ok": False, "description": "Forbidden: bot is not a member"}
         if FAIL_HTML[0] and p.get("parse_mode") == "HTML":
             return {"ok": False, "description": "Bad Request: can't parse entities"}
-        SENT.append(p["text"]); return {"ok": True, "result": {"message_id": len(SENT)}}
+        SENT.append(p["text"]); SENT_TO.append(str(p["chat_id"])); return {"ok": True, "result": {"message_id": len(SENT)}}
 B.tg = fake_tg
 CLOCK = [datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)]   # Wednesday
 B.now_teh = lambda: CLOCK[0]
@@ -89,7 +91,7 @@ def check(name, cond):
 NEXT_ID = [1]
 def run(mode="scheduled", cmds=()):
     """cmds = commands queued by the Cloudflare Worker (pending_cmds in the pulled state)."""
-    SENT.clear()
+    SENT.clear(); SENT_TO.clear()
     if cmds:
         s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
         for c in cmds:
@@ -175,7 +177,7 @@ r = B.render("**x** <script> & `1.5` 2.5"); check("HTML escaped", "&lt;script&gt
 CLOCK[0] = datetime(2026, 11, 12, 12, 0, tzinfo=B.TEH)
 FAIL_HTML[0] = True; out = run("command", ["/brief"]); FAIL_HTML[0] = False
 check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "طلا" in out[0])
-SENT.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
+SENT.clear(); SENT_TO.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
 check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) <= 4096 for x in SENT) and all(x.split("\n")[-1].startswith("\u200fخط") for x in SENT))
 
 # ---- (h) /brief vs /scan; day high/low from candles; nearest levels skip ones glued to price
@@ -296,7 +298,7 @@ B.shadow_candidate = lambda cfg: CAND[0]; B.shadow_bars = lambda since: []
 CALLS = [0]
 B.run_brief = lambda state: (CALLS.__setitem__(0, CALLS[0] + 1), copy.deepcopy(BRIEF[0]))[1]
 def fresh(**kw):
-    st = state(); st.update(shadow=[], signals_sent=[], presession_sent={}, friday_reminder_sent=None); st.pop("dg_offset", None)
+    st = state(); st.update(shadow=[], signals_sent=[], presession_sent={}, friday_reminder_sent=None); st.pop("dg_offset", None); st.pop("channel_id", None)
     st["day"].update(losses=0, loss_toman=0, wins=0, win_toman=0, records=[]); st.update(kw); json.dump(st, open(B.STATE_JSON, "w"))
 fresh(); BRIEF[0] = mk_brief()
 CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
@@ -494,6 +496,54 @@ check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 2, 0, 
 check("Friday flag: summer cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 7, 17, 21, 30, tzinfo=B.TEH))))
 check("Friday flag: none on a Wednesday night", flag_at(datetime(2026, 11, 11, 22, 45, tzinfo=B.TEH)) == [])
 CLOCK[0] = _c
+
+
+# ---- group mirror: signals, 11:15/16:15 briefs and /levels only
+GID, OWNER = "-1001958445009", "111"
+def with_group(**kw):
+    fresh(**kw)
+    st = state(); st["channel_id"] = GID; json.dump(st, open(B.STATE_JSON, "w"))
+
+BRIEF[0] = mk_brief(); B.run_brief = lambda state: (CALLS.__setitem__(0, CALLS[0] + 1), copy.deepcopy(BRIEF[0]))[1]
+with_group(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
+check("signal is mirrored to the group, same text",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "فروش طلا" in out[0])
+with_group(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); CALLS[0] = 0; out = run("scheduled")
+check("Friday reminder stays private",
+      len(out) == 1 and SENT_TO == [OWNER] and "ورود جدید بسته است" in out[0] and CALLS[0] == 0)
+CLOCK[0] = datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH)
+snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
+st = state(); st["channel_id"] = GID; st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
+out = run("command", ["/levels"])
+check("/levels is mirrored to the group, same text",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "سن داده" in out[0] and CALLS[0] == 0)
+CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
+check("/scan and /brief closed lines stay private",
+      len(out) == 2 and SENT_TO == [OWNER, OWNER] and all("بازار بسته است" in x for x in out) and CALLS[0] == 0)
+CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
+st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
+out = run("command", ["/brief"])
+check("/brief stays private", len(out) == 1 and SENT_TO == [OWNER] and "خلاصه‌ی بازار" in out[0])
+out = run("command", ["/scan"])
+check("/scan no-trade stays private", len(out) == 1 and SENT_TO == [OWNER] and "معامله نه" in out[0])
+CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
+st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
+out = run("scheduled")
+check("pre-session brief is mirrored to the group, same text",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "نیویورک" in out[0])
+with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
+check("11:15 signal and London brief are both mirrored",
+      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and out[0] == out[1] and "لندن" in out[2] and out[2] == out[3])
+out = run("test")
+check("sample signal stays private", len(out) == 1 and SENT_TO == [OWNER] and "نمونه" in out[0])
+FAIL_CHANNEL[0] = True
+with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
+FAIL_CHANNEL[0] = False
+check("group send failure does not block the owner's signal",
+      len(out) == 1 and SENT_TO == [OWNER] and "فروش طلا" in out[0] and state()["signals_sent"])
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
+check("no channel_id means the signal stays with the owner only", len(out) == 1 and SENT_TO == [OWNER] and "فروش طلا" in out[0])
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

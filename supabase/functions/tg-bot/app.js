@@ -4,9 +4,9 @@
 //   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
-import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine } from "./lib.js";
+import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat } from "./lib.js";
 
-export const BUILD = "2026-11-14-levels-trend";
+export const BUILD = "2026-11-14-group-mirror";
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
@@ -50,9 +50,13 @@ export function makeApp(cfg) {
     if (!env.TELEGRAM_BOT_TOKEN || (req.headers.get("x-telegram-bot-api-secret-token") || "") !== env.WEBHOOK)
       return new Response("forbidden", { status: 403 });
     const u = await req.json();
+    if (u.channel_post || u.edited_channel_post) return new Response("ok");
     const m = u.message || {};
+    const chat = m.chat || {};
     const text = (m.text || "").trim();
-    if (String((m.chat || {}).id || "") !== CHAT_ID || !text.startsWith("/")) return new Response("ok");
+    // Commands only from the owner's private chat. Ignore groups, channels, and everyone else. Never reply there.
+    if (["group", "supergroup", "channel"].includes(chat.type)) return new Response("ok");
+    if (String(chat.id || "") !== CHAT_ID || !text.startsWith("/")) return new Response("ok");
     const res = await mutate(async (s) => {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
@@ -64,6 +68,8 @@ export function makeApp(cfg) {
         if (!already) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full });
         r.recent = already && !!s.last_dispatch && Date.now() - s.last_dispatch < 90000;
         if (!r.recent) s.last_dispatch = Date.now();
+      } else {
+        r.mirror = channelChat(s);
       }
       return r;
     });
@@ -75,6 +81,10 @@ export function makeApp(cfg) {
       if (!d.ok) await mutate(async (s) => { s.last_dispatch = 0; s.last_dispatch_error = d.why; return true; });
     } else {
       await send(env, res.reply);
+      const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+      if (cmd === "/levels" && res.mirror) {
+        try { await send(env, res.reply, res.mirror); } catch { /* a group failure must never break the owner's reply */ }
+      }
     }
     return new Response("ok");
   }

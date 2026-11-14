@@ -1,13 +1,13 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
 const DB = { row: { state: { equity_toman: 2085600, signals_sent: [], presession_sent: { "2026-11-13-pm": true } }, news: { windows: [] }, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
 const SENT = [], DISPATCHED = [];
-let failHtml = false, ghStatus = 204, raceOnce = false;
+let failHtml = false, failGroup = false, ghStatus = 204, raceOnce = false;
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
@@ -33,6 +33,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (url.includes("api.telegram.org")) {
     const b = JSON.parse(init.body);
     if (url.endsWith("/sendMessage")) {
+      if (failGroup && String(b.chat_id) === "-1001958445009") return J({ ok: false, description: "Forbidden" });
       if (failHtml && b.parse_mode) return J({ ok: false });
       SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } });
     }
@@ -65,7 +66,7 @@ async function tgSend(text, chat = 45639251, hdr = DB.vault.tg_webhook_secret) {
   SENT.length = 0;
   const r = await app(new Request(FN + "/tg", { method: "POST", headers: { "x-telegram-bot-api-secret-token": hdr },
     body: JSON.stringify({ update_id: uid++, message: { chat: { id: chat }, text } }) }), jw);
-  return { status: r.status, out: SENT.map((x) => x.text) };
+  return { status: r.status, out: SENT.map((x) => x.text), chats: SENT.map((x) => String(x.chat_id)) };
 }
 const st = () => DB.row.state;
 
@@ -256,4 +257,58 @@ check("/shadow: Asia line with its own counts; empty Asia says so", shadowMsg(as
   shadowMsg({ shadow: [asiaS.shadow[1]] }).includes("آسیا: هنوز موردی ثبت نشده") && !/زیان|قوی/.test(shadowMsg(asiaS)));
 check("/help lists /offset; no زیان or قوی", HELP.includes("`/offset`") && !/زیان|قوی/.test(HELP));
 check("OIDC: tampered payload rejected", !(await verifyOidc(new Request("https://x", { headers: { authorization: "Bearer " + t.split(".")[0] + "." + enc({ ...good, x: 1 }) + "." + t.split(".")[2] } }), jw)));
+
+// ---- group mirror (BAROBAX / channel_id): only /levels from the private chat
+const GID = "-1001958445009";
+check("channelChat empty without a distinct id", channelChat({}) === "" && channelChat({ channel_id: "" }) === "" && channelChat({ channel_id: "45639251" }) === "");
+check("channelChat reads bot_state", channelChat({ channel_id: GID }) === GID && channelChat({ channel_id: -1001958445009 }) === GID);
+const vG = DB.row.version;
+DB.row.state.channel_id = GID;
+CLOCK = U("2026-11-11T10:30:00Z");
+async function tgUpdate(update) {
+  SENT.length = 0;
+  const r = await app(new Request(FN + "/tg", { method: "POST", headers: { "x-telegram-bot-api-secret-token": DB.vault.tg_webhook_secret },
+    body: JSON.stringify({ update_id: uid++, ...update }) }), jw);
+  return { status: r.status, out: SENT.map((x) => x.text), chats: SENT.map((x) => String(x.chat_id)) };
+}
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/levels" } });
+check("owner /levels in the group is ignored", r.out.length === 0 && DB.row.version === vG);
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/status" } });
+check("owner /status in the group is ignored", r.out.length === 0 && DB.row.version === vG);
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, text: "TEST2" } });
+check("plain group message is ignored", r.out.length === 0);
+r = await tgUpdate({ channel_post: { chat: { id: Number(GID), type: "channel", title: "BAROBAX" }, text: "/levels" } });
+check("channel_post updates are ignored", r.out.length === 0 && DB.row.version === vG);
+DISPATCHED.length = 0; DB.row.state.last_dispatch = 0; DB.row.state.pending_cmds = [];
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("private /levels is mirrored to the group, same text", r.out.length === 2 && r.chats[0] === "45639251" && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("سطوح") && DISPATCHED.length === 0);
+r = await tgSend("/status");
+check("private /status stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("وضعیت"));
+r = await tgSend("/help");
+check("private /help stays private", r.out.length === 1 && r.chats.every((c) => c === "45639251"));
+day0(); r = await tgSend("/trade sell 3914.07 3909.61 1");
+check("private /trade stays private", r.out.length === 1 && r.chats[0] === "45639251");
+DISPATCHED.length = 0; DB.row.state.last_dispatch = 0; DB.row.state.pending_cmds = [];
+r = await tgSend("/scan");
+check("private /scan ack stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی"));
+r = await tgSend("/brief");
+check("private /brief ack stays private", r.out.length === 1 && r.chats[0] === "45639251");
+DB.row.state.pending_cmds = []; DB.row.state.last_dispatch = 0; DISPATCHED.length = 0;
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:00:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("stale /levels ack stays private (not mirrored)", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1);
+CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0;
+DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOCK };
+r = await tgSend("/levels");
+check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("سن داده") && DISPATCHED.length === 0);
+r = await tgSend("/scan");
+check("Saturday /scan closed line stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("بازار بسته است"));
+CLOCK = U("2026-11-11T10:30:00Z");
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
+failGroup = true; r = await tgSend("/levels"); failGroup = false;
+check("group send failure does not block the owner's /levels", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح"));
+const kept = st().channel_id;
+await gh("/state", "POST", { patch: { channel_id: "999", last_price: { bid: 3911, at: "2026-11-11 14:00" } }, done_cmds: [] });
+check("GitHub may not overwrite channel_id", st().channel_id === kept && st().last_price.bid === 3911);
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);
