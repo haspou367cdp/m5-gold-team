@@ -241,13 +241,18 @@ CLOCK[0] = datetime(2026, 11, 14, 0, 45, tzinfo=B.TEH); out = run("command", ["/
 check("Saturday 00:45 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
 BRIEF[0] = mk_brief()
 for when, nm in [(datetime(2026, 11, 14, 1, 45, tzinfo=B.TEH), "Saturday 01:45"), (datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), "Saturday noon"),
-                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 2, 0, tzinfo=B.TEH), "Monday 02:00")]:
+                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 1, 15, tzinfo=B.TEH), "Monday 01:15")]:
     CLOCK[0] = when; CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
-    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 02:30), no analysis",
-          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۲:۳۰" in x for x in out) and CALLS[0] == 0)
+    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 01:30), no analysis",
+          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۱:۳۰" in x for x in out) and CALLS[0] == 0)
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
     check(f"weekend scheduled run {when:%a %H:%M}: silent, no analysis", run("scheduled") == [] and CALLS[0] == 0)
+check("forex open Sunday 17:00 NY: Monday 01:30 Tehran open, 01:29 closed; summer 00:30; close Friday 17:00 NY = Saturday 01:30",
+      DG.forex_open(datetime(2026, 11, 16, 1, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 1, 29, tzinfo=B.TEH), cfg) and
+      DG.forex_open(datetime(2026, 7, 20, 0, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 7, 20, 0, 29, tzinfo=B.TEH), cfg) and
+      DG.forex_open(datetime(2026, 11, 14, 1, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 14, 1, 30, tzinfo=B.TEH), cfg) and
+      DG.session_entry_block(datetime(2026, 11, 13, 20, 0, tzinfo=B.TEH), cfg)["close_tehran"] == "2026-11-14 01:30")
 check("daily break is not a weekend closure; weekday market open", not B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
       not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
 # Asia: log-only

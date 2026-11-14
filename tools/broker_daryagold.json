@@ -57,13 +57,13 @@
     "kind": "forex",
     "timezone": "America/New_York",
     "open_day": 6,
-    "open": "18:00",
+    "open": "17:00",
     "close_day": 4,
     "close": "17:00",
     "daily_break_start": "17:00",
     "daily_break_end": "18:00",
     "no_new_entries_hours_before_friday_close": 2,
-    "note": "DaryaGold follows forex/gold hours (Sun 18:00 NY open to Fri 17:00 NY close, DST-aware). Overnight weekday holds are allowed; there is no daily 22:30/00:30 cutoff. Friday only: no new entries from 2 hours before 17:00 NY (23:30 Tehran in US winter) and all trades must be closed before Friday 17:00 NY (01:30 Tehran in US winter)."
+    "note": "DaryaGold follows forex/gold hours (Sun 17:00 NY open = Mon 01:30 Tehran in US winter / 00:30 in summer, to Fri 17:00 NY close = Sat 01:30 / 00:30 Tehran, DST-aware; owner confirmed 2026-11-14: exactly like forex). Overnight weekday holds are allowed; there is no daily 22:30/00:30 cutoff. Friday only: no new entries from 2 hours before 17:00 NY (23:30 Tehran in US winter) and all trades must be closed before Friday 17:00 NY (01:30 Tehran in US winter)."
   },
   "news_block_tiers": [
     "A",

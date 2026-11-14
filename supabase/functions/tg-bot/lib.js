@@ -23,7 +23,7 @@ export function teh(d = new Date()) {
 }
 
 // ---------------- forex hours (DaryaGold = forex, DST via New York; tools/broker_daryagold.json session) ----------------
-// Open Sunday 18:00 NY, close Friday 17:00 NY, daily break 17:00-18:00 NY.
+// Open Sunday 17:00 NY (exactly like forex), close Friday 17:00 NY, weekday daily break 17:00-18:00 NY.
 const NY_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 function nyClock(d) {
@@ -33,7 +33,7 @@ function nyClock(d) {
 export function forexOpen(d = new Date()) {
   const { wd, min } = nyClock(d);
   if (wd === 6) return false;
-  if (wd === 0) return min >= 18 * 60;
+  if (wd === 0) return min >= 17 * 60;
   if (wd === 5) return min < 17 * 60;
   return !(min >= 17 * 60 && min < 18 * 60);
 }
@@ -47,7 +47,7 @@ export function reopenAt(d = new Date()) {
 const FA_WD = ["یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه"];
 export function closedLine(d = new Date()) {
   const r = teh(reopenAt(d));
-  return `🔒 بازار بسته است؛ بازگشایی ${FA_WD[r.dow]} ${r.hm}`;
+  return `🔒 بازار بسته است؛ بازگشایی ${FA_WD[r.dow]} ${faNum(r.hm)}`;   // Persian digits, as Telegram shows them
 }
 
 // ---------------- formatting (port of bot/bot.py) ----------------

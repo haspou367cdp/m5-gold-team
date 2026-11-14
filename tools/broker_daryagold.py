@@ -355,7 +355,7 @@ def session_cfg(cfg=None):
     return {
         "tz": ZoneInfo(s.get("timezone") or "America/New_York"),
         "open_day": int(s.get("open_day", 6)),
-        "open": _hm(s.get("open"), "18:00"),
+        "open": _hm(s.get("open"), "17:00"),
         "close_day": int(s.get("close_day", 4)),
         "close": _hm(s.get("close"), "17:00"),
         "break_start": _hm(s.get("daily_break_start"), "17:00"),
@@ -365,7 +365,7 @@ def session_cfg(cfg=None):
 
 
 def forex_open(now=None, cfg=None):
-    """True while the forex/gold session is open (Sun 18:00 NY to Fri 17:00 NY, daily break excluded)."""
+    """True while the forex/gold session is open (Sun 17:00 NY to Fri 17:00 NY, daily break excluded)."""
     sc = session_cfg(cfg)
     t = now or datetime.now(UTC)
     if t.tzinfo is None:
