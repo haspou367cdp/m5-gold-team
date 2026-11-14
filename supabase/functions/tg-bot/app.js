@@ -6,7 +6,7 @@
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
 
-export const BUILD = "2026-11-14-group-cards";
+export const BUILD = "2026-11-14-group-toggle";
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)

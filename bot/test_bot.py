@@ -298,7 +298,7 @@ B.shadow_candidate = lambda cfg: CAND[0]; B.shadow_bars = lambda since: []
 CALLS = [0]
 B.run_brief = lambda state: (CALLS.__setitem__(0, CALLS[0] + 1), copy.deepcopy(BRIEF[0]))[1]
 def fresh(**kw):
-    st = state(); st.update(shadow=[], signals_sent=[], presession_sent={}, friday_reminder_sent=None); st.pop("dg_offset", None); st.pop("channel_id", None)
+    st = state(); st.update(shadow=[], signals_sent=[], presession_sent={}, friday_reminder_sent=None); st.pop("dg_offset", None); st.pop("channel_id", None); st.pop("group_enabled", None)
     st["day"].update(losses=0, loss_toman=0, wins=0, win_toman=0, records=[]); st.update(kw); json.dump(st, open(B.STATE_JSON, "w"))
 fresh(); BRIEF[0] = mk_brief()
 CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
@@ -579,6 +579,31 @@ check("public_card keeps direction, prices and unit size; drops risk in toman",
 half = "نیم واحد · ریسک 80 هزار تومان · نسبت 1.9"
 check("public_card keeps نیم واحد when stripping risk",
       B.public_card("signal", half) == "نیم واحد · نسبت 1.9")
+
+
+check("group_enabled defaults to on", B.group_enabled({}) and B.group_enabled(None) and B.group_enabled({"group_enabled": True}) and not B.group_enabled({"group_enabled": False}))
+check("channel_chat is empty when group sending is off",
+      B.channel_chat({"channel_id": GID, "group_enabled": False}) == "" and B.channel_chat({"channel_id": GID}) == GID)
+with_group(); st = state(); st["group_enabled"] = False; json.dump(st, open(B.STATE_JSON, "w"))
+BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
+check("signal stays private while group sending is off",
+      len(out) == 1 and SENT_TO == [OWNER] and "فروش طلا" in out[0])
+CLOCK[0] = datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH)
+snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
+st = state(); st["channel_id"] = GID; st["group_enabled"] = False; st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
+out = run("command", ["/levels", "/scan", "/brief"])
+check("queued /levels /scan /brief stay private while group sending is off",
+      len(out) == 3 and SENT_TO == [OWNER, OWNER, OWNER] and CALLS[0] == 0)
+CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
+st = state(); st["channel_id"] = GID; st["group_enabled"] = False; st["presession_sent"] = {}; st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
+out = run("scheduled")
+check("pre-session brief stays private while group sending is off",
+      len(out) == 1 and SENT_TO == [OWNER] and "نیویورک" in out[0])
+st = state(); st["group_enabled"] = True; st["presession_sent"] = {}; st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
+out = run("scheduled")
+check("pre-session brief is mirrored again when group sending is on",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[1] and "موجودی" not in out[1])
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

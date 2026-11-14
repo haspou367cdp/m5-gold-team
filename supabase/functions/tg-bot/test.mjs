@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -83,7 +83,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 12 commands (incl. /levels and /offset), same wording as /help, no examples or digits", o.commands && DB.menu.length === 12 && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") &&
+check("setup menu: 14 commands (incl. /levels, /offset, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 14 && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -255,7 +255,7 @@ const asiaS = { shadow: [{ at: "2026-11-11 09:04", side: "SELL", entry: 3900, sl
   { at: "2026-11-11 15:00", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["news"], status: "sl", R: -1, toman: -174000 }] };
 check("/shadow: Asia line with its own counts; empty Asia says so", shadowMsg(asiaS).includes("آسیا: بسته‌شده 1 · هدف 1 · حد ضرر 0 · جمع +2.0R") &&
   shadowMsg({ shadow: [asiaS.shadow[1]] }).includes("آسیا: هنوز موردی ثبت نشده") && !/زیان|قوی/.test(shadowMsg(asiaS)));
-check("/help lists /offset; no زیان or قوی", HELP.includes("`/offset`") && !/زیان|قوی/.test(HELP));
+check("/help lists /offset, /groupoff and /groupon; no زیان or قوی", HELP.includes("`/offset`") && HELP.includes("`/groupoff`") && HELP.includes("`/groupon`") && HELP.includes("قطع موقت ارسال به گروه") && HELP.includes("وصل دوباره ارسال به گروه") && !/زیان|قوی/.test(HELP));
 check("OIDC: tampered payload rejected", !(await verifyOidc(new Request("https://x", { headers: { authorization: "Bearer " + t.split(".")[0] + "." + enc({ ...good, x: 1 }) + "." + t.split(".")[2] } }), jw)));
 
 // ---- group mirror (BAROBAX / channel_id): only /levels from the private chat
@@ -332,4 +332,32 @@ check("group send failure does not block the owner's /shadow", r.out.length === 
 const kept = st().channel_id;
 await gh("/state", "POST", { patch: { channel_id: "999", last_price: { bid: 3911, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may not overwrite channel_id", st().channel_id === kept && st().last_price.bid === 3911);
+check("groupEnabled defaults to on", groupEnabled({}) && groupEnabled({ group_enabled: true }) && groupEnabled({ group_enabled: null }) && !groupEnabled({ group_enabled: false }));
+check("channelChat is empty when group sending is off", channelChat({ channel_id: GID, group_enabled: false }) === "" && channelChat({ channel_id: GID }) === GID);
+CLOCK = U("2026-11-11T10:30:00Z");
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
+DB.row.state.group_enabled = undefined;
+r = await tgSend("/groupoff");
+check("/groupoff is private, sets the flag, and uses the pause line", r.out.length === 1 && r.chats[0] === "45639251" && st().group_enabled === false && r.out[0].includes("ارسال به گروه موقتاً قطع شد"));
+r = await tgSend("/status");
+check("/status shows group sending is off", r.out.length === 1 && r.out[0].includes("ارسال به گروه: قطع") && !r.out[0].includes("ارسال به گروه: وصل"));
+DISPATCHED.length = 0;
+r = await tgSend("/levels");
+check("/levels is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح") && DISPATCHED.length === 0);
+r = await tgSend("/shadow");
+check("/shadow is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251");
+const geOff = st().group_enabled;
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/groupon" } });
+check("/groupon in the group is ignored", r.out.length === 0 && st().group_enabled === geOff);
+r = await tgSend("/groupon", 999);
+check("/groupon from another chat is ignored", r.out.length === 0 && st().group_enabled === false);
+r = await tgSend("/groupon");
+check("/groupon is private, clears the flag, and uses the resume line", r.out.length === 1 && r.chats[0] === "45639251" && st().group_enabled === true && r.out[0].includes("ارسال به گروه دوباره وصل شد"));
+r = await tgSend("/status");
+check("/status shows group sending is on", r.out.length === 1 && r.out[0].includes("ارسال به گروه: وصل"));
+r = await tgSend("/levels");
+check("/levels is mirrored again after /groupon", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("سطوح"));
+const geKept = st().group_enabled;
+await gh("/state", "POST", { patch: { group_enabled: false, last_price: { bid: 3912, at: "2026-11-11 14:00" } }, done_cmds: [] });
+check("GitHub may not overwrite group_enabled", st().group_enabled === geKept && st().last_price.bid === 3912);
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

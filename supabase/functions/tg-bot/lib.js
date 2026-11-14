@@ -102,10 +102,15 @@ export const HELP = `**🤖 راهنما**
 \`/undo\`  حذف آخرین ثبت
 \`/offset\`  اختلاف قیمت دریاگلد
 
+**گروه**
+\`/groupoff\`  قطع موقت ارسال به گروه
+\`/groupon\`  وصل دوباره ارسال به گروه
+
 ~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
 export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["levels", "سطوح"], ["shadow", "سیگنال‌های ردشده"],
-  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["help", "راهنما"]]
+  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"],
+  ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
 
@@ -136,6 +141,7 @@ export function statusMsg(s) {
     `📉 امروز ${d.losses || 0} ضرر · ${d.wins || 0} سود`,
     `🎯 آخرین سیگنال: ${sig ? sig.at.slice(-5) : "هنوز نه"}`,
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
+    `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
     "⏱ بررسی خودکار دوشنبه تا جمعه، ۱۱:۱۵ تا ۲۱:۳۰"].join("\n");
 }
 export const dayCap = (s) => (Number(s.day.start_equity) || Number(s.equity_toman)) * 0.2;
@@ -267,6 +273,8 @@ export function handle(s, text, now = teh(), at = new Date()) {
     s.dg_offset_at = now.full;
     return { reply: `**🎚 اختلاف قیمت ثبت شد**\n~~از ${cur} به ${v} دلار؛ از بررسی بعدی اعمال می‌شود~~` };
   }
+  if (c === "/groupoff") { s.group_enabled = false; return { reply: "**⏸ ارسال به گروه موقتاً قطع شد.**" }; }
+  if (c === "/groupon") { s.group_enabled = true; return { reply: "**▶️ ارسال به گروه دوباره وصل شد.**" }; }
   if (c === "/shadow") return { reply: shadowMsg(s) };
   if (c === "/trade") {
     let t;
@@ -335,7 +343,11 @@ export async function tg(env, method, body) {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return r.json().catch(() => ({ ok: false }));
 }
+export function groupEnabled(s) {
+  return !s || s.group_enabled !== false;   // missing flag => sending is on
+}
 export function channelChat(s) {
+  if (!groupEnabled(s)) return "";
   const id = s && s.channel_id != null && s.channel_id !== "" ? String(s.channel_id).trim() : "";
   return id && id !== String(CHAT_ID) ? id : "";
 }

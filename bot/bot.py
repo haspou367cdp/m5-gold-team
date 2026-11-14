@@ -32,7 +32,7 @@ NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
 ASIA = ("03:30", "11:15")   # weekday Asia session (Tehran): scheduled runs only log shadow setups, never send anything
-# /help, /status, /balance, /loss, /win, /undo are answered by the Supabase Edge Function (supabase/functions/tg-bot).
+# /help, /status, /balance, /loss, /win, /undo, /groupoff, /groupon are answered by the Supabase Edge Function (supabase/functions/tg-bot).
 
 # ---------------- state ----------------
 def now_teh():
@@ -92,8 +92,14 @@ def tg(method, **params):
             time.sleep(2)
     return None
 
+def group_enabled(state=None):
+    """bot_state.group_enabled; missing flag means sending is on. Not mergeable from GitHub."""
+    return not state or state.get("group_enabled") is not False
+
 def channel_chat(state=None):
-    """Mirror target from bot_state.channel_id (the BAROBAX group). Empty if unset or equal to the owner chat."""
+    """Mirror target from bot_state.channel_id (the BAROBAX group). Empty if unset, disabled, or equal to the owner chat."""
+    if not group_enabled(state):
+        return ""
     raw = (state or {}).get("channel_id")
     if raw is None or raw == "":
         return ""
