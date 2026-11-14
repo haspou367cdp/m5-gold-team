@@ -269,10 +269,13 @@ def compute(rng=None):
         H, L = fractals(df, n, last_t - look)
         for tt, p in H: add(p, f"{name} swing high", teh(tt))
         for tt, p in L: add(p, f"{name} swing low", teh(tt))
+    # M5 is included here only so the display snapshot can read structure+EMA like the other
+    # frames. Candidates and scores above are unchanged (M5 fractals were already in C).
     out["swings"] = {nm: {"highs": [(teh(a), b) for a, b in fractals(df, 3, last_t - lk)[0][-5:]],
                           "lows": [(teh(a), b) for a, b in fractals(df, 3, last_t - lk)[1][-5:]]}
                      for nm, df, lk in (("H4", h4, pd.Timedelta(days=20)), ("H1", h1, pd.Timedelta(days=8)),
-                                        ("M15", m15, pd.Timedelta(days=2))) if df is not None and len(df) >= 10}
+                                        ("M15", m15, pd.Timedelta(days=2)),
+                                        ("M5", m5, pd.Timedelta(days=1))) if df is not None and len(df) >= 10}
     if "vwap" in out:
         add(out["vwap"]["vwap"], "VWAP"); add(out["vwap"]["vwap"] + out["vwap"]["sd"], "VWAP +1σ"); add(out["vwap"]["vwap"] - out["vwap"]["sd"], "VWAP -1σ")
     for key, kind in (("asia", "Asia VWAP"), ("london", "London VWAP"), ("ny", "NY VWAP")):

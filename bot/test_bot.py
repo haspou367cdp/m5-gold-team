@@ -60,7 +60,7 @@ def mk_levels(price_bid=3880.0, computed_at="2026-11-11 14:00:00", **kw):
     snap = {
         "computed_at_tehran": computed_at,
         "price_bid": price_bid, "price_dg": dg,
-        "trend": {"H4": {"trend": "نزولی"}, "H1": {"trend": "خنثی"}, "overall": "روند نامشخص", "disagree": True},
+        "trend": {"H4": {"trend": "نزولی"}, "H1": {"trend": "خنثی"}, "overall": "نامشخص", "verdict": "جمع‌بندی: نامشخص", "disagree": True},
         "short": {"above": above, "below": below},
         "nearest": {"above": above[0], "below": below[0]},
     }
@@ -189,7 +189,7 @@ BRIEF[0] = mk_brief(entry=3887.545, sl=3889.2, tp=3882.0, atr_m5=1.6,
 out = run("command", ["/brief"]); br = out[0] if out else ""
 check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "فروش طلا" not in br)
 check("/brief: shared levels block with Latin tap-to-copy prices", "<code>3895.3</code>" in br and "<code>3880.5</code>" in br and "۳۸۸۸٫۴" not in br)
-check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "H4 نزولی" in br and "H1 خنثی" in br and "روند نامشخص" in br)
+check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "H4 نزولی" in br and "H1 خنثی" in br and "جمع‌بندی: نامشخص" in br)
 check("/brief: no day-candle hilo and no glued-level skip line", "سقف روز" not in br and "مقاومت نزدیک" not in br and "حمایت نزدیک" not in br)
 check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
 check("/brief: balance and today's loss cap from the day's start equity", "موجودی ۲٫۹۵ میلیون" in br and "سقف ضرر امروز ۲۰۰ هزار" in br)
@@ -219,7 +219,7 @@ st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
 pre2 = run("scheduled")[0]
 def has_block(card, s=snap):
-    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "H4 نزولی", "H1 خنثی", "روند نامشخص", "سقف دیروز + سوئینگ H4"))
+    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "H4 نزولی", "H1 خنثی", "جمع‌بندی: نامشخص", "سقف دیروز + سوئینگ H4"))
 check("same levels+trend in /brief, /scan, /levels and the pre-session brief",
       has_block(br2) and has_block(sc2) and has_block(lv2) and has_block(pre2))
 check("/levels card title and no حساب footer", "سطوح" in lv2 and "موجودی" not in lv2)
@@ -396,7 +396,7 @@ check("prev-week levels are in the short view only (not injected into compute cl
       and all("Prev week" not in "".join(x.get("kinds") or []) for x in lv["levels"]))
 # H4: LH/LL + bearish EMA -> نزولی; H1: HH/HL + bullish EMA -> صعودی; disagree -> نامشخص
 check("trend: H4 down + H1 up => نامشخص (structure + EMA)",
-      snap["trend"]["H4"]["trend"] == "نزولی" and snap["trend"]["H1"]["trend"] == "صعودی" and snap["trend"]["overall"] == "روند نامشخص")
+      snap["trend"]["H4"]["trend"] == "نزولی" and snap["trend"]["H1"]["trend"] == "صعودی" and snap["trend"]["overall"] == "نامشخص" and snap["trend"]["verdict"] == "جمع‌بندی: نامشخص")
 # mixed structure -> خنثی even if EMA agrees
 lv2 = dict(lv, swings={"H4": {"highs": [(0, 3920.0), (1, 3910.0)], "lows": [(0, 3870.0), (1, 3880.0)]},
                        "H1": lv["swings"]["H1"]})
@@ -409,6 +409,77 @@ ok1, *_ = B.risk_check(mk_brief(), s, cfg, True)
 b_no = mk_brief(); b_no.pop("levels", None)
 ok2, *_ = B.risk_check(b_no, s, cfg, True)
 check("risk_check result is the same with or without the display snapshot", ok1 is True and ok1 == ok2)
+
+
+# ---- display tiers, M15/M5 trend, context line, no «زیان» in rendered text
+# relative tiers (deterministic percentiles; documented in level_view.py)
+def _item(kinds, touches, price):
+    return {"price": price, "kinds": kinds, "touches_m15_3d": touches, "label_fa": LVIEW.label_fa(kinds)}
+eq = [_item(["Round $50"], 0, 3900 + i) for i in range(6)]
+LVIEW.assign_tiers(eq)
+check("flat set B stays مهم (no خیلی مهم, no معمولی)", all(x["tag"] == "مهم" for x in eq) and len({x["display_score"] for x in eq}) == 1)
+mix = [
+    _item(["Round $50"], 0, 3800),                 # weight 2, touches 0 → 2.0  معمولی
+    _item(["Round $50"], 0, 3810),
+    _item(["H1 swing low"], 1, 3820),               # 3+0.5=3.5
+    _item(["H1 swing low"], 2, 3830),               # 4.0  مهم
+    _item(["PDH", "H4 swing high"], 2, 3840),       # 3+3+1=7.0
+    _item(["PDH", "H4 swing high", "Round $100"], 4, 3850),  # 3+3+2.5+2=10.5  خیلی مهم
+    _item(["PDH", "H4 swing high", "London high"], 8, 3860), # 3+3+2.5+2=10.5 (touch cap 4)
+]
+LVIEW.assign_tiers(mix)
+check("touch cap: 8 touches scores the same as 4", mix[-1]["display_score"] == mix[-2]["display_score"] == 10.5)
+tags = {x["tag"] for x in mix}
+check("mixed set B uses all three display tiers", tags == {"معمولی", "مهم", "خیلی مهم"})
+
+# last-close fixture (Friday 13 Nov 2026 close; captured from Dukascopy cache)
+FIX = os.path.join(os.path.dirname(__file__), "fixtures", "last_close_20261113.json")
+lv_fix = json.load(open(FIX))
+snap_fix = LVIEW.snapshot(lv_fix, cfg, now=datetime(2026, 11, 14, 6, 50, tzinfo=B.TEH))
+tc = snap_fix.get("tier_counts") or {}
+shown_tags = [r["tag"] for r in snap_fix["short"]["above"] + snap_fix["short"]["below"]]
+check("last-close set B tiers are not all equal", len(set(tc) | set(shown_tags)) >= 2 and len(tc) >= 2)
+check("last-close set B has معمولی, مهم and خیلی مهم", set(tc) == {"معمولی", "مهم", "خیلی مهم"})
+check("last-close short view is not all خیلی مهم", len(set(shown_tags)) >= 2 and shown_tags.count("خیلی مهم") < 4)
+# trend + context on that same snapshot
+check("last-close block has M15 and M5 trend plus جمع‌بندی",
+      "M15 " in snap_fix["block"] and "M5 " in snap_fix["block"] and snap_fix["block"].startswith("طلا") and "جمع‌بندی:" in snap_fix["block"])
+check("last-close context line: ATR and tight room",
+      "نوسان M5 حدود 4 دلار" in snap_fix["block"] and "تا سطح بعدی" in snap_fix["block"] and "جا کم است" in snap_fix["block"])
+# نامشخص → volatility only
+tr_ns = dict(snap_fix["trend"]); tr_ns["overall"] = "نامشخص"; tr_ns["verdict"] = "جمع‌بندی: نامشخص"
+ctx_only = LVIEW.context_line({**snap_fix, "trend": tr_ns})
+check("نامشخص context is volatility only", ctx_only == "نوسان M5 حدود 4 دلار" and "تا سطح بعدی" not in ctx_only)
+# pullback wording
+check("pullback verdict names the lower frame",
+      LVIEW.verdict_line("نزولی", "نزولی", "خنثی", "صعودی") == "جمع‌بندی: نزولی؛ M5 در اصلاح صعودی" and
+      LVIEW.verdict_line("نزولی", "نزولی", "صعودی", "صعودی") == "جمع‌بندی: نزولی؛ M15 و M5 در اصلاح صعودی" and
+      LVIEW.verdict_line("نزولی", "خنثی", "نزولی", "نزولی") == "جمع‌بندی: نامشخص")
+# room >= 2×ATR: no «جا کم است»
+wide = LVIEW.context_line({"atr_m5": 3.0, "trend": {"overall": "نزولی"},
+                           "short": {"below": [{"distance": -8.0}], "above": []}})
+check("room at least 2×ATR does not say جا کم است", "تا سطح بعدی 8 دلار" in wide and "جا کم است" not in wide)
+
+# no «زیان» in any rendered user-facing message
+s = B.load_state()
+cards = [
+    B.brief_msg(mk_brief(), s),
+    B.short_brief(mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}), s, cfg, reasons=["x"]),
+    B.levels_card(mk_brief(), s),
+    B.presession_brief(mk_brief(), s, "am"),
+    B.presession_brief(mk_brief(), s, "pm"),
+    B.signal_msg(mk_brief(), {"side": "SELL", "entry": 3880, "sl": 3881.6, "tp": 3876}, DG.size_trade(3880, 3881.6, 3876, "SELL", cfg, spread_usd=0.25), s, cfg),
+    B.closed_line(datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), cfg),
+    B.friday_reminder(datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH), cfg) or "",
+    snap_fix["block"],
+]
+cards += DG.fa_risk_lines(cfg)
+sz_bad = DG.size_trade(3880, 4000, 3870, "SELL", cfg, spread_usd=0.25)  # huge SL → reason_fa
+if sz_bad.get("reason_fa"):
+    cards.append(sz_bad["reason_fa"])
+rendered = "\n".join(B.render(c) if c else "" for c in cards) + "\n" + "\n".join(c or "" for c in cards)
+check("no «زیان» in any rendered bot/brief/risk message", "زیان" not in rendered)
+check("fa_risk_lines now says ضرر", any("ضرر حد ضرر" in (x or "") or "درگیر ضرر شود" in (x or "") for x in DG.fa_risk_lines(cfg)))
 
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)

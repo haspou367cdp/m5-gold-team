@@ -165,7 +165,7 @@ def evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=None):
     if risk_toman > budget + 1e-6:
         ok = False
         reasons.append(
-            f"زیان احتمالی {toman(risk_toman)} تومان "
+            f"ضرر احتمالی {toman(risk_toman)} تومان "
             f"({pct_of(risk_toman, equity)}٪ حساب) از سقف "
             f"{toman(budget)} تومان ({_n(cfg['risk_per_trade_pct_max'], 0)}٪) بیشتر است."
         )
@@ -539,13 +539,13 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         f"هر ۱ دلار {toman(half.get('toman_per_usd') or 40000)}) یا «یک واحد» "
         f"(وجه تضمین {toman(full.get('margin') or 1000000)}، "
         f"هر ۱ دلار {toman(full.get('toman_per_usd') or 80000)})؛ "
-        f"بزرگ‌ترین حجمی انتخاب می‌شود که زیان حد ضرر + کارمزد + هزینه اسپرد از بودجه ریسک بیشتر نشود. "
+        f"بزرگ‌ترین حجمی انتخاب می‌شود که ضرر حد ضرر + کارمزد + هزینه اسپرد از بودجه ریسک بیشتر نشود. "
         f"ورود ترجیحاً با اوردر (حد، بدون اسپرد). "
         f"حد ضرر حداقل {_n(cfg.get('min_sl_usd') or 1)} دلار. "
         f"نسبت سود به ضرر خالص بعد از کارمزد و اسپرد حداقل {_n(cfg.get('min_net_rr') or 1.5)}. "
         f"حداکثر {cfg.get('max_positions') or 1} پوزیشن باز. "
         f"توقف روز بعد از {cfg.get('max_consecutive_losses') or 3} ضرر یا {toman(day_budget)} تومان ضرر. "
-        f"حراج وقتی {liq}٪ کل پرتفو درگیر زیان شود. "
+        f"حراج وقتی {liq}٪ کل پرتفو درگیر ضرر شود. "
         f"اسپرد فعلی {cur_s} دلار / معمول این ساعت {typ_s} دلار "
         f"(حد: بیشتر از ۲ برابر معمول همین ساعت و هم‌زمان بالاتر از ۰٫۸۰ دلار → ورود ممنوع)"
         f"{flag}{known}.{fee_note} "
