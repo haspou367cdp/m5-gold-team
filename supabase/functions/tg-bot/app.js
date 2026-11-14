@@ -4,9 +4,9 @@
 //   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
-import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat } from "./lib.js";
+import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
 
-export const BUILD = "2026-11-14-group-mirror";
+export const BUILD = "2026-11-14-group-cards";
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
@@ -82,8 +82,9 @@ export function makeApp(cfg) {
     } else {
       await send(env, res.reply);
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
-      if (cmd === "/levels" && res.mirror) {
-        try { await send(env, res.reply, res.mirror); } catch { /* a group failure must never break the owner's reply */ }
+      const pub = (MIRROR_CMDS.includes(cmd) && res.mirror) ? publicReply(cmd, res.reply) : null;
+      if (pub) {
+        try { await send(env, pub, res.mirror); } catch { /* a group failure must never break the owner's reply */ }
       }
     }
     return new Response("ok");

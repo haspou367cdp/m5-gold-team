@@ -121,15 +121,36 @@ def send_chat(chat, text):
         ok = ok and good
     return ok
 
-def send(text, *, also=None):
-    """Send to the owner. If also is set, also try that chat; a failure there never changes the owner result."""
+def public_card(kind, text):
+    """Group copy of a mirrored card. Drops personal balance/loss-cap and error cards."""
+    if not text:
+        return None
+    if "داده‌ی قیمت در دسترس نیست" in text:
+        return None
+    if kind in ("brief", "presession"):
+        lines = [ln for ln in text.split("\n") if not ("موجودی" in ln and "سقف ضرر امروز" in ln)]
+        while lines and lines[-1] == "":
+            lines.pop()
+        return "\n".join(lines)
+    return text
+
+def send(text, *, also=None, also_text=None):
+    """Send to the owner. If also is set, also try that chat (also_text if given); a failure there never changes the owner result."""
     ok = send_chat(CHAT, text)
     if also and str(also) != str(CHAT):
         try:
-            send_chat(also, text)
+            body = text if also_text is None else also_text
+            if body:
+                send_chat(also, body)
         except Exception as e:
             print(f"telegram group send failed: {type(e).__name__}")
     return ok
+
+def send_public(kind, text, state):
+    """Owner gets the full card; the group gets public_card() or nothing."""
+    pub = public_card(kind, text)
+    cid = channel_chat(state) if pub is not None else ""
+    return send(text, also=cid or None, also_text=pub if cid and pub != text else None)
 
 # ---------------- news calendar ----------------
 def prepare_news(state, force=False):
@@ -760,17 +781,17 @@ def main():
             else:
                 send(levels_card(get_brief(), state), also=channel_chat(state))
         elif closed:   # queued just before the close: never analyse stale weekend data
-            send(closed_line(now_teh(), cfg))
+            send(closed_line(now_teh(), cfg), also=channel_chat(state))
         elif c == "/brief":
             b = get_brief()
-            send(brief_msg(b, state))
+            send_public("brief", brief_msg(b, state), state)
         elif c == "/scan":
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
             if ok:
                 emit_signal(b, plan, sizing, on_request=True)
             else:
-                send(short_brief(b, state, cfg, reasons=why))
+                send_public("scan", short_brief(b, state, cfg, reasons=why), state)
 
     t = now_teh()
     if a.mode == "test":
@@ -803,7 +824,7 @@ def main():
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"
                 if in_window(name, t) and not state["presession_sent"].get(tag):
-                    if send(presession_brief(b, state, name), also=channel_chat(state)):
+                    if send_public("presession", presession_brief(b, state, name), state):
                         state["presession_sent"][tag] = True
     state["last_run_tehran"] = t.strftime("%Y-%m-%d %H:%M")
     save_state(state)

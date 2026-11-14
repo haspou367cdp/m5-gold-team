@@ -1,7 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat } from "./lib.js";
+import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -303,11 +303,32 @@ DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOC
 r = await tgSend("/levels");
 check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("سن داده") && DISPATCHED.length === 0);
 r = await tgSend("/scan");
-check("Saturday /scan closed line stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("بازار بسته است"));
+check("Saturday /scan closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
+r = await tgSend("/brief");
+check("Saturday /brief closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/scan" } });
+check("owner /scan in the group is ignored", r.out.length === 0);
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/shadow" } });
+check("owner /shadow in the group is ignored", r.out.length === 0);
+DB.row.state.shadow = [{ at: "2026-11-13 18:10", side: "SELL", entry: 3894.2, sl: 3896.2, tp: 3890.2, offset: 0.3, gates: ["news"], status: "tp", R: 2, toman: 306000 },
+  { at: "2026-11-13 18:40", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["volatility", "news"], status: "sl", R: -1, toman: -174000 }];
+r = await tgSend("/shadow");
+check("private /shadow is mirrored without the toman P&L line", r.out.length === 2 && r.chats[0] === "45639251" && r.chats[1] === GID &&
+  r.out[0].includes("تومان") && r.out[0].includes("یک واحد") && !r.out[1].includes("تومان") && !r.out[1].includes("یک واحد") &&
+  r.out[1].includes("+۱٫۰R") && r.out[1].includes("<code>3894.5</code>") && r.out[1].includes("هدف ۱"));
+DB.row.state.shadow = [];
+r = await tgSend("/shadow");
+check("empty /shadow is mirrored in full (no money)", r.out.length === 2 && r.out[0] === r.out[1] && r.out[0].includes("هنوز موردی") && !r.out[0].includes("تومان"));
+check("publicReply drops toman P&L from /shadow and leaves /levels untouched",
+  publicReply("/shadow", "جمع +1.0R · یک واحد +132,000 تومان\nآسیا: بسته‌شده 1").includes("جمع +1.0R") &&
+  !publicReply("/shadow", "جمع +1.0R · یک واحد +132,000 تومان").includes("تومان") &&
+  publicReply("/levels", "سطوح") === "سطوح" && publicReply("/scan", "داده‌ی قیمت در دسترس نیست") === null);
 CLOCK = U("2026-11-11T10:30:00Z");
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
 failGroup = true; r = await tgSend("/levels"); failGroup = false;
 check("group send failure does not block the owner's /levels", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح"));
+failGroup = true; r = await tgSend("/shadow"); failGroup = false;
+check("group send failure does not block the owner's /shadow", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سیگنال‌های ردشده"));
 const kept = st().channel_id;
 await gh("/state", "POST", { patch: { channel_id: "999", last_price: { bid: 3911, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may not overwrite channel_id", st().channel_id === kept && st().last_price.bid === 3911);

@@ -518,23 +518,29 @@ out = run("command", ["/levels"])
 check("/levels is mirrored to the group, same text",
       len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "سن داده" in out[0] and CALLS[0] == 0)
 CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
-check("/scan and /brief closed lines stay private",
-      len(out) == 2 and SENT_TO == [OWNER, OWNER] and all("بازار بسته است" in x for x in out) and CALLS[0] == 0)
+check("/scan and /brief closed lines are mirrored",
+      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and out[0] == out[1] and out[2] == out[3] and
+      all("بازار بسته است" in x for x in out) and CALLS[0] == 0)
 CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 out = run("command", ["/brief"])
-check("/brief stays private", len(out) == 1 and SENT_TO == [OWNER] and "خلاصه‌ی بازار" in out[0])
+check("/brief is mirrored without balance or the daily loss cap",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "خلاصه‌ی بازار" in out[0] and "موجودی" in out[0] and "سقف ضرر امروز" in out[0] and
+      "خلاصه‌ی بازار" in out[1] and "موجودی" not in out[1] and "سقف ضرر" not in out[1] and "<code>3895.3</code>" in out[1])
 out = run("command", ["/scan"])
-check("/scan no-trade stays private", len(out) == 1 and SENT_TO == [OWNER] and "معامله نه" in out[0])
+check("/scan no-trade is mirrored, same text (no balance)",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "معامله نه" in out[0] and "موجودی" not in out[0])
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
 st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
 out = run("scheduled")
-check("pre-session brief is mirrored to the group, same text",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "نیویورک" in out[0])
+check("pre-session brief is mirrored without balance or the daily loss cap",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[0] and "موجودی" in out[0] and "سقف ضرر امروز" in out[0] and
+      "نیویورک" in out[1] and "موجودی" not in out[1] and "سقف ضرر" not in out[1])
 with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
-check("11:15 signal and London brief are both mirrored",
-      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and out[0] == out[1] and "لندن" in out[2] and out[2] == out[3])
+check("11:15 signal and London brief are both mirrored; brief balance stays private",
+      len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and out[0] == out[1] and
+      "لندن" in out[2] and "موجودی" in out[2] and "لندن" in out[3] and "موجودی" not in out[3] and "سقف ضرر" not in out[3])
 out = run("test")
 check("sample signal stays private", len(out) == 1 and SENT_TO == [OWNER] and "نمونه" in out[0])
 FAIL_CHANNEL[0] = True
@@ -544,6 +550,22 @@ check("group send failure does not block the owner's signal",
       len(out) == 1 and SENT_TO == [OWNER] and "فروش طلا" in out[0] and state()["signals_sent"])
 fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
 check("no channel_id means the signal stays with the owner only", len(out) == 1 and SENT_TO == [OWNER] and "فروش طلا" in out[0])
+
+
+BRIEF[0] = {"error": "down", "price_bid": None, "decision": {"decision": "NO TRADE", "reasons_reject": []}}
+st = state(); st["channel_id"] = GID; json.dump(st, open(B.STATE_JSON, "w"))
+CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
+out = run("command", ["/brief"])
+check("price-data error on /brief stays private",
+      len(out) == 1 and SENT_TO == [OWNER] and "داده‌ی قیمت در دسترس نیست" in out[0] and "موجودی" in out[0])
+out = run("command", ["/scan"])
+check("price-data error on /scan stays private",
+      len(out) == 1 and SENT_TO == [OWNER] and "داده‌ی قیمت در دسترس نیست" in out[0])
+br = B.brief_msg(mk_brief(), state())
+pub = B.public_card("brief", br)
+check("public_card keeps the market card and drops only the balance line",
+      "خلاصه‌ی بازار" in (pub or "") and "موجودی" in br and "موجودی" not in (pub or "") and "سقف ضرر امروز" not in (pub or ""))
+check("public_card drops error cards", B.public_card("scan", "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~") is None)
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

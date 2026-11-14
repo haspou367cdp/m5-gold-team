@@ -339,6 +339,14 @@ export function channelChat(s) {
   const id = s && s.channel_id != null && s.channel_id !== "" ? String(s.channel_id).trim() : "";
   return id && id !== String(CHAT_ID) ? id : "";
 }
+// Group copy of a mirrored card. Drops personal toman/balance and error cards; otherwise the same text.
+export const MIRROR_CMDS = ["/levels", "/scan", "/brief", "/shadow"];
+export function publicReply(cmd, text) {
+  if (!text) return null;
+  if (text.includes("داده‌ی قیمت در دسترس نیست")) return null;
+  if (cmd === "/shadow") return text.replace(/ · یک واحد [^\n]*تومان/g, "");
+  return text;
+}
 export async function send(env, text, chatId = CHAT_ID) {
   const html = render(text);
   let r = await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", disable_web_page_preview: true });
