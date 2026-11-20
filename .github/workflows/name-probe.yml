@@ -1,0 +1,17 @@
+name: name-probe
+# One-off, read-only: reads the bot name (getMe) and the group title (getChat). Sends nothing. Token stays in secrets.
+on:
+  push:
+    branches: [name-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read names
+        env:
+          TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python3 probe/names.py
