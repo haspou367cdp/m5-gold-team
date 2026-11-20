@@ -288,9 +288,15 @@ export function handle(s, text, now = teh(), at = new Date()) {
 
 // ---------------- telegram + github ----------------
 export async function tg(env, method, body) {
-  const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  return r.json().catch(() => ({ ok: false }));
+  // Bounded: a hung Bot API backend must not hold the function until its 150 s wall-clock limit (HTTP 546).
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000) });
+    return await r.json().catch(() => ({ ok: false }));
+  } catch (e) {
+    return { ok: false, description: `telegram ${method}: ${e && e.name || "error"}` };
+  }
 }
 export function groupEnabled(s) {
   return !s || s.group_enabled !== false;   // missing flag => sending is on
