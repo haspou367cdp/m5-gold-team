@@ -1,0 +1,502 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Xauscalper Zones · XAUUSD — @HDR1@
+// @HDR2@
+// @HDR3@
+// Generated from tradingview/src/template.pine by tradingview/src/build.py (@LANG@).
+//@version=6
+indicator("Xauscalper Zones · XAUUSD", shorttitle = "XSZ", overlay = true, max_lines_count = 300, max_labels_count = 300, max_boxes_count = 50, max_bars_back = 500)
+
+// ───────────────────────── @G_INPUTS@ ─────────────────────────
+const string GT = "@G_TREND@"
+string tfH4    = input.timeframe("240", "@I_TF1@", group = GT)
+string tfH1    = input.timeframe("60",  "@I_TF2@", group = GT)
+string tfM15   = input.timeframe("15",  "@I_TF3@", group = GT)
+string tfM5    = input.timeframe("5",   "@I_TF4@", group = GT)
+int    emaFast = input.int(20, "@I_EMAF@", minval = 2, group = GT)
+int    emaSlow = input.int(50, "@I_EMAS@", minval = 3, group = GT)
+bool   needPx  = input.bool(true, "@I_NEEDPX@", group = GT)
+
+const string GL = "@G_LEVELS@"
+string tzTeh    = input.string("Asia/Tehran", "@I_TZ@", group = GL)
+string sessAsia = input.session("0330-1130", "@I_ASIA@", group = GL)
+int    orMins   = input.int(30, "@I_OR@", minval = 5, maxval = 120, group = GL)
+int    atrLen   = input.int(14, "@I_ATR@", minval = 2, group = GL)
+float  zoneK    = input.float(0.25, "@I_ZONEK@", step = 0.05, group = GL)
+float  zoneMin  = input.float(1.0, "@I_ZONEMIN@", step = 0.1, group = GL)
+float  roundStp = input.float(50.0, "@I_ROUND@", step = 10, group = GL)
+bool   useVwap  = input.bool(true, "@I_VWAP@", group = GL)
+bool   useRound = input.bool(true, "@I_USEROUND@", group = GL)
+bool   useWeek  = input.bool(true, "@I_WEEK@", group = GL)
+int    nShow    = input.int(2, "@I_NSHOW@", minval = 1, maxval = 4, group = GL)
+float  dgOff    = input.float(0.3, "@I_OFF@", step = 0.05, tooltip = "@T_OFF@", group = GL)
+
+const string GS = "@G_SETUP@"
+string entryT  = input.string("@V_LIMIT@", "@I_ENTRY@", options = ["@V_LIMIT@", "@V_MARKET@"], group = GS)
+string unitT   = input.string("@V_1U@", "@I_UNIT@", options = ["@V_1U@", "@V_05U@"], group = GS)
+float  slBufA  = input.float(0.5, "@I_SLBUFA@", step = 0.1, group = GS)
+float  slBufK  = input.float(0.3, "@I_SLBUFK@", step = 0.05, group = GS)
+float  slMinA  = input.float(1.0, "@I_SLMINA@", step = 0.1, group = GS)
+float  slMinK  = input.float(0.5, "@I_SLMINK@", step = 0.05, group = GS)
+float  roomK   = input.float(2.0, "@I_ROOM@", step = 0.1, group = GS)
+float  tpBufA  = input.float(0.3, "@I_TPBUFA@", step = 0.05, group = GS)
+float  tpBufK  = input.float(0.1, "@I_TPBUFK@", step = 0.05, group = GS)
+float  tpCapK  = input.float(3.0, "@I_TPCAP@", step = 0.5, group = GS)
+float  rrMin   = input.float(1.5, "@I_RRMIN@", step = 0.1, group = GS)
+float  rrMax   = input.float(8.0, "@I_RRMAX@", step = 0.5, group = GS)
+float  feeT    = input.float(14000, "@I_FEE@", step = 1000, group = GS)
+float  sprdUsd = input.float(0.25, "@I_SPREAD@", step = 0.05, group = GS)
+int    expBars = input.int(6, "@I_EXP@", minval = 1, maxval = 48, group = GS)
+int    coolBar = input.int(6, "@I_COOL@", minval = 1, group = GS)
+
+const string GF = "@G_FILTERS@"
+int    adrLen  = input.int(20, "@I_ADR@", minval = 5, maxval = 60, group = GF)
+float  adrMax  = input.float(130, "@I_ADRMAX@", step = 5, group = GF)
+float  volK    = input.float(2.0, "@I_VOLK@", step = 0.1, group = GF)
+int    medDays = input.int(5, "@I_MEDDAYS@", minval = 2, maxval = 20, tooltip = "@T_MED@", group = GF)
+float  bufMax  = input.float(9.0, "@I_BUF@", step = 0.5, group = GF)
+bool   bufHard = input.bool(true, "@I_BUFHARD@", tooltip = "@T_BUFHARD@", group = GF)
+int    openHM  = input.int(700, "@I_OPEN@", minval = 0, maxval = 2359, group = GF)
+int    closeHM = input.int(30, "@I_CLOSE@", minval = 0, maxval = 459, group = GF)
+int    friHM   = input.int(2330, "@I_FRI@", minval = 0, maxval = 2359, group = GF)
+
+const string GN = "@G_NEWS@"
+bool n1on = input.bool(false, "@I_NEWS1@", inline = "n1", group = GN)
+int  n1s  = input.time(timestamp("2026-11-25T16:45:00+03:30"), "@I_FROM@", inline = "n1", group = GN)
+int  n1e  = input.time(timestamp("2026-11-25T17:30:00+03:30"), "@I_TO@", inline = "n1", group = GN)
+bool n2on = input.bool(false, "@I_NEWS2@", inline = "n2", group = GN)
+int  n2s  = input.time(timestamp("2026-11-24T12:15:00+03:30"), "@I_FROM@", inline = "n2", group = GN)
+int  n2e  = input.time(timestamp("2026-11-24T12:45:00+03:30"), "@I_TO@", inline = "n2", group = GN)
+bool n3on = input.bool(false, "@I_NEWS3@", inline = "n3", group = GN)
+int  n3s  = input.time(timestamp("2026-11-27T11:00:00+03:30"), "@I_FROM@", inline = "n3", group = GN)
+int  n3e  = input.time(timestamp("2026-11-27T11:45:00+03:30"), "@I_TO@", inline = "n3", group = GN)
+
+const string GD = "@G_DISPLAY@"
+bool   showTbl = input.bool(true, "@I_TBL@", group = GD)
+string blkMode = input.string("@V_BLK_NONE@", "@I_BLK@", options = ["@V_BLK_FIRST@", "@V_BLK_ALL@", "@V_BLK_NONE@"], tooltip = "@T_BLK@", group = GD)
+int    lblGap  = input.int(3, "@I_LBLGAP@", minval = 0, maxval = 20, tooltip = "@T_LBLGAP@", group = GD)
+bool   showZn  = input.bool(true, "@I_ZN@", group = GD)
+int    histBar = input.int(6000, "@I_HIST@", minval = 300, maxval = 20000, tooltip = "@T_HIST@", group = GD)
+string tblPos  = input.string("@V_TR@", "@I_TBLPOS@", options = ["@V_TR@", "@V_TL@", "@V_BR@", "@V_BL@"], group = GD)
+
+// ───────────────────────── @S_TREND@ ─────────────────────────
+// Repaint-safe pattern: lookahead_off; on history read the previous (closed) value, in realtime the expression is already offset by 1.
+f_trend(int o) =>
+    float e1 = ta.ema(close, emaFast)
+    float e2 = ta.ema(close, emaSlow)
+    bool up = e1[o] > e2[o] and (not needPx or close[o] > e2[o])
+    bool dn = e1[o] < e2[o] and (not needPx or close[o] < e2[o])
+    up ? 1 : dn ? -1 : 0
+
+f_base(int o) =>
+    float a = ta.atr(atrLen)
+    [f_trend(o), a[o]]
+
+int   rawH4  = request.security(syminfo.tickerid, tfH4,  f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+int   rawH1  = request.security(syminfo.tickerid, tfH1,  f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+int   rawM15 = request.security(syminfo.tickerid, tfM15, f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+[rawM5, rawAtr] = request.security(syminfo.tickerid, tfM5, f_base(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+
+int   tH4  = nz(barstate.isrealtime ? rawH4  : rawH4[1])
+int   tH1  = nz(barstate.isrealtime ? rawH1  : rawH1[1])
+int   tM15 = nz(barstate.isrealtime ? rawM15 : rawM15[1])
+int   tM5  = nz(barstate.isrealtime ? rawM5  : rawM5[1])
+float atr5 = barstate.isrealtime ? rawAtr : rawAtr[1]
+
+// ATR median: one sample per hour (≈ medDays × 24 samples), median recomputed only when a sample is added.
+var array<float> atrSmp = array.new<float>()
+var float atrMd = na
+if timeframe.change("60") and not na(atr5)
+    atrSmp.push(atr5)
+    if atrSmp.size() > medDays * 24
+        atrSmp.shift()
+    atrMd := atrSmp.size() >= 24 ? atrSmp.median() : na
+
+int hSum = tH4 + tH1
+int bias = hSum > 0 ? 1 : hSum < 0 ? -1 : 0
+string biasTx = bias == 1 ? "@T_UP@" : bias == -1 ? "@T_DN@" : "@T_NEUTRAL@"
+string ltfTx = bias == 0 ? "—" : (tM15 == bias and tM5 != -bias) ? "@T_ALIGNED@" : (tM15 == -bias or tM5 == -bias) ? "@T_CORR@" : "@T_UNCLEAR@"
+f_arrow(int t) => t == 1 ? "▲" : t == -1 ? "▼" : "■"
+
+// ───────────────────────── @S_DAY@ ─────────────────────────
+// Day = the chart symbol's trading day (OANDA: 17:00 New York). Session levels reset at the day change.
+bool newDay = timeframe.change("D")
+var float dH = na
+var float dL = na
+var float pdh = na
+var float pdl = na
+var array<float> ranges = array.new<float>()
+var float adr = na
+var float asH = na
+var float asL = na
+var float lnH = na
+var float lnL = na
+var float orH = na
+var float orL = na
+var float nyOpen = na
+if newDay
+    if not na(dH)
+        pdh := dH
+        pdl := dL
+        ranges.push(dH - dL)
+        if ranges.size() > adrLen
+            ranges.shift()
+        adr := ranges.size() >= 5 ? ranges.avg() : na
+    dH := high
+    dL := low
+    asH := na
+    asL := na
+    lnH := na
+    lnL := na
+    orH := na
+    orL := na
+    nyOpen := na
+else
+    dH := na(dH) ? high : math.max(dH, high)
+    dL := na(dL) ? low : math.min(dL, low)
+float adrUsed = na(adr) or adr == 0 ? na : (dH - dL) / adr * 100
+
+var float wH = na
+var float wL = na
+var float pwh = na
+var float pwl = na
+if timeframe.change("W")
+    if not na(wH)
+        pwh := wH
+        pwl := wL
+    wH := high
+    wL := low
+else
+    wH := na(wH) ? high : math.max(wH, high)
+    wL := na(wL) ? low : math.min(wL, low)
+
+// ───────────────────────── @S_SESS@ ─────────────────────────
+// London = 07:00 London → 08:30 New York; NY = 08:30 → 17:00 New York (each in its own zone, so DST is automatic).
+int lonMin = hour(time, "Europe/London") * 60 + minute(time, "Europe/London")
+int nyMin  = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+bool inAsia = not na(time(timeframe.period, sessAsia, tzTeh))
+bool inLon  = lonMin >= 420 and lonMin < 1320 and nyMin < 510
+bool inLOR  = lonMin >= 420 and lonMin < 420 + orMins
+bool inNY   = nyMin >= 510 and nyMin < 1020
+
+if inAsia
+    asH := na(asH) or not inAsia[1] ? high : math.max(asH, high)
+    asL := na(asL) or not inAsia[1] ? low : math.min(asL, low)
+if inLon
+    lnH := na(lnH) or not inLon[1] ? high : math.max(lnH, high)
+    lnL := na(lnL) or not inLon[1] ? low : math.min(lnL, low)
+if inLOR
+    orH := na(orH) or not inLOR[1] ? high : math.max(orH, high)
+    orL := na(orL) or not inLOR[1] ? low : math.min(orL, low)
+if inNY and not inNY[1]
+    nyOpen := open
+
+float vwapRaw = ta.vwap(hlc3, newDay)
+float vwapD = useVwap ? vwapRaw : na
+
+// ───────────────────────── @S_TIME@ ─────────────────────────
+// Evaluated at bar close (entry time). 00:00–00:30 Tehran belongs to the previous weekday's session (Tue–Sat).
+int dow = dayofweek(time_close, tzTeh)
+int hm  = hour(time_close, tzTeh) * 100 + minute(time_close, tzTeh)
+bool isWk     = dow >= dayofweek.monday and dow <= dayofweek.friday
+bool afterMid = dow >= dayofweek.tuesday and dow <= dayofweek.saturday and hm < closeHM
+bool mktOpen  = (isWk and hm >= openHM) or afterMid
+bool friCut   = (dow == dayofweek.friday and hm >= friHM) or (dow == dayofweek.saturday and hm < closeHM)
+f_news(bool on, int s, int e) => on and time_close > s and time < e
+bool newsBlk = f_news(n1on, n1s, n1e) or f_news(n2on, n2s, n2e) or f_news(n3on, n3s, n3e)
+bool adrBlk  = not na(adrUsed) and adrUsed > adrMax
+bool volBlk  = not na(atr5) and not na(atrMd) and atr5 > volK * atrMd
+// Block reasons as codes (names come from f_rname): 1 hours, 2 Friday, 3 news, 4 vol expansion, 5 ADR, 6 stop-out buffer, 7 TP far, 8 R:R low, 9 R:R high
+int baseWhy = not mktOpen ? 1 : friCut ? 2 : newsBlk ? 3 : volBlk ? 4 : adrBlk ? 5 : 0
+f_rname(int c) => c == 1 ? "@R_CLOSED@" : c == 2 ? "@R_FRI@" : c == 3 ? "@R_NEWS@" : c == 4 ? "@R_VOL@" : c == 5 ? "@R_ADR@" : c == 6 ? "@R_BUF@" : c == 7 ? "@R_TPFAR@" : c == 8 ? "@R_RRLOW@" : c == 9 ? "@R_RRHIGH@" : ""
+
+// ───────────────────────── @S_ZONES@ ─────────────────────────
+// Only the last `histBar` bars are evaluated (levels, merge, setups); the arrays are reused (cleared), not reallocated.
+bool inWin = bar_index >= last_bar_index - histBar
+float hw = na(atr5) ? zoneMin : math.max(zoneK * atr5, zoneMin)
+
+var array<float>  lvP = array.new<float>()
+var array<string> lvT = array.new<string>()
+var array<float>  zLo = array.new<float>()
+var array<float>  zHi = array.new<float>()
+var array<float>  zMn = array.new<float>()   // lowest member level
+var array<float>  zMx = array.new<float>()   // highest member level
+var array<string> zTg = array.new<string>()
+
+f_add(float v, string tag) =>
+    if not na(v)
+        lvP.push(v)
+        lvT.push(tag)
+    0
+
+if inWin
+    lvP.clear()
+    lvT.clear()
+    zLo.clear()
+    zHi.clear()
+    zMn.clear()
+    zMx.clear()
+    zTg.clear()
+    f_add(pdh, "@L_PDH@")
+    f_add(pdl, "@L_PDL@")
+    if useWeek
+        f_add(pwh, "@L_PWH@")
+        f_add(pwl, "@L_PWL@")
+    f_add(asH, "@L_ASH@")
+    f_add(asL, "@L_ASL@")
+    f_add(lnH, "@L_LNH@")
+    f_add(lnL, "@L_LNL@")
+    f_add(orH, "@L_ORH@")
+    f_add(orL, "@L_ORL@")
+    f_add(nyOpen, "@L_NYO@")
+    f_add(vwapD, "@L_VWAP@")
+    if useRound
+        float rb = math.floor(close / roundStp) * roundStp
+        for k = -1 to 2
+            float rv = rb + k * roundStp
+            f_add(rv, "@L_ROUND@")
+    int nLv = lvP.size()
+    if nLv > 0
+        array<int> idx = lvP.sort_indices(order.ascending)
+        for i = 0 to nLv - 1
+            int j = idx.get(i)
+            float p = lvP.get(j)
+            string tg = lvT.get(j)
+            int last = zLo.size() - 1
+            if last >= 0 and p - hw <= zHi.get(last)
+                zHi.set(last, p + hw)
+                zMx.set(last, p)
+                string old = zTg.get(last)
+                if not str.contains(old, tg)
+                    zTg.set(last, old + "@SEP@" + tg)
+            else
+                zLo.push(p - hw)
+                zHi.push(p + hw)
+                zMn.push(p)
+                zMx.push(p)
+                zTg.push(tg)
+int nZ = inWin ? zLo.size() : 0
+
+// ───────────────────────── @S_SETUP@ ─────────────────────────
+float tpu   = unitT == "@V_1U@" ? 80000.0 : 40000.0
+float sCost = entryT == "@V_MARKET@" ? sprdUsd : 0.0
+bool  isLim = entryT == "@V_LIMIT@"
+f_rr(float tpD, float slD) =>
+    float rew = tpD * tpu - feeT - sCost * tpu
+    float rsk = slD * tpu + feeT + sCost * tpu
+    rsk > 0 ? rew / rsk : na
+
+f_why(float d, float tpD, float rr) =>
+    baseWhy != 0 ? baseWhy : bufHard and d + atr5 > bufMax ? 6 : tpD > tpCapK * atr5 ? 7 : na(rr) or rr < rrMin ? 8 : rr > rrMax ? 9 : 0
+
+int kL = -1
+int kS = -1
+if nZ > 1 and not na(atr5)
+    for i = nZ - 1 to 0
+        if zLo.get(i) <= close and low <= zHi.get(i)
+            kL := i
+            break
+    for i = 0 to nZ - 1
+        if zHi.get(i) >= close and high >= zLo.get(i)
+            kS := i
+            break
+
+bool dirL = tH1 == 1 and tM15 == 1
+bool dirS = tH1 == -1 and tM15 == -1
+float  lE = na
+float  lSL = na
+float  lTP = na
+float  lRR = na
+int    lWhy = 0
+bool   lRaw = false
+float  sE = na
+float  sSL = na
+float  sTP = na
+float  sRR = na
+int    sWhy = 0
+bool   sRaw = false
+
+if dirL and kL >= 0 and kL < nZ - 1
+    lE := isLim ? math.min(close, zHi.get(kL)) : close
+    float d = math.max(lE - (zLo.get(kL) - math.max(slBufA, slBufK * atr5)), math.max(slMinA, slMinK * atr5))
+    float nxt = zMn.get(kL + 1)
+    lSL := lE - d
+    lTP := nxt - math.max(tpBufA, tpBufK * atr5)
+    float tpD = lTP - lE
+    if nxt - lE >= roomK * d and tpD > 0
+        lRaw := true
+        lRR := f_rr(tpD, d)
+        lWhy := f_why(d, tpD, lRR)
+
+if dirS and kS > 0
+    sE := isLim ? math.max(close, zLo.get(kS)) : close
+    float d = math.max((zHi.get(kS) + math.max(slBufA, slBufK * atr5)) - sE, math.max(slMinA, slMinK * atr5))
+    float nxt = zMx.get(kS - 1)
+    sSL := sE + d
+    sTP := nxt + math.max(tpBufA, tpBufK * atr5)
+    float tpD = sE - sTP
+    if sE - nxt >= roomK * d and tpD > 0
+        sRaw := true
+        sRR := f_rr(tpD, d)
+        sWhy := f_why(d, tpD, sRR)
+
+// One marker per touch: only the first bar of a setup (or the first bar it turns valid), plus a cooldown.
+var int lastL = na
+var int lastS = na
+bool coolL = na(lastL) or bar_index - lastL > coolBar
+bool coolS = na(lastS) or bar_index - lastS > coolBar
+bool newL = lRaw and (not lRaw[1] or kL != kL[1])
+bool newS = sRaw and (not sRaw[1] or kS != kS[1])
+bool longOK   = barstate.isconfirmed and lRaw and lWhy == 0 and coolL and (newL or lWhy[1] != 0)
+bool shortOK  = barstate.isconfirmed and sRaw and sWhy == 0 and coolS and (newS or sWhy[1] != 0)
+bool longBlk  = barstate.isconfirmed and mktOpen and newL and lWhy != 0 and coolL
+bool shortBlk = barstate.isconfirmed and mktOpen and newS and sWhy != 0 and coolS
+
+f_px(float p) => str.tostring(p + dgOff, "0.00")
+
+f_draw(int dir, float e, float sl, float tp, float rr, bool warn) =>
+    color c = dir == 1 ? color.teal : color.red
+    int x2 = bar_index + expBars
+    line.new(bar_index, e, x2, e, color = color.new(c, 30), width = 1)
+    line.new(bar_index, sl, x2, sl, color = color.red, style = line.style_dashed)
+    line.new(bar_index, tp, x2, tp, color = color.green, style = line.style_dashed)
+    // one script per line: the Persian/English header alone, then Latin-only number lines (no mixed-direction text)
+    string t = (dir == 1 ? "▲ @T_BUY@" : "▼ @T_SELL@") + (warn ? " ⚠" : "") + "\nE " + f_px(e) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp) + "\nRR " + str.tostring(rr, "0.00")
+    label.new(bar_index, dir == 1 ? low : high, t, style = dir == 1 ? label.style_label_up : label.style_label_down, color = color.new(c, 25), textcolor = color.white, size = size.tiny, tooltip = warn ? "@R_BUF@" : "")
+
+f_alert(string side, float e, float sl, float tp, float rr) =>
+    "XSZ " + side + " | E " + f_px(e) + " | SL " + f_px(sl) + " | TP " + f_px(tp) + " | R:R " + str.tostring(rr, "0.00")
+
+if longOK
+    lastL := bar_index
+    f_draw(1, lE, lSL, lTP, lRR, lE - lSL + atr5 > bufMax)
+    alert(f_alert("@T_BUY@", lE, lSL, lTP, lRR), alert.freq_once_per_bar_close)
+if shortOK
+    lastS := bar_index
+    f_draw(-1, sE, sSL, sTP, sRR, sSL - sE + atr5 > bufMax)
+    alert(f_alert("@T_SELL@", sE, sSL, sTP, sRR), alert.freq_once_per_bar_close)
+// Blocked markers: tiny grey cross, reason in the tooltip. "first per streak" = only when the reason changes since the last marker on that side.
+var int lastBlkL = 0
+var int lastBlkS = 0
+if longOK or newDay
+    lastBlkL := 0
+if shortOK or newDay
+    lastBlkS := 0
+bool drawBL = longBlk and blkMode != "@V_BLK_NONE@" and (blkMode == "@V_BLK_ALL@" or lWhy != lastBlkL)
+bool drawBS = shortBlk and blkMode != "@V_BLK_NONE@" and (blkMode == "@V_BLK_ALL@" or sWhy != lastBlkS)
+if longBlk
+    lastL := bar_index
+    lastBlkL := lWhy
+if shortBlk
+    lastS := bar_index
+    lastBlkS := sWhy
+if drawBL
+    label.new(bar_index, low, "", style = label.style_circle, color = color.new(color.gray, 75), size = size.tiny, yloc = yloc.belowbar, tooltip = "@T_BUY@: " + f_rname(lWhy))
+if drawBS
+    label.new(bar_index, high, "", style = label.style_circle, color = color.new(color.gray, 75), size = size.tiny, yloc = yloc.abovebar, tooltip = "@T_SELL@: " + f_rname(sWhy))
+
+// Blocked-setup counts for today (per reason), so a too-strict filter is visible.
+var array<int> blkCnt = array.new<int>(10, 0)
+if newDay
+    blkCnt.fill(0)
+if longBlk
+    blkCnt.set(lWhy, blkCnt.get(lWhy) + 1)
+if shortBlk
+    blkCnt.set(sWhy, blkCnt.get(sWhy) + 1)
+
+alertcondition(longOK,  "@A_LONG_T@",  "@A_LONG_M@")
+alertcondition(shortOK, "@A_SHORT_T@", "@A_SHORT_M@")
+
+// ───────────────────────── @S_DRAW@ ─────────────────────────
+var array<box>   boxes = array.new<box>()
+var array<label> zlbls = array.new<label>()
+if barstate.islast
+    while boxes.size() > 0
+        box.delete(boxes.pop())
+    while zlbls.size() > 0
+        label.delete(zlbls.pop())
+    if showZn and nZ > 0
+        int belowTot = 0
+        for i = 0 to nZ - 1
+            if zHi.get(i) < close
+                belowTot += 1
+        int belowSeen = 0
+        int aboveSeen = 0
+        float lastLblY = na
+        int xR = bar_index + 12
+        for i = 0 to nZ - 1
+            bool above = zLo.get(i) > close
+            bool below = zHi.get(i) < close
+            bool pick = not above and not below
+            if above
+                pick := aboveSeen < nShow
+                aboveSeen += 1
+            if below
+                belowSeen += 1
+                pick := belowTot - belowSeen < nShow
+            if pick
+                color bc = above ? color.new(color.red, 92) : below ? color.new(color.teal, 92) : color.new(color.yellow, 88)
+                boxes.push(box.new(bar_index - 40, zHi.get(i), xR, zLo.get(i), border_color = color.new(color.gray, 85), bgcolor = bc))
+                float y = (zMn.get(i) + zMx.get(i)) / 2
+                // labels at the right edge: price to the right of the edge, short tag to the left; skipped when too close to the previous one
+                if na(lastLblY) or math.abs(y - lastLblY) >= lblGap
+                    lastLblY := y
+                    string tg = zTg.get(i)
+                    int cut = str.pos(tg, "@SEP@")
+                    string shortTg = na(cut) ? tg : str.substring(tg, 0, cut) + " …"
+                    zlbls.push(label.new(xR, y, f_px(y), style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.new(color.gray, 20), size = size.tiny, tooltip = tg))
+                    zlbls.push(label.new(xR, y, shortTg, style = label.style_label_right, color = color.new(color.black, 100), textcolor = color.new(color.gray, 20), size = size.tiny, tooltip = tg))
+
+// ───────────────────────── @S_TABLE@ ─────────────────────────
+f_pos(string s) => s == "@V_TL@" ? position.top_left : s == "@V_BR@" ? position.bottom_right : s == "@V_BL@" ? position.bottom_left : position.top_right
+// 4 columns, each cell holds only one script (text or numbers): key | number | extra number | text
+var table tb = table.new(f_pos(tblPos), 4, 28, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.new(color.gray, 70))
+f_row(int r, string k, string n, string d, string t, color vc) =>
+    table.cell(tb, @KCOL@, r, k, text_color = color.silver, text_size = size.tiny, text_halign = @KALIGN@)
+    table.cell(tb, @NCOL@, r, n, text_color = vc, text_size = size.tiny, text_halign = text.align_right)
+    table.cell(tb, @DCOL@, r, d, text_color = color.gray, text_size = size.tiny, text_halign = text.align_right)
+    table.cell(tb, @TCOL@, r, t, text_color = vc, text_size = size.tiny, text_halign = @KALIGN@)
+
+if barstate.islast and showTbl
+    table.clear(tb, 0, 0, 3, 27)
+    int r = 0
+    if timeframe.period != "5"
+        f_row(r, "⚠", "", "", "@T_TFWARN@", color.orange)
+        r += 1
+    f_row(r, "@K_BIAS@", "", "", biasTx + "@BSEP@" + ltfTx, bias == 1 ? color.lime : bias == -1 ? color.red : color.silver)
+    r += 1
+    f_row(r, "H4 H1 M15 M5", f_arrow(tH4) + " " + f_arrow(tH1) + " " + f_arrow(tM15) + " " + f_arrow(tM5), "", "", color.white)
+    r += 1
+    f_row(r, "ATR M5", na(atr5) ? "—" : str.tostring(atr5, "0.00"), na(atrMd) ? "" : str.tostring(atrMd, "0.00"), "@T_MED2@", volBlk ? color.orange : color.white)
+    r += 1
+    f_row(r, "@K_ADR@", na(adrUsed) ? "—" : str.tostring(adrUsed, "0") + "%", na(adr) ? "" : str.tostring(adr, "0.0"), "@T_ADRAVG@", adrBlk ? color.orange : color.white)
+    r += 1
+    f_row(r, "@K_HW@", str.tostring(hw, "0.00"), "", "", color.white)
+    r += 1
+    int cnt = 0
+    if nZ > 0
+        for i = 0 to nZ - 1
+            if cnt < 2 and zMn.get(i) > close
+                float lv = zMn.get(i)
+                f_row(r, cnt == 0 ? "@K_A1@" : "@K_A2@", f_px(lv), "+" + str.tostring(lv - close, "0.0"), zTg.get(i), color.new(color.red, 20))
+                r += 1
+                cnt += 1
+        cnt := 0
+        for i = nZ - 1 to 0
+            if cnt < 2 and zMx.get(i) < close
+                float lv = zMx.get(i)
+                f_row(r, cnt == 0 ? "@K_B1@" : "@K_B2@", f_px(lv), "-" + str.tostring(close - lv, "0.0"), zTg.get(i), color.teal)
+                r += 1
+                cnt += 1
+    f_row(r, "@K_RISK@", "", "", baseWhy != 0 ? "@T_BLOCKED@: " + f_rname(baseWhy) : "@T_ALLOWED@", baseWhy != 0 ? color.orange : color.lime)
+    r += 1
+    f_row(r, "@K_PRICE@", f_px(close), "", "", color.white)
+    r += 1
+    f_row(r, "@K_CHART@", str.tostring(close, "0.00"), "", "", color.gray)
+    r += 1
+    int tot = int(blkCnt.sum())
+    f_row(r, "@K_BLKTODAY@", str.tostring(tot), "", "", tot > 0 ? color.orange : color.gray)
+    r += 1
+    for c = 1 to 9
+        if blkCnt.get(c) > 0
+            f_row(r, "", str.tostring(blkCnt.get(c)), "", f_rname(c), color.gray)
+            r += 1
