@@ -658,5 +658,29 @@ fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=
 st = state(); st["signals_done"] = [st["signals_sent"][-1]["id"]]; json.dump(st, open(B.STATE_JSON, "w")); out2 = run("command", ["/scan"])
 check("/scan repeat of the same setup reuses its ID (no second record)", len(state()["signals_sent"]) == 1 and "S-20261116-001" in out2[-1])
 
+# ---- Phase 4: forward tracking of each signal (MFE/MAE)
+import pandas as pd
+_idx = pd.date_range("2026-11-16 10:30", periods=40, freq="1min", tz="UTC")     # 14:00 Tehran onwards
+_h = [3879.5] * 40; _l = [3879.0] * 40
+_h[3] = 3881.0                     # minute 3: SELL limit at 3880.3 (DaryaGold = bid + 0.3) touched -> fill
+_l[10] = 3877.2                    # adverse/favourable moves after the fill
+_h[12] = 3881.5
+_l[20] = 3875.9                    # TP 3876.3 (DaryaGold) = bid 3876.0 -> touched
+_bars = pd.DataFrame({"h_b": _h, "l_b": _l}, index=_idx)
+B.track_bars = lambda: _bars
+_rec = {"id": "S-20261116-001", "side": "SELL", "entry": 3880.3, "sl": 3881.9, "tp": 3876.3,
+        "sent_at": "2026-11-16T14:00:00+03:30", "valid_until": "2026-11-16T14:30:00+03:30"}
+cfg_t = DG.load_config()
+tr = B.track_one(dict(_rec), _bars, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
+check("tracking: SELL filled at minute 3, TP touched, MFE/MAE in $ and price-R (risk 1.6)",
+      tr["outcome"] == "tp" and tr["fill_at"].startswith("2026-11-16T10:33") and tr["mae_usd"] == 1.5 and tr["mae_r"] == round(1.5 / 1.6, 2) and tr["final"])
+tr2 = B.track_one(dict(_rec, entry=3885.3, sl=3886.9, tp=3881.3), _bars, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
+check("tracking: limit never touched within validity -> no_fill (final)", tr2["outcome"] == "no_fill" and tr2["final"] and tr2["mfe_r"] is None)
+tr3 = B.track_one(dict(_rec), _bars, datetime(2026, 11, 16, 14, 8, tzinfo=B.TEH), cfg_t)
+check("tracking: still open mid-trade is not final", tr3["outcome"] == "open" and not tr3["final"])
+st_t = {"signals_sent": [dict(_rec), {"key": "legacy"}, dict(_rec, id="S-20261116-002", track={"final": True})]}
+n = B.track_signals(st_t, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
+check("track_signals updates only signals with an ID that are not final", n == 1 and st_t["signals_sent"][0]["track"]["outcome"] == "tp")
+
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

@@ -61,7 +61,7 @@ export function parseJournalCmd(c, args, now = teh()) {
   return { act, id, price };
 }
 // What a confirmed action does to a signal. Returns { error } or { update, journal, record }.
-export function applyAction(sig, act, price, nowMs) {
+export function applyAction(sig, act, price, nowMs, opts = {}) {
   const st = effectiveStatus(sig, nowMs);
   const iso = new Date(nowMs).toISOString();
   if (act === "e") {
@@ -76,10 +76,10 @@ export function applyAction(sig, act, price, nowMs) {
   const exitType = { t: "tp", s: "sl", m: "manual" }[act];
   const exit = act === "t" ? Number(sig.tp) : act === "s" ? Number(sig.sl) : price;
   const entry = sig.entry_fill != null ? Number(sig.entry_fill) : Number(sig.entry);
-  const p = pnl(sig.side, entry, exit, sig.unit);
+  const p = pnl(sig.side, entry, exit, sig.unit, !opts.fills);   // fills typed by the owner already include the spread
   const hold = sig.entered_at ? Math.round((nowMs - Date.parse(sig.entered_at)) / 1000) : null;
   const under = hold === null ? null : (exitType !== "sl" && hold < MIN_HOLD_S);   // SL is exempt from the 60 s rule
-  const R = r2(p.net / riskToman(sig));
+  const R = r2(p.net / (opts.fills ? riskToman(sig) - Math.round(SPREAD_USD * UNIT_RATE[sig.unit]) : riskToman(sig)));
   const update = { status: "closed", closed_at: iso, exit_price: exit, exit_type: exitType, net_toman: p.net, r_multiple: R, under_60s: under,
     ...(sig.entry_fill == null ? { entry_fill: entry } : {}) };
   const journal = { trade_id: sig.id, signal_id: sig.id, source: "signal", verification: "USER_CONFIRMED", side: sig.side, unit: sig.unit,
@@ -107,6 +107,11 @@ export const confirmKeyboard = (act, id, price) => ({ inline_keyboard: [[
 export function parseCallback(data) {
   const p = String(data || "").split(":");
   if (p[0] === "x") return { cancel: true };
+  const okPx = (v) => Number(v) > 500 && Number(v) < 20000;
+  if (p[0] === "c" && p[1] === "j" && /^S-\d{8}-\d{3}$/.test(p[2] || "") && okPx(p[3]) && okPx(p[4]) && ["1", "0.5"].includes(p[5]))
+    return { step: "c", act: "j", id: p[2], entry: Number(p[3]), price: Number(p[4]), unit: p[5] === "1" ? "1U" : "0.5U" };
+  if (p[0] === "tr" && ["buy", "sell"].includes(p[1]) && okPx(p[2]) && okPx(p[3]) && ["1", "0.5"].includes(p[4]))
+    return { trade: `/trade ${p[1]} ${p[2]} ${p[3]} ${p[4]}` };
   if ((p[0] === "a" || p[0] === "c") && ["e", "t", "s", "m", "n"].includes(p[1]) && /^S-\d{8}-\d{3}$/.test(p[2] || "")) {
     const price = p[3] ? Number(p[3]) : null;
     if (p[3] && !(price > 500 && price < 20000)) return null;
@@ -123,13 +128,23 @@ export function doneText(sig, act, res) {
   if (j.under_60s) L.push("⚠️ کمتر از ۶۰ ثانیه نگه داشته شد؛ دریاگلد ممکن است این معامله را نپذیرد");
   return L.join("\n");
 }
-export function journalMsg(rows) {
-  if (!rows.length) return "**📒 ژورنال**\n~~هنوز معامله‌ای ثبت نشده~~";
-  const L = ["**📒 ژورنال**", "~~ده معامله‌ی آخر~~", ""];
+const TRACK_FA = { no_fill: "پر نشد", open: "باز", tp: "به هدف رسید", sl: "به حد ضرر رسید", close: "تا بسته‌شدن بازار" };
+const rr = (v) => (v === null || v === undefined ? "—" : `${Number(v) > 0 ? "+" : ""}${Number(v)}R`);
+export const trackLine = (x) => x && x.track_outcome
+  ? `${TRACK_FA[x.track_outcome] || x.track_outcome}${x.mfe_r != null ? ` · بیشترین سود ${rr(x.mfe_r)} · بیشترین ضرر ${rr(-Number(x.mae_r))}` : ""}` : "";
+export function journalMsg(rows, track = {}, recent = []) {
+  const L = ["**📒 ژورنال**"];
+  if (!rows.length) L.push("~~هنوز معامله‌ای ثبت نشده~~");
+  else L.push("~~ده معامله‌ی آخر~~", "");
   for (const r of rows.slice(0, 10)) {
     const t = teh(new Date(r.closed_at));
+    const tl = r.signal_id ? trackLine(track[r.signal_id]) : "";
     L.push(`${t.date.slice(5).replace("-", "/")} ${t.hm} ${r.side === "BUY" ? "خرید" : "فروش"} ${r.unit === "1U" ? "۱" : "۰٫۵"} واحد · \`${px(r.entry)}\` → \`${px(r.exit)}\` · ${signedT(Number(r.net_toman))}` +
-      (r.under_60s ? " ⚠️" : "") + (r.signal_id ? ` · ${r.signal_id.slice(-3)}` : ""));
+      (r.under_60s ? " ⚠️" : "") + (r.signal_id ? ` · ${r.signal_id.slice(-3)}` : "") + (tl ? `\n   ~~سیگنال: ${tl}~~` : ""));
+  }
+  if (recent.length) {
+    L.push("", "**🔭 پیگیری سیگنال‌ها**", "~~خود سیگنال، جدا از اینکه وارد شدید یا نه؛ R بر پایه‌ی فاصله‌ی حد ضرر~~");
+    for (const x of recent.slice(0, 5)) L.push(`\`${x.id}\` ${x.side === "BUY" ? "خرید" : "فروش"} · ${trackLine(x)}`);
   }
   return L.join("\n");
 }
@@ -170,6 +185,14 @@ export function reportMsg(kind, { signals, journal, shadow, calibration }, from,
   if (a.under) L.push(`⚠️ زیر ۶۰ ثانیه: ${a.under}`);
   const gl = Object.entries(gates).map(([g, n]) => `${GF[g] || g} ${n}`);
   L.push(`🕶 ستاپ ردشده با فیلتر: ${sh.length}${gl.length ? ` (${gl.join("، ")})` : ""}`);
+  const tracked = sg.filter((x) => x.track_outcome && x.track_outcome !== "open");
+  if (tracked.length) {
+    const filled = tracked.filter((x) => x.mfe_r !== null && x.mfe_r !== undefined);
+    const avg = (k) => r2(filled.reduce((a, x) => a + Number(x[k] || 0), 0) / (filled.length || 1));
+    L.push(`🔭 پیگیری سیگنال: هدف ${tracked.filter((x) => x.track_outcome === "tp").length} · حد ضرر ${tracked.filter((x) => x.track_outcome === "sl").length}` +
+      ` · پر نشد ${tracked.filter((x) => x.track_outcome === "no_fill").length}` +
+      (filled.length ? ` · میانگین بیشترین سود ${rr(avg("mfe_r"))} و بیشترین ضرر ${rr(-avg("mae_r"))}` : ""));
+  }
   if (!forGroup && calibration) L.push(`🎚 قیمت دریاگلد: ${calibration.status === "calibrated" ? "کالیبره" : "کالیبره نشده"}`);
   return L.join("\n");
 }
@@ -179,3 +202,20 @@ export const signalKeyboard = (id) => ({ inline_keyboard: [
   [{ text: "🎯 حد سود", callback_data: `a:t:${id}` }, { text: "🛑 حد ضرر", callback_data: `a:s:${id}` }],
   [{ text: "✋ بستن دستی", callback_data: `a:m:${id}` }]] });
 export const BAD_JOURNAL = "**⚠️ ثبت نشد**\n~~نمونه:~~\n`/entered 001` · `/tp 001` · `/sl 001`\n`/closed 001 3569.85`";
+
+// /trade double-count guard: a /trade that looks like an open signal asks whether it is that signal.
+export function matchSignal(t, sigs, today) {
+  const side = t.side.toUpperCase();
+  const prev = new Date(Date.parse(today + "T00:00:00Z") - 86400000).toISOString().slice(0, 10);
+  return (sigs || []).find((x) => x.side === side && ["sent", "entered", "expired"].includes(x.status) && String(x.session_date).slice(0, 10) >= prev &&
+    Math.abs(Number(x.entry_fill ?? x.entry) - t.entry) <= 2.0) || null;
+}
+export function tradeMatchCard(t, sig) {
+  const u = t.units === 1 ? "1" : "0.5";
+  return { text: [`**❓ این معامله همان سیگنال** \`${sig.id}\` **است؟**`,
+    `~~سیگنال: ${sig.side === "BUY" ? "خرید" : "فروش"} · ورود \`${px(sig.entry)}\` · ${sig.unit === "1U" ? "یک واحد" : "نیم واحد"}~~`,
+    `~~معامله: ورود \`${px(t.entry)}\` · خروج \`${px(t.exit)}\` · ${t.units === 1 ? "یک واحد" : "نیم واحد"}~~`, "",
+    "اگر همان است، فقط یک بار ثبت می‌شود."].join("\n"),
+    markup: { inline_keyboard: [[{ text: "✅ همان سیگنال است", callback_data: `c:j:${sig.id}:${t.entry}:${t.exit}:${u}` }],
+      [{ text: "➕ معامله‌ی جدا", callback_data: `tr:${t.side}:${t.entry}:${t.exit}:${u}` }], [{ text: "❌ لغو", callback_data: "x" }]] } };
+}

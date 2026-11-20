@@ -39,3 +39,11 @@ def test_journal_csv_import_real_trades_only():
     assert len(rows) == 4 and s.count("'USER_CONFIRMED'") >= 4 and "on conflict (trade_id) do nothing" in s
     for net in ("342800", "742800", "181200", "687600"):
         assert net in s
+
+
+def test_signal_tracking_columns():
+    s = read("20261120210000_signal_tracking.sql")
+    for c in ("track_outcome", "track_fill_at", "mfe_usd", "mae_usd", "mfe_r", "mae_r", "tracked_at"):
+        assert f"add column if not exists {c}" in s
+    assert "'no_fill', 'open', 'tp', 'sl', 'close'" in s
+    assert "grant" not in s.lower() and "policy" not in s.lower()   # privileges unchanged: service role only

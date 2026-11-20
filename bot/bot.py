@@ -705,6 +705,73 @@ def signal_record(b, plan, sizing, cfg, sig_id, now):
             "valid_until": signal_expiry(b, cfg, now).isoformat(timespec="seconds"),
             "net_rr": round(float(rr), 2) if rr is not None else None, "risk_toman": int(round(float(s.get("risk_toman") or 0)))}
 
+def _track_bars():
+    """1-minute bid bars from the local cache (written by brief.py's fetch). Hook mocked in tests."""
+    import pandas as pd
+    return pd.read_parquet(f"{ROOT}/data/xauusd_1m.parquet", columns=["h_b", "l_b"])
+
+track_bars = _track_bars
+
+def track_one(rec, bars, now, cfg):
+    """Forward tracking of one signal as sent (whatever the owner did): limit touched? then MFE/MAE in $ and price-R
+    until TP or SL is touched or the session closes. Prices = DaryaGold (bid + offset). Pure; no orders anywhere."""
+    off = float(DG.to_broker(0.0, cfg) or 0.0)
+    side, E, SL, TP = rec["side"], float(rec["entry"]), float(rec["sl"]), float(rec["tp"])
+    d = 1 if side == "BUY" else -1
+    sent = datetime.fromisoformat(rec["sent_at"])
+    valid = datetime.fromisoformat(rec["valid_until"]) if rec.get("valid_until") else sent + timedelta(minutes=30)
+    close = DG.session_start(sent, cfg) + timedelta(hours=17, minutes=30)      # 07:00 + 17:30 = 00:30
+    end = min(now, close)
+    import pandas as pd
+    w = bars[(bars.index >= pd.Timestamp(sent)) & (bars.index < pd.Timestamp(end))]
+    hi, lo = w.h_b.to_numpy() + off, w.l_b.to_numpy() + off
+    out = {"id": rec["id"], "outcome": "open", "fill_at": None, "mfe_usd": None, "mae_usd": None, "mfe_r": None, "mae_r": None,
+           "tracked_at": now.isoformat(timespec="seconds")}
+    fill = None
+    for i, ts in enumerate(w.index):
+        if ts.to_pydatetime() >= valid:
+            break
+        if (d > 0 and lo[i] <= E) or (d < 0 and hi[i] >= E):
+            fill = i
+            break
+    if fill is None:
+        out["outcome"] = "no_fill" if now >= valid else "open"
+        out["final"] = now >= valid
+        return out
+    out["fill_at"] = w.index[fill].isoformat()
+    mfe = mae = 0.0
+    for i in range(fill, len(w)):
+        fav = (hi[i] - E) if d > 0 else (E - lo[i])
+        adv = (E - lo[i]) if d > 0 else (hi[i] - E)
+        if (d > 0 and lo[i] <= SL) or (d < 0 and hi[i] >= SL):
+            out["outcome"] = "sl"; mae = max(mae, abs(E - SL)); break
+        mfe, mae = max(mfe, fav), max(mae, adv)
+        if (d > 0 and hi[i] >= TP) or (d < 0 and lo[i] <= TP):
+            out["outcome"] = "tp"; break
+    else:
+        if now >= close:
+            out["outcome"] = "close"
+    risk = abs(E - SL) or 1.0
+    out.update(mfe_usd=round(mfe, 2), mae_usd=round(mae, 2), mfe_r=round(mfe / risk, 2), mae_r=round(mae / risk, 2),
+               final=out["outcome"] != "open")
+    return out
+
+def track_signals(state, now, cfg):
+    """Update rec['track'] for this and the previous trading day's signals that are not final yet.
+    The Edge Function copies it into public.signals (forward MFE/MAE)."""
+    recs = [r for r in state.get("signals_sent") or [] if r.get("id") and r.get("sent_at") and not (r.get("track") or {}).get("final")]
+    if not recs:
+        return 0
+    bars = track_bars()
+    n = 0
+    for r in recs:
+        if (now - datetime.fromisoformat(r["sent_at"])).total_seconds() > 2 * 86400:
+            continue
+        r["track"] = track_one(r, bars, now, cfg)
+        n += 1
+    print(f"signal tracking: {n} updated")
+    return n
+
 def sample_signal(b, cfg, state):
     bid = float(b["price_bid"])
     side = "SELL" if b.get("bias") == "bearish" else "BUY"
@@ -913,6 +980,10 @@ def main():
                 if in_window(name, t) and not state["presession_sent"].get(tag):
                     if send_public("presession", presession_brief(b, state, name), state):
                         state["presession_sent"][tag] = True
+    try:
+        track_signals(state, t, cfg)
+    except Exception as e:   # tracking is research only; never breaks a run
+        print("signal tracking skipped:", type(e).__name__, str(e)[:120])
     state["last_run_tehran"] = t.strftime("%Y-%m-%d %H:%M")
     save_state(state)
 

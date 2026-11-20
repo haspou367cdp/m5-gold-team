@@ -6,10 +6,10 @@
 // /calibrate: owner-entered DaryaGold price + live Dukascopy 1-minute bid/ask -> public.price_observations (service role only).
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
-import { sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
+import { matchSignal, tradeMatchCard, JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
+import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
 
-export const BUILD = "2026-11-20-phase3-journal";
+export const BUILD = "2026-11-20-phase4-tracking";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -108,6 +108,7 @@ export function makeApp(cfg) {
   };
   const getSignal = async (id) => (await rest(`signals?id=eq.${encodeURIComponent(id)}&select=*`))[0] || null;
   const latestOpen = async () => (await rest("signals?status=in.(sent,entered)&select=*&order=sent_at.desc&limit=1"))[0] || null;
+  const TRACK_OUT = ["no_fill", "open", "tp", "sl", "close"];
   const SIG_FIELDS = ["id", "sent_at", "session_date", "side", "unit", "entry", "sl", "tp", "valid_until", "net_rr", "risk_toman"];
   async function storeSignals(list) {
     const rows = (list || []).filter((x) => x && /^S-\d{8}-\d{3}$/.test(x.id || "") && ["BUY", "SELL"].includes(x.side) && ["1U", "0.5U"].includes(x.unit))
@@ -116,18 +117,37 @@ export function makeApp(cfg) {
     await rest("signals?on_conflict=id", { method: "POST", body: rows, prefer: "resolution=ignore-duplicates,return=minimal" });
     return rows.length;
   }
+  // Phase 4: forward MFE/MAE of each signal (computed by the GitHub run from 1-minute data). Only fresh updates are written.
+  async function storeTracking(list, nowMs) {
+    let n = 0;
+    for (const x of list || []) {
+      const tr = x && x.track;
+      if (!tr || !/^S-\d{8}-\d{3}$/.test(x.id || "") || !TRACK_OUT.includes(tr.outcome)) continue;
+      const at = Date.parse(tr.tracked_at || "");
+      if (!(at > nowMs - 30 * 60000)) continue;   // unchanged since an earlier run
+      const num = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
+      await rest(`signals?id=eq.${encodeURIComponent(x.id)}`, { method: "PATCH", prefer: "return=minimal",
+        body: { track_outcome: tr.outcome, track_fill_at: tr.fill_at || null, mfe_usd: num(tr.mfe_usd), mae_usd: num(tr.mae_usd),
+          mfe_r: num(tr.mfe_r), mae_r: num(tr.mae_r), tracked_at: new Date(at).toISOString() } });
+      n++;
+    }
+    return n;
+  }
   const NOT_FOUND = "**⚠️ سیگنال پیدا نشد**\n~~شناسه را از پایین کارت سیگنال بردارید، مثل~~ `/tp 001`";
   // Confirmed action: guarded status update, journal row, then the day record + equity (feeds the daily stop).
-  async function confirmAction(id, act, price) {
-    const sig = await getSignal(id);
-    if (!sig) return NOT_FOUND;
+  async function confirmAction(id, act, price, link = null) {
+    const sig0 = await getSignal(id);
+    if (!sig0) return NOT_FOUND;
     const nowMs = clock().getTime();
-    const res = applyAction(sig, act, price, nowMs);
+    // link = a /trade confirmed as this signal: the owner's own fills and unit, spread already inside the fills
+    const sig = link ? { ...sig0, entry_fill: link.entry, unit: link.unit } : sig0;
+    const res = applyAction(sig, link ? "m" : act, price, nowMs, link ? { fills: true } : {});
+    if (link && res.update) Object.assign(res.update, { entry_fill: link.entry });
     if (res.error) return `**⚠️ ثبت نشد**\n~~${res.error}~~`;
     const upd = await rest(`signals?id=eq.${encodeURIComponent(id)}&status=eq.${sig.status}`, { method: "PATCH",
       body: { ...res.update, updated_at: new Date(nowMs).toISOString() }, prefer: "return=representation" });
     if (!upd || !upd.length) return "**⚠️ قبلاً ثبت شده**\n~~وضعیت این سیگنال همین الان عوض شده بود~~";
-    const L = [doneText(sig, act, res)];
+    const L = [doneText(sig, link ? "m" : act, res)];
     if (res.journal) {
       await rest("journal?on_conflict=trade_id", { method: "POST", body: [res.journal], prefer: "resolution=ignore-duplicates,return=minimal" });
       const now = teh(new Date(nowMs));
@@ -158,7 +178,13 @@ export function makeApp(cfg) {
   }
   async function onJournal(env, j) {
     if (j.error) return send(env, BAD_JOURNAL);
-    if (j.view === "journal") return send(env, journalMsg(await rest("journal?select=*&order=closed_at.desc&limit=10")));
+    if (j.view === "journal") {
+      const rows = await rest("journal?select=*&order=closed_at.desc&limit=10");
+      const ids = [...new Set(rows.map((r) => r.signal_id).filter(Boolean))];
+      const tr = ids.length ? await rest(`signals?select=id,mfe_r,mae_r,track_outcome&id=in.(${ids.join(",")})`) : [];
+      const recent = await rest("signals?select=id,side,track_outcome,mfe_r,mae_r&track_outcome=not.is.null&order=sent_at.desc&limit=5");
+      return send(env, journalMsg(rows, Object.fromEntries(tr.map((x) => [x.id, x])), recent));
+    }
     if (j.view === "pnl") return send(env, pnlMsg(await rest("journal?select=session_date,net_toman,r_multiple,under_60s&limit=10000"), teh(clock())));
     return askConfirm(env, j.act, j.id, j.price);
   }
@@ -177,11 +203,21 @@ export function makeApp(cfg) {
     const strip = () => tg(env, "editMessageReplyMarkup", { chat_id: msg.chat.id, message_id: msg.message_id, reply_markup: { inline_keyboard: [] } });
     if (!c) { await answer(); return new Response("ok"); }
     if (c.cancel) { await answer("لغو شد"); await strip(); return new Response("ok"); }
+    if (c.trade) {   // «معامله‌ی جدا»: record the /trade as its own trade
+      await answer("ثبت شد"); await strip();
+      const r = await mutate(async (s) => handle(s, c.trade, teh(), clock()));
+      await send(env, r.reply);
+      if (r.journal_row) {
+        try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
+        catch (e) { console.error("journal sync:", String(e && e.message || e)); }
+      }
+      return new Response("ok");
+    }
     if (c.step === "a") { await answer(); await askConfirm(env, c.act, c.id, c.price); return new Response("ok"); }
     await answer("ثبت شد");
     await strip();   // a confirmation card works once
     let out;
-    try { out = await confirmAction(c.id, c.act, c.price); }
+    try { out = await confirmAction(c.id, c.act, c.price, c.act === "j" ? { entry: c.entry, unit: c.unit } : null); }
     catch (e) { console.error("confirm:", String(e && e.message || e)); out = "**⚠️ ثبت نشد**\n~~ذخیره ممکن نشد؛ چند دقیقه‌ی دیگر دوباره بزنید~~"; }
     await send(env, out);
     return new Response("ok");
@@ -229,6 +265,9 @@ export function makeApp(cfg) {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
       const c0 = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+      if (c0 === "/trade") {   // checked against open signals first (double-count guard)
+        try { return { tradeCheck: parseTrade(text.split(/\s+/).slice(1)) }; } catch { /* bad input: handle() answers with the format */ }
+      }
       if (JOURNAL_CMDS.includes(c0)) {
         try { return { journal: parseJournalCmd(c0, text.split(/\s+/).slice(1), teh(clock())) }; }
         catch { return { journal: { error: true } }; }
@@ -247,6 +286,25 @@ export function makeApp(cfg) {
       return r;
     });
     if (!res) return new Response("ok");
+    if (res.tradeCheck) {
+      let sig = null;
+      try {
+        const sigs = await rest(`signals?select=*&side=eq.${res.tradeCheck.side.toUpperCase()}&status=in.(sent,entered,expired)&order=sent_at.desc&limit=5`);
+        sig = matchSignal(res.tradeCheck, sigs, sessionDate(teh(clock())));
+      } catch (e) { console.error("trade check:", String(e && e.message || e)); }
+      if (sig) {
+        const card = tradeMatchCard(res.tradeCheck, sig);
+        await send(env, card.text, CHAT_ID, card.markup);
+        return new Response("ok");
+      }
+      const r = await mutate(async (s) => handle(s, text, teh(), clock()));
+      await send(env, r.reply);
+      if (r.journal_row) {
+        try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
+        catch (e) { console.error("journal sync:", String(e && e.message || e)); }
+      }
+      return new Response("ok");
+    }
     if (res.journal) {   // private chat only; never mirrored
       try { await onJournal(env, res.journal); }
       catch (e) { console.error("journal:", String(e && e.message || e)); await send(env, "**⚠️ ثبت نشد**\n~~ژورنال در دسترس نیست؛ چند دقیقه‌ی دیگر دوباره بفرستید~~"); }
@@ -332,8 +390,10 @@ export function makeApp(cfg) {
         }
         const b = await req.json();
         const merged = await rpc("bot_merge", { p_patch: b.patch || {}, p_done: b.done_cmds || [], p_news: b.news_windows || null });
-        try { const n = await storeSignals((b.patch || {}).signals_sent); if (merged && n) merged.signals_stored = n; }
-        catch (e) { console.error("signals:", String(e && e.message || e)); if (merged) merged.signals_error = true; }
+        try {
+          const n = await storeSignals((b.patch || {}).signals_sent); if (merged && n) merged.signals_stored = n;
+          const k = await storeTracking((b.patch || {}).signals_sent, clock().getTime()); if (merged && k) merged.signals_tracked = k;
+        } catch (e) { console.error("signals:", String(e && e.message || e)); if (merged) merged.signals_error = true; }
         return Response.json(merged);
       }
       if (p.endsWith("/health")) {   // public, read-only: lets a deploy be checked without touching Telegram

@@ -57,6 +57,7 @@ globalThis.fetch = async (url, init = {}) => {
     const ok = (r) => fl.every(([k, v]) => { const [op, ...rest] = v.split("."); const val = rest.join(".");
       const x = r[k] == null ? null : String(r[k]);
       if (op === "eq") return x === val; if (op === "in") return val.slice(1, -1).split(",").includes(x);
+      if (op === "not" && val === "is.null") return x !== null;
       if (op === "gte") return x !== null && x >= val; if (op === "lte") return x !== null && x <= val; if (op === "lt") return x !== null && x < val; return false; });
     const m = init.method || "GET";
     if (m === "POST") { for (const r of JSON.parse(init.body)) if (!T.some((y) => y[pk] === r[pk])) T.push({ status: "sent", ...r }); return new Response(null, { status: 201 }); }
@@ -565,4 +566,44 @@ TBL_FAIL = true; r = await tgSend("/journal"); TBL_FAIL = false;
 check("journal database down → short error to the owner", r.out.length === 1 && r.out[0].includes("ثبت نشد"));
 o = await (await gh("/admin/setup", "POST", { set_webhook: true })).json();
 check("setup: webhook also receives button presses (callback_query)", DB.hook.allowed_updates.includes("callback_query") && DB.hook.allowed_updates.includes("message"));
+
+// ---------------- Phase 4: forward tracking (MFE/MAE) + /trade double-count guard ----------------
+CLOCK = new Date("2026-11-23T10:00:00Z");   // Monday 13:30 Tehran
+TBL.signals.length = 0; TBL.journal.length = 0;
+const S5 = { ...SIG(5), id: "S-20261123-005", session_date: "2026-11-23", sent_at: "2026-11-23T13:00:00+03:30", valid_until: "2026-11-23T13:30:00+03:30" };
+const fresh = { outcome: "tp", fill_at: "2026-11-23T09:31:00+00:00", mfe_usd: 4.1, mae_usd: 0.6, mfe_r: 2.56, mae_r: 0.38, tracked_at: "2026-11-23T09:59:00+00:00", final: true };
+sr = await (await gh("/state", "POST", { patch: { signals_sent: [S5, { ...SIG(6), id: "S-20261123-006", session_date: "2026-11-23",
+  track: { ...fresh, tracked_at: "2026-11-23T08:00:00+00:00" } }] }, done_cmds: [] })).json();
+sr = await (await gh("/state", "POST", { patch: { signals_sent: [{ ...S5, track: fresh }, { ...SIG(6), id: "S-20261123-006", session_date: "2026-11-23",
+  track: { ...fresh, outcome: "sl", tracked_at: "2026-11-23T08:00:00+00:00" } }] }, done_cmds: [] })).json();
+const t5 = TBL.signals.find((x) => x.id === "S-20261123-005"), t6 = TBL.signals.find((x) => x.id === "S-20261123-006");
+check("tracking: fresh MFE/MAE written to the signal row; stale tracking (older than 30 min) not rewritten",
+  sr.signals_tracked === 1 && t5.track_outcome === "tp" && t5.mfe_r === 2.56 && t5.mae_r === 0.38 && t5.mfe_usd === 4.1 && !t6.track_outcome);
+sr = await (await gh("/state", "POST", { patch: { signals_sent: [{ ...S5, id: "S-1;x", track: fresh }, { ...S5, track: { ...fresh, outcome: "drop table" } }] }, done_cmds: [] })).json();
+check("tracking: bad IDs / unknown outcomes ignored", !sr.signals_tracked);
+r = await tgSend("/journal");
+check("/journal shows signal tracking (outcome, best/worst in R)", r.out[0].includes("پیگیری سیگنال") && r.out[0].includes("<code>S-20261123-005</code>") &&
+  r.out[0].includes("به هدف رسید") && r.out[0].includes("+۲٫۵۶R") && (r.out[0].includes("−۰٫۳۸R") || r.out[0].includes("-۰٫۳۸R")));
+const wk = JR.reportMsg("weekly", { signals: TBL.signals, journal: [], shadow: [], calibration: null }, "2026-11-23", "2026-11-23", CLOCK.getTime());
+check("weekly report includes the tracking line (TP/SL/no-fill and average MFE/MAE)", wk.includes("پیگیری سیگنال") && wk.includes("هدف 1") && wk.includes("+2.56R"));
+// /trade guard
+const eqT = Number(st().equity_toman), nJ = TBL.journal.length;
+r = await tgSend("/trade sell 3880.0 3876.5 1");
+check("/trade that matches an open signal → question card (same signal / separate / cancel), nothing recorded yet",
+  r.out.length === 1 && r.out[0].includes("همان سیگنال") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:j:S-20261123-005:3880:3876.5:1" &&
+  SENT[0].reply_markup.inline_keyboard[1][0].callback_data === "tr:sell:3880:3876.5:1" && TBL.journal.length === nJ && Number(st().equity_toman) === eqT);
+r = await cb("c:j:S-20261123-005:3880:3876.5:1");
+const jl = TBL.journal.find((x) => x.trade_id === "S-20261123-005");
+check("«همان سیگنال» → one journal row from the signal with the owner's fills (no extra spread): 3.5×80k − 14k = 266,000",
+  jl && jl.net_toman === 266000 && jl.spread_toman === 0 && jl.entry === 3880 && TBL.signals.find((x) => x.id === "S-20261123-005").status === "closed" &&
+  Number(st().equity_toman) === eqT + 266000 && TBL.journal.filter((x) => x.source === "trade_cmd").length === 0);
+r = await tgSend("/trade buy 3880.0 3882.5 0.5");
+check("/trade with no matching open signal is recorded directly", r.out[0].includes("معامله ثبت شد") && TBL.journal.some((x) => x.source === "trade_cmd" && x.unit === "0.5U"));
+await gh("/state", "POST", { patch: { signals_sent: [{ ...SIG(7), id: "S-20261123-007", session_date: "2026-11-23" }] }, done_cmds: [] });
+r = await tgSend("/trade sell 3880.5 3879 1");
+r = await cb("tr:sell:3880.5:3879:1");
+check("«معامله‌ی جدا» → recorded as its own trade; the signal stays open", r.out[0].includes("معامله ثبت شد") &&
+  TBL.journal.some((x) => x.source === "trade_cmd" && x.entry === 3880.5) && TBL.signals.find((x) => x.id === "S-20261123-007").status === "sent");
+check("parseCallback rejects malformed link/trade buttons", JR.parseCallback("c:j:S-20261123-005:1:2:1") === null && JR.parseCallback("tr:hold:3880:3879:1") === null &&
+  JR.parseCallback("tr:sell:3880:3879:2") === null);
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

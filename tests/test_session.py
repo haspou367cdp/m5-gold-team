@@ -67,3 +67,14 @@ def test_asia_window_is_live_since_owner_decision():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot", "bot.py"), encoding="utf-8").read()
     assert re.search(r"(?m)^ASIA_LOG_ONLY = False\b", src)
     assert "and ASIA_LOG_ONLY and in_asia(t)" in src
+
+
+def test_persian_user_guide():
+    import os, re
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "README_FA.md")
+    s = open(p, encoding="utf-8").read()
+    for cmd in ("/entered", "/tp", "/sl", "/closed", "/journal", "/pnl", "/calibrate", "/trade", "/scan", "/groupoff"):
+        assert cmd in s
+    for must in ("۰۷:۰۰ تا ۰۰:۳۰", "14,000", "0.25", "80,000", "40,000", "1,000,000", "500,000", "۶۰ ثانیه", "گزارش", "محدودیت"):
+        assert must in s
+    assert "زیان" not in s and not re.search(r"(^|[\s،.])قوی([\s،.]|$)", s)
