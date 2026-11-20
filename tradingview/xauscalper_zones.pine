@@ -1,7 +1,7 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // Xauscalper Zones · XAUUSD — همراه بات تلگرامی Xauscalper (تیم M5 Gold Scalp)
 // روند چهار تایم‌فریم، سطح‌های بات، پهنه‌ی هر سطح، ورود در پهنه هم‌سو با روند H1 و M15، و یک حد سود درست پیش از سطح بعدی.
-// نسبت سود به ضرر خالص با هزینه‌های داریاگلد و فیلترهای ریسک. مخصوص چارت پنج‌دقیقه‌ای طلا.
+// نسبت سود به ضرر خالص با هزینه‌های دریاگلد و فیلترهای ریسک. مخصوص چارت پنج‌دقیقه‌ای طلا.
 // Generated from tradingview/src/template.pine by tradingview/src/build.py (fa).
 //@version=6
 indicator("Xauscalper Zones · XAUUSD", shorttitle = "XSZ", overlay = true, max_lines_count = 300, max_labels_count = 300, max_boxes_count = 50, max_bars_back = 500)
@@ -28,7 +28,7 @@ bool   useVwap  = input.bool(true, "میانگین وزنی روز", group = GL)
 bool   useRound = input.bool(true, "عددهای رُند", group = GL)
 bool   useWeek  = input.bool(true, "سقف و کف هفته‌ی پیش", group = GL)
 int    nShow    = input.int(2, "شمار پهنه‌ها در بالا و پایین", minval = 1, maxval = 4, group = GL)
-float  dgOff    = input.float(0.3, "اختلاف قیمت داریاگلد با چارت (دلار)", step = 0.05, tooltip = "قیمت داریاگلد برابر است با قیمت چارت به‌اضافه‌ی این عدد. آن را با عدد کالیبره‌ی بات یکی کنید.", group = GL)
+float  dgOff    = input.float(0.3, "اختلاف قیمت دریاگلد با چارت (دلار)", step = 0.05, tooltip = "قیمت دریاگلد برابر است با قیمت چارت به‌اضافه‌ی این عدد. آن را با عدد کالیبره‌ی بات یکی کنید.", group = GL)
 
 const string GS = "۳. ورود در پهنه"
 string entryT  = input.string("لیمیت", "نوع ورود", options = ["لیمیت", "مارکت"], group = GS)
@@ -55,7 +55,7 @@ float  volK    = input.float(2.0, "جهش نوسان: ATR چند برابر می
 int    medDays = input.int(5, "بازه‌ی میانه‌ی ATR (روز)", minval = 2, maxval = 20, tooltip = "میانه", group = GF)
 float  bufMax  = input.float(9.0, "سقف حد ضرر به‌اضافه‌ی ATR (دلار)", step = 0.5, group = GF)
 bool   bufHard = input.bool(true, "نزدیکی به استاپ‌اوت ورود را ببندد", tooltip = "اگر خاموش باشد، ورود مجاز می‌ماند و فقط نشانه‌ی ⚠ می‌گیرد.", group = GF)
-int    openHM  = input.int(700, "ساعت باز شدن داریاگلد (ساعت و دقیقه، تهران)", minval = 0, maxval = 2359, group = GF)
+int    openHM  = input.int(700, "ساعت باز شدن دریاگلد (ساعت و دقیقه، تهران)", minval = 0, maxval = 2359, group = GF)
 int    closeHM = input.int(30, "ساعت بسته شدن (بامداد روز بعد، تهران)", minval = 0, maxval = 459, group = GF)
 int    friHM   = input.int(2330, "جمعه: ورود تازه ممنوع از ساعت", minval = 0, maxval = 2359, group = GF)
 
@@ -193,7 +193,7 @@ if inNY and not inNY[1]
 float vwapRaw = ta.vwap(hlc3, newDay)
 float vwapD = useVwap ? vwapRaw : na
 
-// ───────────────────────── ساعت کار داریاگلد و خبرها ─────────────────────────
+// ───────────────────────── ساعت کار دریاگلد و خبرها ─────────────────────────
 // Evaluated at bar close (entry time). 00:00–00:30 Tehran belongs to the previous weekday's session (Tue–Sat).
 int dow = dayofweek(time_close, tzTeh)
 int hm  = hour(time_close, tzTeh) * 100 + minute(time_close, tzTeh)
@@ -489,7 +489,7 @@ if barstate.islast and showTbl
                 cnt += 1
     f_row(r, "وضعیت", "", "", baseWhy != 0 ? "مسدود: " + f_rname(baseWhy) : "مجاز", baseWhy != 0 ? color.orange : color.lime)
     r += 1
-    f_row(r, "قیمت داریاگلد", f_px(close), "", "", color.white)
+    f_row(r, "قیمت دریاگلد", f_px(close), "", "", color.white)
     r += 1
     f_row(r, "قیمت چارت", str.tostring(close, "0.00"), "", "", color.gray)
     r += 1
