@@ -15,21 +15,22 @@ Files: `xauscalper_zones_en.pine` (English) and `xauscalper_zones.pine` (Persian
 - ATR M5 and its median (orange = volatility expansion). ADR used % and the 20-day ADR. Zone half-width.
 - Above 1/2, Below 1/2: price, $ distance, level sources.
 - Risk status, DaryaGold price (chart + offset), chart price.
-- Blocked today: how many setups were blocked today and by which filter. If one filter blocks most setups, its threshold is an input (e.g. "Max SL + ATR" for the stop-out buffer).
+- Blocked today: how many setups were blocked today and by which filter. If one filter blocks most setups, its threshold is an input.
 
 ## Zones
 Levels: PDH/PDL, PWH/PWL, Asia H/L (03:30–11:30 Tehran), London H/L (07:00 London → 08:30 New York), London opening range (first 30 min), NY open (08:30 New York), day VWAP, $50/$00 round numbers. Zone = level ± max(0.25 × M5 ATR, $1). Overlapping zones merge. 2 above and 2 below are shown by distance. Labels sit at the right edge: price to the right, first source to the left (hover for all). Zones closer than $3 share one label. Labels name the source only; they are not a ranking.
 
 ## Zone-entry setup
 - Price in a zone, direction = H1 and M15 trend, next level at least 2 × SL away.
-- SL = beyond the zone's far edge + max($0.5, 0.3 × ATR), at least max($1, 0.6 × ATR).
+- SL = beyond the zone's far edge + max($0.5, 0.3 × ATR), at least max($1, 0.5 × ATR).
 - TP = just before the next level (max($0.3, 0.1 × ATR)). One TP.
-- Net R:R includes the once-per-trade fee, toman per $ by size, and $0.25 spread on market entries. Minimum 1.5; above 8 is rejected.
+- Net R:R includes the once-per-trade fee, the per-$ value of the chosen size, and $0.25 spread on market entries. Minimum 1.5; above 8 is rejected.
 - Coloured marker: ▲ Buy / ▼ Sell, then E (entry), SL, TP, RR. Lines last 6 bars (30-minute order expiry).
-- Tiny grey cross: a setup blocked by a filter; hover for the reason. Default "First per streak" (only when the reason changes); "All" and "None" are available.
+- Blocked setups are hidden by default. Set "Blocked markers" to "First per streak" or "All" to show them as faint grey dots; hover a dot for the reason.
+- A ⚠ on a marker means SL + ATR is above the stop-out buffer ($9 by default). It is a warning only, unless "Stop-out buffer blocks entries" is on.
 
 ## Filters
-Outside DaryaGold hours (Mon–Fri 07:00–00:30 Tehran), Friday after 23:30, ADR used > 100%, M5 ATR > 2 × median, SL + ATR > $5 (stop-out is about $10 away), TP > 3 × ATR, and three manual news windows (Pine can't read a calendar; enter tier A/B times from the bot's /brief).
+Outside DaryaGold hours (Mon–Fri 07:00–00:30 Tehran), Friday after 23:30, ADR used > 130%, M5 ATR > 2 × median, TP > 3 × ATR, SL + ATR > $9 only if "Stop-out buffer blocks entries" is on (otherwise a ⚠ warning; stop-out is about $10 away), and three manual news windows (Pine can't read a calendar; enter tier A/B times from the bot's /brief).
 
 ## Using it with the bot
 1. A bot signal arrives → check the price is in that zone and the table says Allowed.
@@ -40,7 +41,7 @@ Outside DaryaGold hours (Mon–Fri 07:00–00:30 Tehran), Friday after 23:30, AD
 ## Optimisations in this version
 - 4 request.security calls instead of 6 (base-timeframe trend and ATR share one tuple call).
 - ATR median from one sample per hour, recomputed only when a sample is added.
-- Arrays are allocated once and cleared; levels and setups are evaluated only on the last 3,000 bars (input).
+- Arrays are allocated once and cleared; levels and setups are evaluated only on the last 6,000 bars (input).
 - Zones and table are redrawn only on the last bar.
 - Session levels reset at the trading-day change, so yesterday's London levels never show as today's.
 
