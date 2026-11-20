@@ -159,7 +159,7 @@ for (const gone of ["/trade sell 3914.07 3909.61 1", "/loss 150000", "/win 1", "
 r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("سیگنال خودکار: خاموش") && r.out[0].includes("<code>07:00</code>") && r.out[0].includes("<code>00:30</code>"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
-check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
+check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === sessionDate(teh()) && s0.equity_toman === 5);   // trading day (00:00-07:00 belongs to the previous day)
 check("Tehran clock is UTC+3:30", teh(new Date("2026-11-13T20:30:00Z")).full === "2026-11-14 00:00");
 // /levels -> queue + dispatch
 DISPATCHED.length = 0; r = await tgSend("/levels");
