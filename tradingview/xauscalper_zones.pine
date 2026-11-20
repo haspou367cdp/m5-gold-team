@@ -54,7 +54,7 @@ float  adrMax  = input.float(130, "سقف مصرف دامنه‌ی روز (در�
 float  volK    = input.float(2.0, "جهش نوسان: ATR چند برابر میانه", step = 0.1, group = GF)
 int    medDays = input.int(5, "بازه‌ی میانه‌ی ATR (روز)", minval = 2, maxval = 20, tooltip = "میانه", group = GF)
 float  bufMax  = input.float(9.0, "سقف حد ضرر به‌اضافه‌ی ATR (دلار)", step = 0.5, group = GF)
-bool   bufHard = input.bool(false, "نزدیکی به استاپ‌اوت ورود را ببندد", tooltip = "اگر خاموش باشد، ورود مجاز می‌ماند و فقط نشانه‌ی ⚠ می‌گیرد.", group = GF)
+bool   bufHard = input.bool(true, "نزدیکی به استاپ‌اوت ورود را ببندد", tooltip = "اگر خاموش باشد، ورود مجاز می‌ماند و فقط نشانه‌ی ⚠ می‌گیرد.", group = GF)
 int    openHM  = input.int(700, "ساعت باز شدن داریاگلد (ساعت و دقیقه، تهران)", minval = 0, maxval = 2359, group = GF)
 int    closeHM = input.int(30, "ساعت بسته شدن (بامداد روز بعد، تهران)", minval = 0, maxval = 459, group = GF)
 int    friHM   = input.int(2330, "جمعه: ورود تازه ممنوع از ساعت", minval = 0, maxval = 2359, group = GF)

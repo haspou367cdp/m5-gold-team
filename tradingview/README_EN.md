@@ -27,10 +27,10 @@ Levels: PDH/PDL, PWH/PWL, Asia H/L (03:30–11:30 Tehran), London H/L (07:00 Lon
 - Net R:R includes the once-per-trade fee, the per-$ value of the chosen size, and $0.25 spread on market entries. Minimum 1.5; above 8 is rejected.
 - Coloured marker: ▲ Buy / ▼ Sell, then E (entry), SL, TP, RR. Lines last 6 bars (30-minute order expiry).
 - Blocked setups are hidden by default. Set "Blocked markers" to "First per streak" or "All" to show them as faint grey dots; hover a dot for the reason.
-- A ⚠ on a marker means SL + ATR is above the stop-out buffer ($9 by default). It is a warning only, unless "Stop-out buffer blocks entries" is on.
+- Stop-out buffer: by default a setup with SL + ATR above $9 is blocked. Turn off "Stop-out buffer blocks entries" to allow it with a ⚠ mark instead.
 
 ## Filters
-Outside DaryaGold hours (Mon–Fri 07:00–00:30 Tehran), Friday after 23:30, ADR used > 130%, M5 ATR > 2 × median, TP > 3 × ATR, SL + ATR > $9 only if "Stop-out buffer blocks entries" is on (otherwise a ⚠ warning; stop-out is about $10 away), and three manual news windows (Pine can't read a calendar; enter tier A/B times from the bot's /brief).
+Outside DaryaGold hours (Mon–Fri 07:00–00:30 Tehran), Friday after 23:30, ADR used > 130%, M5 ATR > 2 × median, TP > 3 × ATR, SL + ATR > $9 (stop-out is about $10 away; can be switched to a ⚠ warning), and three manual news windows (Pine can't read a calendar; enter tier A/B times from the bot's /brief).
 
 ## Using it with the bot
 1. A bot signal arrives → check the price is in that zone and the table says Allowed.
