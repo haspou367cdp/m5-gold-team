@@ -15,4 +15,4 @@ jobs:
       - name: Send to group
         env:
           TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python3 tradingview/post/send.py
+        run: python3 tradingview/post/probe.py
