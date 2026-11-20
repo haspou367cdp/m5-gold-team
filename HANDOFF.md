@@ -1,6 +1,6 @@
 # HANDOFF — Xauscalper (M5 gold assistant for DaryaGold)
 
-Last updated 2026-11-20 (Tehran). Read this first if you are a developer or an AI agent picking the project up.
+Last updated 2026-11-21 (Tehran). Read this first if you are a developer or an AI agent picking the project up.
 Owner: pouhasaa (Asia/Tehran). All dates below are Tehran dates.
 
 ## 1. Goal
@@ -21,7 +21,9 @@ The audience includes complete beginners in the BAROBAX Telegram group, so every
 | 2026-11-20 | Phase 4 backtest of the live engines under the DaryaGold cost model: negative expectancy IS and OOS (§6). |
 | 2026-11-20 | **Assistant redesign** (owner t226u–t232u): automatic signals and the journal switched off; new `/setup`, `/trend`, `/e` from a live DaryaGold price; alerts tick every 2 min (level touch, trend change, volatility, news). Deployed as tg-bot v23; `main` = 737b446. |
 | 2026-11-20 | **Command cleanup** (owner t238u): journal/trade commands deleted, scoped Telegram menus, Persian copy pass, `/e` SL side wording, Sun/Mon 00:00–00:30 entry-limit fix. tg-bot v24 (commit 2f3420a). |
-| 2026-11-20 | **Plain Persian for beginners** (owner t240u–t243u): every message rewritten; level-touch alert only within $1 of the level, with how far price went, the gap and where it is now; plain `/levels` card; same wording on the indicator labels. tg-bot **v25** (commit c86c529), indicator commit e4d55cb on `tv-decision-map`. |
+| 2026-11-20 | **Plain Persian for beginners** (owner t240u–t243u): every message rewritten; level-touch alert only within $1 of the level, with how far price went, the gap and where it is now; plain `/levels` card; same wording on the indicator labels. tg-bot **v25** (commit c86c529), indicator commit e4d55cb. |
+| 2026-11-21 00:04 | **Group post** (owner t238u): Xauscalper Map fa (msg 2979) and en (2980) files plus the plain group guide (2981–2982) posted to BAROBAX via a one-off workflow on branch `group-guide-post` (workflow deleted afterwards). |
+| 2026-11-21 | `bot-assistant-v2` (fast-forward) and `tv-decision-map` (merge commit) merged into `main`; the Python plain wording is live from the next GitHub Actions run. |
 
 Price-basis decision is **still open** (see §5): do not change it without the owner's approval.
 
@@ -67,7 +69,7 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
   credibility 0–100 (⚠ under 40), valid until (45 min, cut at news / Friday 23:30 / close), plain "why" line. Owner card has
   toman for 1 and 0.5 unit after the fee (best and worst edge). Every shown setup is logged to `setups` and resolved silently.
 - `/e [buy|sell] <price>`: SL/TP1/TP2 for an entry; side optional (taken from the big direction).
-- `/trend`, `/levels`, `/brief`: see `/workspace/tv_texts/bot_messages_samples_fa.md` (before/after samples, on the box).
+- `/trend`, `/levels`, `/brief`: see `docs/bot_messages_samples_fa.md` (before/after samples of every message type).
 - Alerts (owner only, from `/tick`): level touch (only within **$1 of the level price**, once per level per day; says how
   far price went, the gap and where it is now: bounced / at the level / crossed / crossed and came back), M15/H1 trend
   change, volatility high/low, major US news ~10 min ahead.
@@ -92,7 +94,8 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
 - Conclusion: no backtested edge. The bot is a decision aid, not a signal service.
 
 ## 7. TradingView indicator (Xauscalper Map)
-- Branch `tv-decision-map` (commits 90625ad, e4d55cb), worktree on the box `/workspace/tv-map-wt`.
+- Merged into `main` from branch `tv-decision-map` (commits 90625ad, e4d55cb). The older Xauscalper Zones indicator
+  (`tradingview/xauscalper_zones*.pine`, `tradingview/src/`) came along with the merge and is superseded by the Map.
 - Source `tradingview/map/template.pine` + `tradingview/map/build.py` → `tradingview/xauscalper_map.pine` (Persian) and
   `xauscalper_map_en.pine` (identical logic, only texts differ). Copies on the box: `/workspace/xauscalper_map.pine`,
   `/workspace/xauscalper_map_en.pine`. Spec `docs/decision_map_spec.md`; phone how-to `tradingview/map_howto_fa.md`.
@@ -104,14 +107,15 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
   Port the fix to the Pine template when the indicator is next touched.
 
 ## 8. Deployed vs pending
-Deployed: tg-bot **v25** (build `2026-11-21-assistant-v4-plain`), menus version `2026-11-20-t238u` applied.
+Deployed:
+- tg-bot **v25** (build `2026-11-21-assistant-v4-plain`), menus version `2026-11-20-t238u` applied.
+- `main` contains everything: assistant v25, plain Python wording (live from the next workflow run), the Xauscalper Map
+  indicator, this file. Branches `bot-assistant-v2` and `tv-decision-map` are merged.
+- Group guide `docs/group_guide_fa.md` and both indicator files posted to BAROBAX on 2026-11-21 (messages 2979–2982).
 Pending:
-1. Merge `bot-assistant-v2` into `main` (makes the Python plain wording live: `/brief`, briefs, queued `/levels`). Needs the
-   owner's go-ahead.
-2. Price-basis unification (bid+0.30 vs mid+0.02) — owner decision.
-3. Indicator: merge `tv-decision-map`; port the Sun/Mon entry-limit fix; owner to install it.
-4. Friday config: confirm Friday close/cutoff values in `tools/broker_daryagold.json` match DaryaGold (23:30 cutoff, 00:30 close).
-5. Group guide `/workspace/tv_texts/group_guide_fa.md` — written, **not posted**; post only with the owner's approval.
+1. Price-basis unification (bid+0.30 vs mid+0.02) — owner decision; unchanged on purpose.
+2. Indicator: port the Sun/Mon 00:00–00:30 entry-limit fix to the Pine template.
+3. Friday config: confirm Friday cutoff/close values in `tools/broker_daryagold.json` match DaryaGold (23:30 cutoff, 00:30 close).
 
 ## 9. Security rules
 - Never print, commit or log tokens. Secrets live in Supabase Vault and GitHub secrets only.
