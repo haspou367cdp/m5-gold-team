@@ -1,0 +1,18 @@
+name: tv-group-post
+# One-off: posts the TradingView indicator, its guide and the bot intro to the BAROBAX group (owner request t199u).
+# Runs only on pushes to branch tv-group-post. The token stays in GitHub secrets and is never printed.
+on:
+  push:
+    branches: [tv-group-post]
+permissions:
+  contents: read
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Send to group
+        env:
+          TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python3 tradingview/post/send.py
