@@ -16,3 +16,10 @@ def test_edge_function_suite():
     p = subprocess.run(["node", "test.mjs"], cwd=os.path.join(ROOT, "supabase/functions/tg-bot"),
                        capture_output=True, text=True, timeout=300)
     assert p.returncode == 0 and p.stdout.strip().endswith("0 failed"), p.stdout[-2000:]
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node not installed")
+def test_assistant_suite():
+    p = subprocess.run(["node", "test_assist.mjs"], cwd=os.path.join(ROOT, "supabase/functions/tg-bot"),
+                       capture_output=True, text=True, timeout=300)
+    assert p.returncode == 0 and p.stdout.strip().endswith("0 failed"), p.stdout[-2000:]

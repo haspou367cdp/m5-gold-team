@@ -7,9 +7,10 @@
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
 import { matchSignal, tradeMatchCard, JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
-import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS } from "./lib.js";
+import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, LEGACY_GROUP_CMDS, LEGACY_MIRROR_CMDS, forexOpen } from "./lib.js";
+import * as A from "./assist.js";
 
-export const BUILD = "2026-11-20-telegram-redesign";
+export const BUILD = "2026-11-21-assistant-v2";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -17,6 +18,8 @@ const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(r2(x));
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
+  const LEG = !!cfg.legacy;   // tests only: the pre-2026-11-21 signal/journal command set (production: off)
+  const MIRROR = LEG ? LEGACY_MIRROR_CMDS : MIRROR_CMDS, GROUPS = LEG ? LEGACY_GROUP_CMDS : GROUP_CMDS;
   const hdr = { apikey: KEY, authorization: `Bearer ${KEY}`, "content-type": "application/json" };
   const rpc = async (fn, args = {}) => {
     const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method: "POST", headers: hdr, body: JSON.stringify(args) });
@@ -205,7 +208,7 @@ export function makeApp(cfg) {
     if (c.cancel) { await answer("لغو شد"); await strip(); return new Response("ok"); }
     if (c.trade) {   // «معامله‌ی جدا»: record the /trade as its own trade
       await answer("ثبت شد"); await strip();
-      const r = await mutate(async (s) => handle(s, c.trade, teh(), clock()));
+      const r = await mutate(async (s) => handle(s, c.trade, teh(), clock(), { legacy: LEG }));
       await send(env, r.reply);
       if (r.journal_row) {
         try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
@@ -248,6 +251,122 @@ export function makeApp(cfg) {
     return Response.json({ ok: sent, key, signals: signals.length, trades: journal.length });
   }
 
+  // ---------------- assistant: /setup /trend /e (owner t226u-t232u) ----------------
+  const BAD_E = "**⚠️ ورود را بنویسید**\n~~جهت اختیاری است و قیمت با نقطه، مثل:~~\n\n`/e sell 3531.80`\n`/e 3531.80`";
+  const NO_DIR = "**⚠️ جهت را بنویسید**\n~~روند فعلاً روشن نیست، مثل:~~ `/e sell 3531.80`";
+  const NO_FEED = "**⚠️ قیمت زنده در دسترس نیست**\n~~ستاپ بدون قیمت لحظه‌ای چیده نمی‌شود؛ چند دقیقه‌ی دیگر دوباره بفرستید~~";
+  async function marketNow(nowMs, opts) {
+    try { return await A.fetchMarket(nowMs, opts); } catch (e) { console.error("feed:", String(e && e.message || e)); return null; }
+  }
+  async function logSetups(list, q, v, origin, nowMs, trend) {
+    const stamp = new Date(nowMs + 210 * 60000).toISOString().replace(/\D/g, "").slice(0, 14);
+    const tag = Math.random().toString(36).slice(2, 6);   // two requests in the same second never collide
+    const rows = list.map((c, i) => ({ id: `U-${stamp}-${origin[0]}${c.side[0]}${i + 1}-${tag}`, created_at: new Date(nowMs).toISOString(), origin, side: c.side,
+      rank: c.rank, entry_lo: c.lo, entry_hi: c.hi, better_half: c.half, sl: c.sl, tp1: c.tp1, tp2: c.tp2, score: c.score, factors: c.factors,
+      reason: c.reason, price_at: q.dg, dg_bid_offset: q.bidOff, spread: q.spread, level_price: c.level.price,
+      valid_until: new Date(v.untilMs).toISOString(), invalid_price: c.invalid, trend }));
+    if (!rows.length) return 0;
+    await rest("setups?on_conflict=id", { method: "POST", body: rows, prefer: "resolution=ignore-duplicates,return=minimal" });
+    return rows.length;
+  }
+  async function onAssist(a, { group }) {
+    const now = clock(), nowMs = now.getTime(), open = forexOpen(now);
+    if (a.kind === "setup" && !open) return closedLine(now);
+    let ent = null;
+    if (a.kind === "e") {
+      if (group) return null;
+      try { ent = A.parseEntry(a.args || []); } catch { return BAD_E; }
+    }
+    const row = await loadRow(), s = normalize(row.state), snap = s.levels || null;
+    const mkt = await marketNow(nowMs);
+    const q = mkt ? A.quoteOf(mkt, A.midOffsetOf(s)) : null;
+    const live = mkt ? A.trendsOf(mkt, "live") : null;
+    const snapTrend = snap && snap.trend ? Object.fromEntries(A.TFS.map((tf) => [tf, (snap.trend[tf] || {}).trend || "خنثی"])) : null;
+    const trend = live || snapTrend;
+    const closedTail = open ? "" : "\n\n" + closedLine(now);
+    if (a.kind === "trend") {
+      if (!trend) return "**⚠️ داده‌ی قیمت در دسترس نیست**\n~~چند دقیقه‌ی دیگر دوباره بفرستید~~";
+      return A.trendMsg(trend, { quote: q, dataAt: live ? q.barAt : A.tehMs(snap.computed_at_tehran), at: nowMs, stale: !live }) + closedTail;
+    }
+    const levels = A.snapLevels(snap);
+    if (!levels.length) return "**⚠️ داده‌ی سطوح در دسترس نیست**\n~~بعد از بررسی خودکار بعدی دوباره بفرستید~~";
+    const age = A.snapAgeMin(snap, nowMs);
+    const snapNote = age !== null && age > 30 ? `سطوح مربوط به ساعت ${String(snap.computed_at_tehran).slice(11, 16)} است` : null;
+    const m5 = mkt ? A.withLive(mkt.native.M5, mkt.m1B, A.TF_MS.M5).closed : [];
+    const atr5 = m5.length > 20 ? A.atrSeries(m5).at(-1) : (Number(snap.atr_m5) || 8);
+    const adrUsed = Number(snap.adr_used_pct);
+    if (a.kind === "e") {
+      const d = ent.dir ? { dir: ent.dir, why: null } : (trend ? A.directionFrom(trend) : null);
+      if (!d) return NO_DIR;
+      const plan = A.planEntry({ levels, atr5 }, d.dir, ent.price);
+      return A.entryMsg(plan, { quote: q, nowMs, dirWhy: d.why }) + (snapNote ? `\n~~${snapNote}~~` : "") + closedTail;
+    }
+    // /setup
+    if (!q || !live) return NO_FEED;
+    if (q.ageS > 600) return "**⚠️ داده‌ی قیمت عقب است**\n~~آخرین قیمت بیش از ۱۰ دقیقه پیش است؛ ستاپ چیده نمی‌شود~~";
+    const ctx = { levels, quote: q, atr5, trend, adrUsed: Number.isFinite(adrUsed) ? adrUsed : NaN, nowMs, news: row.news };
+    const v = A.validity(ctx);
+    const ns = A.noSetupMsg(v, nowMs);
+    if (ns) return ns;
+    const res = A.buildSetups(ctx);
+    const list = [...res.SELL.map((c, i) => ({ ...c, rank: i + 1 })), ...res.BUY.map((c, i) => ({ ...c, rank: i + 1 }))];
+    try { await logSetups(list, q, v, group ? "group" : "owner", nowMs, trend); }
+    catch (e) { console.error("setups log:", String(e && e.message || e)); }   // silent calibration log; never blocks the answer
+    return A.setupMsg(res, ctx, v, { group, snapNote });
+  }
+
+  // ---------------- /tick: pg_cron every 2 min (Mon-Fri). Alerts go to the owner's private chat only. ----------------
+  async function onTick(req) {
+    const env = await secrets();
+    if (!env.WEBHOOK || (req.headers.get("x-report-key") || "") !== env.WEBHOOK) return new Response("forbidden", { status: 403 });
+    const now = clock(), nowMs = now.getTime(), open = forexOpen(now), out = { ok: true, sent: 0, setups: 0 };
+    let pend = [];
+    try {
+      pend = await rest(`setups?status=in.(pending,filled)&created_at=gte.${encodeURIComponent(new Date(nowMs - 8 * 3.6e6).toISOString())}&select=*&order=created_at.asc&limit=50`);
+    } catch (e) { out.setups_error = true; console.error("setups read:", String(e && e.message || e)); }
+    if (!open && !pend.length) return Response.json({ ...out, skipped: "closed" });
+    const mkt = await marketNow(nowMs, { tfs: open ? A.TFS : [] });
+    if (!mkt) return Response.json({ ...out, feed: false });
+    for (const r of pend) {
+      const u = A.resolveSetup(r, mkt.m1B, nowMs);
+      if (u.status === r.status && !!u.tp1_hit === !!r.tp1_hit && Number(u.mfe_usd) === Number(r.mfe_usd) && Number(u.mae_usd) === Number(r.mae_usd)) continue;
+      try { await rest(`setups?id=eq.${encodeURIComponent(r.id)}`, { method: "PATCH", body: u, prefer: "return=minimal" }); out.setups++; }
+      catch (e) { console.error("setups update:", String(e && e.message || e)); }
+    }
+    if (!open) return Response.json(out);
+    const row = await loadRow(), s = normalize(row.state), st = { ...(s.assist || {}) };
+    const q = A.quoteOf(mkt, A.midOffsetOf(s)), msgs = [], sent = { ...(st.sent || {}) };
+    // 1) level touch: once per level per trading day, at most one batch per 10 min
+    const snap = s.levels, day = sessionDate(teh(now)), age = A.snapAgeMin(snap, nowMs);
+    if (snap && age !== null && age < 60 && !(nowMs - (Number(st.level_alert_ms) || 0) < 10 * 60000)) {
+      const since = Math.max(Number(st.tick_ms) || 0, nowMs - 10 * 60000) - 60000, o = q.bidOff;
+      const bars = mkt.m1B.filter((b) => b[0] >= since).map((b) => [b[0], b[1] + o, b[2] + o, b[3] + o, b[4] + o]);
+      const la = A.levelAlerts(A.snapLevels(snap), bars, { day, sent, snapAtMs: A.tehMs(snap.computed_at_tehran) });
+      for (const x of la) { msgs.push(x.text); sent[x.key] = nowMs; }
+      if (la.length) st.level_alert_ms = nowMs;
+    }
+    // 2) M15 / H1 trend change on completed bars, once per change
+    const ct = A.trendsOf(mkt, "closed"), cur = { M15: ct.M15, H1: ct.H1 };
+    msgs.push(...A.trendAlerts(st.trend, cur, A.trendSummary(ct), nowMs));
+    st.trend = cur;
+    // 3) volatility: entering "too volatile" / "too quiet", each at most once an hour
+    const v = A.volState(A.withLive(mkt.native.M5, mkt.m1B, A.TF_MS.M5).closed, nowMs);
+    if (v) {
+      const va = { ...(st.vol_alert || {}) };
+      if (v.state !== (st.vol || {}).state && v.state !== "normal" && nowMs - (Number(va[v.state]) || 0) > 3.6e6) {
+        msgs.push(A.volAlert(v, nowMs)); va[v.state] = nowMs; st.vol_alert = va;
+      }
+      st.vol = { state: v.state, at: nowMs };
+    }
+    // 4) major news a few minutes ahead
+    for (const n of A.newsAlerts(row.news, nowMs, sent)) { msgs.push(n.text); for (const k of n.keys) sent[k] = nowMs; }
+    st.sent = Object.fromEntries(Object.entries(sent).filter(([, t]) => nowMs - Number(t) < 3 * 864e5));
+    st.tick_ms = nowMs;
+    await mutate(async (x) => { x.assist = { ...(x.assist || {}), ...st }; return true; });   // dedup first: a retry never repeats
+    for (const m of msgs) { try { if (await send(env, m)) out.sent++; } catch { /* next alert */ } }
+    return Response.json(out);
+  }
+
   async function onTelegram(req) {
     const env = await secrets();
     if (!env.TELEGRAM_BOT_TOKEN || (req.headers.get("x-telegram-bot-api-secret-token") || "") !== env.WEBHOOK)
@@ -267,14 +386,15 @@ export function makeApp(cfg) {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
       const c0 = text.split(/\s+/)[0].split("@")[0].toLowerCase();
-      if (c0 === "/trade") {   // checked against open signals first (double-count guard)
+      if (LEG && c0 === "/trade") {   // checked against open signals first (double-count guard)
         try { return { tradeCheck: parseTrade(text.split(/\s+/).slice(1)) }; } catch { /* bad input: handle() answers with the format */ }
       }
-      if (JOURNAL_CMDS.includes(c0)) {
+      if (LEG && JOURNAL_CMDS.includes(c0)) {
         try { return { journal: parseJournalCmd(c0, text.split(/\s+/).slice(1), teh(clock())) }; }
         catch { return { journal: { error: true } }; }
       }
-      const r = handle(s, text, teh(), clock());
+      const r = handle(s, text, teh(), clock(), { legacy: LEG });
+      if (r.assist) return r;
       if (r.queue) {
         // a different command always gets its own run (a run already in progress may have pulled the state
         // before it was queued); only a repeat of a command that is still pending and was dispatched < 90 s ago is skipped
@@ -289,6 +409,13 @@ export function makeApp(cfg) {
       return r;
     });
     if (!res) return new Response("ok");
+    if (res.assist) {   // /setup /trend /e: live price at command time; owner's private chat only, never mirrored
+      let msg;
+      try { msg = await onAssist(res.assist, { group: false }); }
+      catch (e) { console.error("assist:", String(e && e.message || e)); msg = "**⚠️ جواب آماده نشد**\n~~چند دقیقه‌ی دیگر دوباره بفرستید~~"; }
+      if (msg) await send(env, msg);
+      return new Response("ok");
+    }
     if (res.tradeCheck) {
       let sig = null;
       try {
@@ -300,7 +427,7 @@ export function makeApp(cfg) {
         await send(env, card.text, CHAT_ID, card.markup);
         return new Response("ok");
       }
-      const r = await mutate(async (s) => handle(s, text, teh(), clock()));
+      const r = await mutate(async (s) => handle(s, text, teh(), clock(), { legacy: LEG }));
       await send(env, r.reply);
       if (r.journal_row) {
         try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
@@ -336,7 +463,7 @@ export function makeApp(cfg) {
         }
       } catch (e) { console.error("journal sync:", String(e && e.message || e)); }
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
-      const pub = (MIRROR_CMDS.includes(cmd) && res.mirror) ? publicReply(cmd, res.reply) : null;
+      const pub = (MIRROR.includes(cmd) && res.mirror) ? publicReply(cmd, res.reply) : null;
       if (pub) {
         try { await send(env, pub, res.mirror); } catch { /* a group failure must never break the owner's reply */ }
       }
@@ -360,7 +487,7 @@ export function makeApp(cfg) {
     const head = text.split(/\s+/)[0] || "";
     if (!head.startsWith("/")) return ok;
     const [raw, at] = head.split("@");
-    const cmd = GROUP_CMDS[raw.toLowerCase()];
+    const cmd = GROUPS[raw.toLowerCase()];
     if (!cmd) return ok;
     if (at && at.toLowerCase() !== (await botUsername(env)).toLowerCase()) return ok;   // addressed to another bot
     const nowMs = clock().getTime();
@@ -371,7 +498,8 @@ export function makeApp(cfg) {
       s.group_cmd_at = s.group_cmd_at && typeof s.group_cmd_at === "object" ? s.group_cmd_at : {};
       if (nowMs - (Number(s.group_cmd_at[cmd]) || 0) < GROUP_COOLDOWN_MS) return null;
       s.group_cmd_at[cmd] = nowMs;
-      const r = handle(s, cmd, teh(), clock());   // /scan, /brief, /levels: read-only (reply or queue)
+      const r = handle(s, cmd, teh(), clock(), { legacy: LEG });   // read-only: assist, reply or queue
+      if (r.assist) return { assist: r.assist, chat: String(chat.id) };
       if (r.queue) {
         const already = s.pending_cmds.some((x) => x.cmd === r.queue);
         if (!already) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full, origin: "group" });
@@ -381,6 +509,12 @@ export function makeApp(cfg) {
       return { queue: r.queue, recent: r.recent, reply: r.reply, chat: String(chat.id) };
     });
     if (!res) return ok;
+    if (res.assist) {   // group variant: no toman, no balance; errors are never posted to the group
+      let msg = null;
+      try { msg = await onAssist(res.assist, { group: true }); } catch (e) { console.error("assist group:", String(e && e.message || e)); }
+      if (msg && !msg.startsWith("**⚠️")) { try { await send(env, msg, res.chat); } catch { /* never retry into the group */ } }
+      return ok;
+    }
     if (res.queue) {   // the GitHub run answers in the group (group variant only); no "checking" line, to keep the group quiet
       if (!res.recent) {
         const d = await dispatch(env, "command");
@@ -433,6 +567,7 @@ export function makeApp(cfg) {
     try {
       if (p.endsWith("/tg") && req.method === "POST") return await onTelegram(req);
       if (p.endsWith("/report") && req.method === "POST") return await onReport(req);
+      if (p.endsWith("/tick") && req.method === "POST") return await onTick(req);
       if (p.endsWith("/state") || p.endsWith("/admin/setup")) {
         if (!(await verifyOidc(req, jwks))) return new Response("unauthorized", { status: 401 });
         if (p.endsWith("/admin/setup")) return await onSetup(req, origin);

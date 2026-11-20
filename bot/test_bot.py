@@ -8,6 +8,9 @@ os.environ.pop("GITHUB_ACTIONS", None)
 os.environ["TELEGRAM_BOT_TOKEN"] = "TEST"; os.environ["TELEGRAM_CHAT_ID"] = "111"
 sys.path.insert(0, os.path.dirname(__file__))
 import bot as B, broker_daryagold as DG
+# The sections below exercise the dormant automatic-signal path (owner t226u switched it off in production);
+# the production setting AUTO_SIGNALS = False is tested at the end of this file.
+B.AUTO_SIGNALS = True
 import level_view as LVIEW
 
 JOURNAL = f"{B.ROOT}/journal.csv"
@@ -373,7 +376,7 @@ sig = state()["signals_sent"]
 check("09:04 valid SELL: signal sent live (no longer log-only), recorded with an ID, not shadow-logged",
       len(out) == 1 and "فروش طلا" in out[0] and len(sig) == 1 and sig[0]["id"] == "S-20261116-001" and sh == [])
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH); out = run("scheduled")
-check("07:00 Monday open: valid setup is sent", len(out) == 1 and "فروش طلا" in out[0])
+check("07:00 Monday open: valid setup is sent (+ the morning brief)", len(out) == 2 and any("فروش طلا" in x for x in out) and any("خلاصه‌ی صبح" in x for x in out))
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 6, 45, tzinfo=B.TEH); out = run("scheduled")
 check("06:45 (before the 07:00 open): nothing sent", out == [] and state()["signals_sent"] == [])
 fresh(); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["news"]}, plan=None, sizing=None, regime={"code": "news_abnormal"},
@@ -708,6 +711,23 @@ st = state(); st["group_enabled"] = False; json.dump(st, open(B.STATE_JSON, "w")
 out = run("command", [("/levels", "group"), ("/brief", "group")])
 check("group requests while /groupoff: nothing sent anywhere", out == [])
 st = state(); st.pop("group_enabled", None); json.dump(st, open(B.STATE_JSON, "w"))
+
+# ---- production: automatic signals OFF (owner t226u); morning brief at the 07:00 open
+B.AUTO_SIGNALS = False
+check("production default: automatic signals off", "AUTO_SIGNALS = False" in open(os.path.join(os.path.dirname(__file__), "bot.py")).read())
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); out = run("scheduled")
+check("signals off: a valid setup sends nothing, records no signal, keeps the levels snapshot",
+      out == [] and state()["signals_sent"] == [] and state().get("last_run_tehran") == "2026-11-16 14:00")
+check("signals off: the valid setup is kept in the silent shadow log", len(state().get("shadow") or []) == 1)
+with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH); out = run("scheduled")
+check("07:00 Monday: morning brief to the owner + group copy (no balance), no signal",
+      len(out) == 2 and all("خلاصه‌ی صبح" in x for x in out) and SENT_TO == [OWNER, GID] and "موجودی" not in out[1] and state()["signals_sent"] == [])
+CLOCK[0] = datetime(2026, 11, 16, 7, 15, tzinfo=B.TEH); out = run("scheduled")
+check("morning brief once per day", out == [])
+with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
+check("11:15 brief still sent (owner + group), no signal", len(out) == 2 and "لندن باز می‌شود" in out[0] and state()["signals_sent"] == [])
+fresh(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); out = run("scheduled")
+check("Friday 23:30 close reminder still sent with signals off", len(out) == 1 and "جمعه" in out[0])
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

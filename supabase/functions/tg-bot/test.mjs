@@ -95,7 +95,7 @@ async function jwt(claims) {
 }
 const good = { iss: "https://token.actions.githubusercontent.com", aud: "m5-gold-bot", repository: "haspou367cdp/m5-gold-team", ref: "refs/heads/main", exp: Date.now() / 1000 + 300 };
 let CLOCK = new Date("2026-11-11T10:30:00Z");   // Wednesday 14:00 Tehran (market open)
-const app = makeApp({ url: SB, key: "service", clock: () => CLOCK });
+const app = makeApp({ url: SB, key: "service", clock: () => CLOCK, legacy: true });   // legacy signal/journal set (dormant in production)
 const FN = SB + "/functions/v1/tg-bot";
 const gh = async (path, method = "GET", body) => app(new Request(FN + path, { method, body: body && JSON.stringify(body),
   headers: { authorization: "Bearer " + (await jwt(good)) } }), jw);
@@ -121,7 +121,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 21 commands (incl. /levels, /offset, /calibrate, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 21 && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
+check("setup menu: 12 commands (assistant set: /setup /e /trend /levels /brief + settings), same wording as /help, no examples or digits", o.commands && DB.menu.length === 12 && ["setup", "e", "trend"].every((k) => DB.menu.some((c) => c.command === k)) && !DB.menu.some((c) => ["scan", "trade", "journal", "shadow"].includes(c.command)) && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -141,7 +141,7 @@ check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).sta
 const v0 = DB.row.version;
 check("other chat ignored", (await tgSend("/balance 1", 999)).out.length === 0 && DB.row.version === v0);
 let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f") &&
-  r.out[0].includes("\u200f\u200e<code>/loss 150000</code>\u200e  ثبت ضرر") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
+  r.out[0].includes("\u200f\u200e<code>/e sell 3531.80</code>\u200e  حد ضرر و حد سود برای ورود") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
   !/زیان|۱۱:۳۰/.test(r.out[0]) && r.out[0].split("\n").every((l) => !l.trim() || l.startsWith("\u200f")));
 r = await tgSend("/balance ۲٬۰۸۵٬۶۰۰"); check("/balance Persian digits", st().equity_toman === 2085600 && r.out[0].includes("۲٬۰۸۵٬۶۰۰"));
 for (const bad of ["/balance", "/balance -5", "/balance nan", "/loss", "/loss 0", "/win abc"]) {
@@ -156,7 +156,7 @@ await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/l
 check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
 DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
 await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
-r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("<code>07:00</code>") && r.out[0].includes("<code>00:30</code>"));
+r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("سیگنال خودکار: خاموش") && r.out[0].includes("<code>07:00</code>") && r.out[0].includes("<code>00:30</code>"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
 check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
@@ -215,7 +215,7 @@ r = await tgSend("/shadow"); check("/shadow summary: counts, R, toman, DaryaGold
   r.out[0].includes("+۱٫۰R") && r.out[0].includes("+۱۳۲٬۰۰۰") && r.out[0].includes("<code>3894.5</code>") && r.out[0].includes("نوسان، خبر") && !/زیان|قوی/.test(r.out[0]));
 const g2 = await (await gh("/state")).json(); await gh("/state", "POST", { patch: { shadow: [{ at: "x", status: "pending" }] }, done_cmds: [] });
 check("GitHub may merge 'shadow' but not equity/trades", st().shadow.length === 1 && st().equity_toman === 2954400 && Array.isArray(st().trades) && g2.state.day.start_equity === 2954400);
-check("/help lists /trade, /shadow and /levels", HELP.includes("/trade sell 3914.07 3909.61 1") && HELP.includes("/shadow") && HELP.includes("`/levels`") && HELP.includes("بررسی سیگنال"));
+check("/help lists the assistant set, no journal or signal commands", HELP.includes("`/setup`") && HELP.includes("`/trend`") && HELP.includes("`/e sell 3531.80`") && HELP.includes("`/levels`") && !HELP.includes("/trade") && !HELP.includes("/shadow") && !HELP.includes("/scan"));
 // HTML fallback
 failHtml = true; r = await tgSend("/help"); failHtml = false;
 check("HTML failure -> plain-text fallback", r.out.length === 1 && !r.out[0].includes("<b>"));

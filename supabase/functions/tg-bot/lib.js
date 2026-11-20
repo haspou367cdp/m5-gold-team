@@ -52,6 +52,7 @@ export function closedLine(d = new Date()) {
 }
 
 import { parseCalibrate } from "./calib.js";
+import { midOffsetOf } from "./assist.js";
 // ---------------- formatting (port of bot/bot.py) ----------------
 const FA = "۰۱۲۳۴۵۶۷۸۹";
 export function faNum(t) {
@@ -86,44 +87,38 @@ export function parseAmount(args) {
   return v;
 }
 
+// Owner decision t226u-t232u (2026-11-20): the bot is an assistant. No automatic entry signals, no trade journal.
 export const HELP = `**🤖 راهنما**
-~~بات طلای دریاگلد~~
+~~دستیار طلای دریاگلد~~
 
 **بازار**
-\`/scan\`  بررسی سیگنال
-\`/brief\`  خلاصه‌ی بازار
+\`/setup\`  ستاپ‌های خرید و فروش
+\`/e sell 3531.80\`  حد ضرر و حد سود برای ورود
+\`/trend\`  روند تایم‌فریم‌ها
 \`/levels\`  سطوح
-\`/shadow\`  سیگنال‌های ردشده
+\`/brief\`  خلاصه‌ی بازار
 
-**حساب**
-\`/status\`  وضعیت حساب و سیستم
-\`/trade sell 3914.07 3909.61 1\`  ثبت معامله
+**هشدارهای خودکار**
+~~رسیدن به سطح · تغییر روند ۱۵ دقیقه و ۱ ساعت · خبر مهم · نوسان زیاد یا کم · بسته شدن دریاگلد~~
+
+**تنظیمات**
+\`/status\`  وضعیت سیستم
 \`/balance 2085600\`  ثبت موجودی
-\`/loss 150000\`  ثبت ضرر
-\`/win 200000\`  ثبت سود
-\`/undo\`  حذف آخرین ثبت
 \`/offset\`  اختلاف قیمت دریاگلد
 \`/calibrate 3569.85\`  کالیبره با قیمت دریاگلد
-
-**ژورنال سیگنال**
-\`/entered 001\`  ورود به سیگنال
-\`/tp 001\`  بسته شد با حد سود
-\`/sl 001\`  بسته شد با حد ضرر
-\`/closed 001 3569.85\`  بستن دستی
-\`/journal\`  ژورنال معاملات
-\`/pnl\`  سود و ضرر خالص
-
-**گروه**
 \`/groupoff\`  قطع موقت ارسال به گروه
 \`/groupon\`  وصل دوباره ارسال به گروه
 
-~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
+~~خلاصه‌ی بازار ساعت ۷، ۱۱:۱۵ و ۱۶:۱۵ · در گروه: /setup، /trend، /levels و /brief~~`;
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
-export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["levels", "سطوح"], ["shadow", "سیگنال‌های ردشده"],
-  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["calibrate", "کالیبره با قیمت دریاگلد"],
-  ["entered", "ورود به سیگنال"], ["tp", "بسته شد با حد سود"], ["sl", "بسته شد با حد ضرر"], ["closed", "بستن دستی"], ["journal", "ژورنال معاملات"], ["pnl", "سود و ضرر خالص"],
-  ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
+export const COMMANDS = [["setup", "ستاپ‌های خرید و فروش"], ["e", "حد ضرر و حد سود برای ورود"], ["trend", "روند تایم‌فریم‌ها"],
+  ["levels", "سطوح"], ["brief", "خلاصه‌ی بازار"], ["status", "وضعیت سیستم"], ["balance", "ثبت موجودی"], ["offset", "اختلاف قیمت دریاگلد"],
+  ["calibrate", "کالیبره با قیمت دریاگلد"], ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
+// Commands switched off with the trade journal and the automatic signals (still answered, so nothing is silently lost).
+export const OFF_CMDS = ["/trade", "/loss", "/win", "/undo", "/shadow", "/entered", "/tp", "/sl", "/closed", "/journal", "/pnl"];
+export const OFF_REPLY = "**⏹ این فرمان خاموش شده است**\n~~ثبت معامله و سیگنال خودکار کنار رفته‌اند · راهنما:~~ `/help`";
+export const ASSIST_CMDS = { "/setup": "setup", "/signal": "setup", "/scan": "setup", "/trend": "trend", "/e": "e" };
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
 
 // ---------------- state ----------------
@@ -148,11 +143,9 @@ function newsOk(s, now = new Date()) {
   return (now - t) / 3.6e6 < 30;
 }
 export function statusMsg(s) {
-  const d = s.day, sig = s.signals_sent[s.signals_sent.length - 1];
   return ["**📋 وضعیت**", `~~آخرین بررسی ${(s.last_run_tehran || "—").slice(-5)}~~`, "",
     `💼 موجودی ${tomanShort(s.equity_toman)} تومان`,
-    `📉 امروز ${d.losses || 0} ضرر · ${d.wins || 0} سود`,
-    `🎯 آخرین سیگنال: ${sig ? sig.at.slice(-5) : "هنوز نه"}`,
+    "🎯 سیگنال خودکار: خاموش · ستاپ با `/setup`",
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
     `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
     "⏱ بررسی خودکار دوشنبه تا جمعه، `07:00` تا `00:30`"].join("\n");
@@ -262,11 +255,14 @@ export function levelsMsg(snap, at = new Date()) {
 }
 
 // Pure command handler: mutates state, returns {reply, queue?}.
-export function handle(s, text, now = teh(), at = new Date()) {
+export function handle(s, text, now = teh(), at = new Date(), opts = {}) {
   const parts = text.trim().split(/\s+/);
   const c = parts[0].split("@")[0].toLowerCase(), args = parts.slice(1);
   const d = s.day;
   if (c === "/start" || c === "/help") return { reply: HELP };
+  // legacy (tests only): the old /scan queue and the journal commands
+  if (ASSIST_CMDS[c] && !(opts.legacy && c === "/scan")) return { assist: { kind: ASSIST_CMDS[c], args } };
+  if (!opts.legacy && OFF_CMDS.includes(c)) return { reply: OFF_REPLY };
   if (c === "/status") return { reply: statusMsg(s) };
   if (c === "/scan" || c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
   if (c === "/levels") {
@@ -282,8 +278,16 @@ export function handle(s, text, now = teh(), at = new Date()) {
   }
   if (c === "/offset") {
     const cur = offsetOf(s);
+    if (args.length === 2 && args[0].toLowerCase() === "live") {
+      const t2 = digits(args[1]).replace(/[−–]/g, "-");
+      const v2 = /^[-+]?\d+(\.\d+)?$/.test(t2) ? Math.round(parseFloat(t2) * 100) / 100 : NaN;
+      if (!(Math.abs(v2) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset live 0.02`" };
+      const old = midOffsetOf(s);
+      s.dg_mid_offset = v2; s.dg_mid_offset_at = now.full;
+      return { reply: `**🎚 اختلاف قیمت زنده ثبت شد**\n~~قیمت زنده‌ی دریاگلد = میانه‌ی Dukascopy + ${v2} دلار (قبلاً ${old})~~` };
+    }
     if (!args.length)
-      return { reply: `**🎚 اختلاف قیمت دریاگلد**\n~~قیمت دریاگلد = قیمت مرجع + ${cur} دلار~~\n\nبرای تغییر: \`/offset 0.4\`` };
+      return { reply: `**🎚 اختلاف قیمت دریاگلد**\n~~سطوح: قیمت مرجع + ${cur} دلار · قیمت زنده: میانه + ${midOffsetOf(s)} دلار~~\n\nبرای تغییر: \`/offset 0.4\` یا \`/offset live 0.02\`` };
     const t = digits(args.join("")).replace(/[−–]/g, "-");
     const v = /^[-+]?\d+(\.\d+)?$/.test(t) ? Math.round(parseFloat(t) * 100) / 100 : NaN;
     if (!(Math.abs(v) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset 0.4`" };
@@ -377,9 +381,12 @@ export function channelChat(s) {
   return id && id !== String(CHAT_ID) ? id : "";
 }
 // Group copy of a mirrored card. Drops personal toman/balance and error cards; otherwise the same text.
-export const MIRROR_CMDS = ["/levels", "/scan", "/brief", "/shadow"];
+export const MIRROR_CMDS = ["/levels", "/brief"];
+export const LEGACY_MIRROR_CMDS = ["/levels", "/scan", "/brief", "/shadow"];
 // Read-only commands any BAROBAX member may run in the group (owner decision t189u). /signal is an alias of /scan.
-export const GROUP_CMDS = { "/scan": "/scan", "/signal": "/scan", "/levels": "/levels", "/brief": "/brief" };
+export const LEGACY_GROUP_CMDS = { "/scan": "/scan", "/signal": "/scan", "/levels": "/levels", "/brief": "/brief" };
+// t231u/t232u: members may also run /setup (alias /signal, /scan) and /trend; replies are group-safe (no toman, no balance).
+export const GROUP_CMDS = { "/setup": "/setup", "/signal": "/setup", "/scan": "/setup", "/trend": "/trend", "/levels": "/levels", "/brief": "/brief" };
 export const GROUP_COOLDOWN_MS = 60000;
 export function publicReply(cmd, text) {
   if (!text) return null;

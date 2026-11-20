@@ -32,11 +32,15 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
-PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
+# morning = the 07:00 DaryaGold open (owner t226u item 4); am/pm = the 11:15 and 16:15 briefs. Wide: cron can run late; once per day.
+PRESESSION = {"morning": ("07:00", "07:40"), "am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}
 ASIA = ("03:30", "11:15")   # weekday Asia session (Tehran)
 # Owner decision 2026-11-20 17:08 Tehran: live signals from the 07:00 DaryaGold open. The Asia window is no longer log-only;
 # it runs the same gates as the rest of the session. Set True to restore the old log-only behaviour.
 ASIA_LOG_ONLY = False
+# Owner decision t226u (2026-11-20): no automatic entry signals (owner or group). Scheduled runs keep the levels snapshot,
+# the briefs, the close reminders and the silent shadow log; setups are asked for with /setup (Edge Function, live price).
+AUTO_SIGNALS = False
 # /help, /status, /balance, /loss, /win, /undo, /groupoff, /groupon are answered by the Supabase Edge Function (supabase/functions/tg-bot).
 
 # ---------------- state ----------------
@@ -684,8 +688,10 @@ def market_summary(b, state, title):
     L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} · سقف ضرر امروز {toman_short(day_cap(state, CFG))}"]
     return "\n".join(L)
 
+PRESESSION_TITLE = {"morning": "🌅 خلاصه‌ی صبح؛ دریاگلد باز شد", "am": "☀️ لندن باز می‌شود", "pm": "🌆 نیویورک باز می‌شود"}
+
 def presession_brief(b, state, name):
-    return market_summary(b, state, "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود")
+    return market_summary(b, state, PRESESSION_TITLE.get(name, "📊 خلاصه‌ی بازار"))
 
 def brief_msg(b, state):
     return market_summary(b, state, "📊 خلاصه‌ی بازار")
@@ -1047,13 +1053,14 @@ def main():
     elif a.mode == "scheduled" and DG.forex_open(t, cfg):
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
-        if ok:
+        if ok and AUTO_SIGNALS:
             sent = emit_signal(b, plan, sizing)
             if sent == "expired":
                 print("no signal: مهلت سیگنال قبلی تمام شده است")
+            shadow_step(state, b, cfg, news_ok, t, record=False)
         else:
-            print("no signal:", " | ".join(why)[:300])
-        shadow_step(state, b, cfg, news_ok, t, record=not ok)
+            print("no signal:", "valid setup (automatic signals off)" if ok else " | ".join(why)[:300])
+            shadow_step(state, b, cfg, news_ok, t, record=not ok, valid=(plan, sizing) if ok else None)
         if t.weekday() < 5:
             for name in PRESESSION:
                 tag = f"{t:%Y-%m-%d}-{name}"

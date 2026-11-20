@@ -47,3 +47,20 @@ def test_signal_tracking_columns():
         assert f"add column if not exists {c}" in s
     assert "'no_fill', 'open', 'tp', 'sl', 'close'" in s
     assert "grant" not in s.lower() and "policy" not in s.lower()   # privileges unchanged: service role only
+
+
+def test_assistant_v2_setups_tick_and_reports_off():
+    s = read("20261121000000_assistant_v2.sql")
+    assert "alter table public.setups enable row level security" in s
+    assert "revoke all on table public.setups from public, anon, authenticated" in s
+    assert not re.search(r"(?m)^grant[^;]*\b(anon|authenticated)\b", s) and "create policy" not in s
+    for st in ("'pending'", "'filled'", "'tp1'", "'tp2'", "'sl'", "'expired'", "'invalidated'", "'missed'", "'timeout'"):
+        assert st in s
+    assert "check (score between 0 and 100)" in s
+    # alerts tick every 2 minutes on weekdays; the secret comes from Vault inside the function
+    assert "cron.schedule('m5-tick', '*/2 3-20 * * 1-5'" in s and "/tg-bot/tick" in s and "bot_webhook_secret()" in s
+    assert "revoke all on function public.bot_tick() from public, anon, authenticated" in s
+    # journal reports switched off with the trade journal
+    assert "cron.unschedule('m5-report-daily')" in s and "cron.unschedule('m5-report-weekly')" in s
+    # the setup id format written by app.js matches the check
+    assert "'^U-\\d{14}-[og][BS]\\d-[a-z0-9]{1,6}$'" in s
