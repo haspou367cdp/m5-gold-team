@@ -1,0 +1,1171 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Xauscalper Map · XAUUSD — نقشه‌ی تصمیم برای اسکالپ طلا در دریاگلد، همراه بات Xauscalper
+// دو سطح بالا و دو سطح پایین (همان سطح‌های بات)، نوار روند ۵ و ۱۵ دقیقه و ۱ و ۴ ساعت، فضای معامله و چراغ وضعیت بازار.
+// ستاپ فقط وقتی معتبر باشد کشیده می‌شود: بازه‌ی ورود، SL، TP1 و TP2 با سود و ضرر تومانی بعد از کارمزد، و عدد اعتبار.
+// Generated from tradingview/map/template.pine by tradingview/map/build.py (fa). Formulas: docs/decision_map_spec.md
+//@version=6
+indicator("Xauscalper Map · XAUUSD", shorttitle = "XSM", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
+
+// ───────────────────────── تنظیمات ─────────────────────────
+const string GD = "۱. نمایش"
+string mode    = input.string("گوشی", "حالت نمایش", options = ["گوشی", "دسکتاپ"], tooltip = "گوشی: فقط سطح‌های نزدیک، نوار روند و بهترین ستاپ. دسکتاپ: هر چهار سطح با نام منبع و همه‌ی ستاپ‌ها.", group = GD)
+string txtSz   = input.string("متوسط", "اندازه‌ی نوشته‌ها", options = ["کوچک", "متوسط", "بزرگ"], group = GD)
+string stripP  = input.string("بالا، راست", "جای نوار روند", options = ["بالا، راست", "بالا، چپ", "پایین، راست", "پایین، چپ"], group = GD)
+float  nearUsd = input.float(15.0, "گوشی: فقط سطح‌های نزدیک‌تر از این فاصله (دلار)", minval = 2, step = 1, group = GD)
+
+const string GP = "۲. قیمت و هزینه‌ها"
+string feedT   = input.string("bid", "قیمت چارت", options = ["bid", "mid"], tooltip = "bid یعنی چارت قیمت فروش را نشان می‌دهد (OANDA و Dukascopy)، mid یعنی قیمت میانه.", group = GP)
+float  feedSpr = input.float(0.35, "اسپرد معمول فید چارت (دلار)", minval = 0, step = 0.05, tooltip = "فقط برای تبدیل bid به میانه به کار می‌رود (همان ۰٫۳۵ پیش‌فرض بات).", group = GP)
+float  lvlOff  = input.float(0.30, "اختلاف سطح‌ها با bid (دلار)", step = 0.01, tooltip = "سطح‌ها مثل بات به قیمت دریاگلد = bid + این عدد نشان داده می‌شوند (پیش‌فرض ۰٫۳۰، همان عدد بات). اگر با /offset در بات عدد دیگری ثبت کرده‌اید، همان را اینجا هم بگذارید.", group = GP)
+float  midOff  = input.float(0.02, "اختلاف قیمت زنده‌ی دریاگلد با قیمت میانه (دلار)", step = 0.01, tooltip = "بات قیمت زنده‌ی دریاگلد را قیمت میانه به‌اضافه‌ی این عدد می‌گیرد (پیش‌فرض ۰٫۰۲). ستاپ‌ها، فاصله تا ورود و پر شدن سفارش با این قیمت حساب می‌شوند.", group = GP)
+string unitT   = input.string("یک واحد", "حجم", options = ["یک واحد", "نیم واحد"], group = GP)
+float  tpu1    = input.float(80000, "تومان به ازای هر دلار حرکت، برای یک واحد", step = 1000, group = GP)
+float  feeT    = input.float(14000, "کارمزد هر معامله (تومان، یک بار)", step = 1000, group = GP)
+float  sprd    = input.float(0.25, "حاشیه‌ی اسپرد (دلار)", minval = 0, step = 0.05, tooltip = "مثل بات: خرید با قیمت خرید (ask) پر می‌شود، پس بازه‌ی ورود خرید و حد ضرر و حد سود فروش به همین اندازه بالاتر گذاشته می‌شوند.", group = GP)
+// price frames (assist.js): levels = bid + lvlOff (snapshot frame); live DaryaGold price = mid + midOff
+float bidAdj = feedT == "bid" ? 0.0 : -feedSpr / 2
+float dgOff  = bidAdj + lvlOff                                       // chart → level frame
+float liveOff = (feedT == "bid" ? feedSpr / 2 : 0.0) + midOff        // chart → live DaryaGold price
+
+const string GS = "۳. ستاپ‌ها"
+bool   showSet = input.bool(true, "نمایش ستاپ‌ها", group = GS)
+int    expMin  = input.int(45, "اعتبار هر ستاپ (دقیقه)", minval = 5, maxval = 240, group = GS)
+int    warnCr  = input.int(40, "ستاپ با اعتبار کمتر از این عدد علامت ⚠ بگیرد", minval = 0, maxval = 100, group = GS)
+float  tgtLo   = input.float(5.0, "تارگت معمول من (دلار)", step = 0.5, group = GS)
+int    holdMin = input.int(60, "بعد از ورود، ستاپ تا چند دقیقه روی چارت بماند", minval = 5, maxval = 480, group = GS)
+
+const string GT = "۴. ساعت‌ها و خبرها"
+int    openHM  = input.int(700, "ساعت باز شدن دریاگلد (ساعت و دقیقه، تهران)", minval = 0, maxval = 2359, group = GT)
+int    closeHM = input.int(30, "ساعت بسته شدن (بامداد روز بعد، تهران)", minval = 0, maxval = 459, group = GT)
+int    friHM   = input.int(2330, "جمعه: ورود تازه ممنوع از ساعت", minval = 0, maxval = 2359, group = GT)
+int    soonMin = input.int(30, "هشدار نارنجی از چند دقیقه قبل از بسته شدن", minval = 0, maxval = 120, group = GT)
+bool   n830    = input.bool(true, "خبر ساعت ۸:۳۰ نیویورک (۱۷:۰۰ تهران در زمستان)", group = GT)
+bool   n1000   = input.bool(true, "خبر ساعت ۱۰:۰۰ نیویورک (۱۸:۳۰ تهران در زمستان)", group = GT)
+bool   n1400   = input.bool(false, "خبر ساعت ۱۴:۰۰ نیویورک، فدرال رزرو (۲۲:۳۰ تهران در زمستان)", group = GT)
+int    nPre    = input.int(15, "از چند دقیقه قبل از خبر", minval = 0, maxval = 120, group = GT)
+int    nPost   = input.int(20, "تا چند دقیقه بعد از خبر", minval = 0, maxval = 120, group = GT)
+
+// ───────────────────────── ثابت‌ها ─────────────────────────
+const string TZT = "Asia/Tehran"
+const string TZN = "America/New_York"
+const string TZL = "Europe/London"
+const int    MIN = 60000
+const int    HOUR = 3600000
+const int    DAY = 86400000
+const int    EVAL_N = 100          // bars (from the right edge) where levels, trend and setups are evaluated
+bool  phone = mode == "گوشی"
+float units = unitT == "یک واحد" ? 1.0 : 0.5
+float tpu   = tpu1 * units
+f_size() => txtSz == "کوچک" ? size.small : txtSz == "بزرگ" ? size.large : size.normal
+
+// ───────────────────────── ساخت کندل‌های ۵ و ۱۵ دقیقه و ۱ و ۴ ساعت از روی چارت ─────────────────────────
+// Clock buckets in UTC, like pandas resample("5min"/"15min"/"1h"/"4h", label=left, closed=left) in fetch_xauusd.py.
+// The forming bucket is the last element (the bot also includes the forming bar).
+// st = [ema20 (closed bars), ema50 (closed), ATR14 Wilder (closed), previous close, closed-bar count]
+f_upd(array<int> t, array<float> h, array<float> l, array<float> c, array<float> st, int ms, int cap) =>
+    int b = int(math.floor(time / ms)) * ms
+    int n = t.size()
+    if n == 0 or t.get(n - 1) != b
+        if n > 0
+            float cp = c.get(n - 1)
+            float hp = h.get(n - 1)
+            float lp = l.get(n - 1)
+            float e20 = st.get(0)
+            float e50 = st.get(1)
+            float a = st.get(2)
+            float pc = st.get(3)
+            float tr = na(pc) ? hp - lp : math.max(hp - lp, math.abs(hp - pc), math.abs(lp - pc))
+            st.set(0, na(e20) ? cp : e20 + (cp - e20) * 2.0 / 21.0)
+            st.set(1, na(e50) ? cp : e50 + (cp - e50) * 2.0 / 51.0)
+            st.set(2, na(a) ? tr : a + (tr - a) / 14.0)
+            st.set(3, cp)
+            st.set(4, st.get(4) + 1)
+        t.push(b)
+        h.push(high)
+        l.push(low)
+        c.push(close)
+        if t.size() > cap
+            t.shift()
+            h.shift()
+            l.shift()
+            c.shift()
+    else
+        h.set(n - 1, math.max(h.get(n - 1), high))
+        l.set(n - 1, math.min(l.get(n - 1), low))
+        c.set(n - 1, close)
+    0
+
+// values including the forming bar
+f_cur(array<float> h, array<float> l, array<float> c, array<float> st) =>
+    int n = c.size()
+    float cp = n > 0 ? c.get(n - 1) : na
+    float e20 = st.get(0)
+    float e50 = st.get(1)
+    float a = st.get(2)
+    float pc = st.get(3)
+    float tr = n == 0 ? na : na(pc) ? h.get(n - 1) - l.get(n - 1) : math.max(h.get(n - 1) - l.get(n - 1), math.abs(h.get(n - 1) - pc), math.abs(l.get(n - 1) - pc))
+    float e20c = na(e20) ? cp : e20 + (cp - e20) * 2.0 / 21.0
+    float e50c = na(e50) ? cp : e50 + (cp - e50) * 2.0 / 51.0
+    float ac = na(a) ? tr : a + (tr - a) / 14.0
+    [e20c, e50c, ac, st.get(4) + 1]
+
+var array<int>   t5 = array.new<int>()
+var array<float> h5 = array.new<float>()
+var array<float> l5 = array.new<float>()
+var array<float> c5 = array.new<float>()
+var array<float> s5 = array.from(float(na), float(na), float(na), float(na), 0.0)
+var array<int>   t15 = array.new<int>()
+var array<float> h15 = array.new<float>()
+var array<float> l15 = array.new<float>()
+var array<float> c15 = array.new<float>()
+var array<float> s15 = array.from(float(na), float(na), float(na), float(na), 0.0)
+var array<int>   t60 = array.new<int>()
+var array<float> h60 = array.new<float>()
+var array<float> l60 = array.new<float>()
+var array<float> c60 = array.new<float>()
+var array<float> s60 = array.from(float(na), float(na), float(na), float(na), 0.0)
+var array<int>   t240 = array.new<int>()
+var array<float> h240 = array.new<float>()
+var array<float> l240 = array.new<float>()
+var array<float> c240 = array.new<float>()
+var array<float> s240 = array.from(float(na), float(na), float(na), float(na), 0.0)
+f_upd(t5, h5, l5, c5, s5, 5 * MIN, 320)
+f_upd(t15, h15, l15, c15, s15, 15 * MIN, 320)
+f_upd(t60, h60, l60, c60, s60, HOUR, 220)
+f_upd(t240, h240, l240, c240, s240, 4 * HOUR, 140)
+
+// ───────────────────────── روز، هفته، ماه و دامنه‌ی روزانه ─────────────────────────
+// Gold trading day = 18:00 → 17:00 New York; week = Sunday 18:00 New York; month = New York calendar month.
+int  tdKey   = dayofmonth(time + 6 * HOUR, TZN)
+int  wkKey   = weekofyear(time + 6 * HOUR, TZN)
+bool newTD   = bar_index > 0 and tdKey != tdKey[1]
+bool newWk   = bar_index > 0 and (wkKey != wkKey[1] or time - time[1] > 3 * DAY)
+var float tdH = na
+var float tdL = na
+var array<float> dayH = array.new<float>()   // completed trading days, newest last
+var array<float> dayL = array.new<float>()
+if newTD
+    if not na(tdH)
+        dayH.push(tdH)
+        dayL.push(tdL)
+        if dayH.size() > 21
+            dayH.shift()
+            dayL.shift()
+    tdH := high
+    tdL := low
+else
+    tdH := na(tdH) ? high : math.max(tdH, high)
+    tdL := na(tdL) ? low : math.min(tdL, low)
+var float wkH = na
+var float wkL = na
+var float pwH = na
+var float pwL = na
+if newWk
+    if not na(wkH)
+        pwH := wkH
+        pwL := wkL
+    wkH := high
+    wkL := low
+else
+    wkH := na(wkH) ? high : math.max(wkH, high)
+    wkL := na(wkL) ? low : math.min(wkL, low)
+// Month = New York calendar month, tracked on the chart. When the chart history does not reach back to the month start
+// (free plan ≈ 5000 bars), the monthly series is used instead ([1] = completed month, no repaint).
+int  moKey = month(time, TZN)
+bool newMo = bar_index > 0 and moKey != moKey[1]
+var int   moSeen = 0
+var float mHl = na
+var float mLl = na
+var float pmHl = na
+var float pmLl = na
+if newMo
+    moSeen += 1
+    pmHl := mHl
+    pmLl := mLl
+    mHl := high
+    mLl := low
+else
+    mHl := na(mHl) ? high : math.max(mHl, high)
+    mLl := na(mLl) ? low : math.min(mLl, low)
+[pmHs, pmLs, mHs, mLs] = request.security(syminfo.tickerid, "1M", [high[1], low[1], high, low], lookahead = barmerge.lookahead_on)
+float mH  = moSeen >= 1 ? mHl : mHs
+float mL  = moSeen >= 1 ? mLl : mLs
+float pmH = moSeen >= 2 ? pmHl : pmHs
+float pmL = moSeen >= 2 ? pmLl : pmLs
+// ADR = mean range of the 20 previous trading days (chart days when 20 are loaded, otherwise the daily series)
+float adrS = request.security(syminfo.tickerid, "D", ta.sma(high - low, 20)[1], lookahead = barmerge.lookahead_on)
+f_adr() =>
+    float r = na
+    int n = dayH.size()
+    if n >= 20
+        float sm = 0.0
+        for i = n - 20 to n - 1
+            sm += dayH.get(i) - dayL.get(i)
+        r := sm / 20
+    r
+float adrL = f_adr()
+float adr  = na(adrL) ? adrS : adrL
+float adrUsed = na(adr) or adr == 0 ? na : (tdH - tdL) / adr * 100
+
+// ───────────────────────── سشن‌ها ─────────────────────────
+// Sessions of the UTC date (m5lib.sessions_for): Asia 00:00 UTC → 07:00 London, London 07:00 London → 08:30 NY, NY 08:30 → 17:00 NY.
+int  utcKey = dayofmonth(time, "UTC")
+bool newUtc = bar_index > 0 and utcKey != utcKey[1]
+int  lonMin = hour(time, TZL) * 60 + minute(time, TZL)
+int  nyMin  = hour(time, TZN) * 60 + minute(time, TZN)
+bool inAsia = hour(time, "UTC") < 12 and lonMin < 420
+bool inLon  = lonMin >= 420 and nyMin < 510
+bool inLOR  = lonMin >= 420 and lonMin < 450
+bool inNY   = nyMin >= 510 and nyMin < 1020
+bool inNOR  = nyMin >= 510 and nyMin < 540
+var float asH = na
+var float asL = na
+var float lnH = na
+var float lnL = na
+var float loH = na
+var float loL = na
+var float nyH = na
+var float nyL = na
+var float noH = na
+var float noL = na
+var float pnH = na
+var float pnL = na
+if newUtc
+    if not na(nyH)
+        pnH := nyH
+        pnL := nyL
+    asH := na
+    asL := na
+    lnH := na
+    lnL := na
+    loH := na
+    loL := na
+    nyH := na
+    nyL := na
+    noH := na
+    noL := na
+if inAsia
+    asH := na(asH) ? high : math.max(asH, high)
+    asL := na(asL) ? low : math.min(asL, low)
+if inLon
+    lnH := na(lnH) ? high : math.max(lnH, high)
+    lnL := na(lnL) ? low : math.min(lnL, low)
+if inLOR
+    loH := na(loH) ? high : math.max(loH, high)
+    loL := na(loL) ? low : math.min(loL, low)
+if inNY
+    nyH := na(nyH) ? high : math.max(nyH, high)
+    nyL := na(nyL) ? low : math.min(nyL, low)
+if inNOR
+    noH := na(noH) ? high : math.max(noH, high)
+    noL := na(noL) ? low : math.min(noL, low)
+
+// VWAPs (chart volume; the bot uses Dukascopy tick volume) — day VWAP ±1σ and session VWAPs
+[vwD, vwU, vwL] = ta.vwap(hlc3, newTD, 1)
+var float asPV = 0.0
+var float asV = 0.0
+var float lnPV = 0.0
+var float lnV = 0.0
+var float nyPV = 0.0
+var float nyV = 0.0
+float vv = nz(volume) > 0 ? volume : 1e-9
+if newUtc
+    asPV := 0.0
+    asV := 0.0
+    lnPV := 0.0
+    lnV := 0.0
+    nyPV := 0.0
+    nyV := 0.0
+if inAsia
+    asPV += hlc3 * vv
+    asV += vv
+if inLon
+    lnPV += hlc3 * vv
+    lnV += vv
+if inNY
+    nyPV += hlc3 * vv
+    nyV += vv
+
+// ───────────────────────── ساعت کار دریاگلد و خبرها ─────────────────────────
+f_clock(int t) =>
+    int dow = dayofweek(t, TZT)
+    int hm  = hour(t, TZT) * 100 + minute(t, TZT)
+    bool isWk     = dow >= dayofweek.monday and dow <= dayofweek.friday
+    bool afterMid = dow >= dayofweek.tuesday and dow <= dayofweek.saturday and hm < closeHM
+    bool open_    = (isWk and hm >= openHM) or afterMid
+    bool friCut   = (dow == dayofweek.friday and hm >= friHM) or (dow == dayofweek.saturday and hm < closeHM)
+    int  hmMin    = int(math.floor(hm / 100)) * 60 + hm % 100
+    int  clMin    = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
+    int  frMin    = int(math.floor(friHM / 100)) * 60 + friHM % 100
+    // minutes until the daily close (00:30) or, on Friday, until the no-new-entry time
+    int  toClose  = afterMid ? clMin - hmMin : 1440 - hmMin + clMin
+    int  toFri    = dow == dayofweek.friday and hm < friHM ? frMin - hmMin : 9999
+    bool soon     = open_ and (math.min(toClose, toFri) <= soonMin)
+    int  ndow = dayofweek(t, TZN)
+    int  nm   = hour(t, TZN) * 60 + minute(t, TZN)
+    bool nwk  = ndow >= dayofweek.monday and ndow <= dayofweek.friday
+    bool news = nwk and ((n830 and nm >= 510 - nPre and nm < 510 + nPost) or (n1000 and nm >= 600 - nPre and nm < 600 + nPost) or (n1400 and nm >= 840 - nPre and nm < 840 + nPost))
+    [open_, friCut, soon, news]
+
+// ───────────────────────── سطح‌ها (همان فرمول بات) ─────────────────────────
+// Kind codes 1-29 = display set B of level_view.py; 30-52 = other compute() candidates (clustering only).
+f_w(int k) =>
+    switch k
+        1 => 3.0
+        2 => 3.0
+        3 => 3.0
+        4 => 3.0
+        5 => 3.0
+        6 => 3.0
+        7 => 2.0
+        8 => 2.0
+        9 => 2.5
+        10 => 2.5
+        11 => 2.5
+        12 => 2.5
+        13 => 2.0
+        14 => 2.0
+        15 => 2.0
+        16 => 2.0
+        17 => 2.0
+        18 => 2.0
+        19 => 1.5
+        20 => 2.5
+        21 => 2.5
+        22 => 2.5
+        23 => 2.0
+        24 => 3.0
+        25 => 3.0
+        26 => 2.0
+        27 => 2.0
+        28 => 3.0
+        29 => 3.0
+        30 => 1.0
+        31 => 0.5
+        32 => 1.0
+        33 => 1.0
+        34 => 2.5
+        35 => 2.5
+        36 => 3.0
+        37 => 3.0
+        38 => 2.0
+        39 => 2.0
+        40 => 1.0
+        41 => 1.0
+        42 => 0.5
+        43 => 0.5
+        44 => 1.2
+        45 => 1.5
+        46 => 1.5
+        47 => 2.0
+        48 => 2.0
+        49 => 1.5
+        50 => 1.5
+        51 => 1.0
+        52 => 1.0
+        => 0.0
+f_struct(int k) => not (k == 19 or k == 22 or k == 23 or k == 30 or k == 31 or k >= 42)
+f_month(int k) => k >= 26 and k <= 29
+f_kname(int k) =>
+    switch k
+        1 => "PDH"
+        2 => "PDL"
+        3 => "سقف هفته"
+        4 => "کف هفته"
+        5 => "سقف هفته‌ی قبل"
+        6 => "کف هفته‌ی قبل"
+        7 => "سقف آسیا"
+        8 => "کف آسیا"
+        9 => "سقف لندن"
+        10 => "کف لندن"
+        11 => "سقف نیویورک"
+        12 => "کف نیویورک"
+        13 => "سقف نیویورک دیروز"
+        14 => "کف نیویورک دیروز"
+        15 => "OR لندن"
+        16 => "OR لندن"
+        17 => "OR نیویورک"
+        18 => "OR نیویورک"
+        19 => "VWAP"
+        20 => "سقف برابر"
+        21 => "کف برابر"
+        22 => "رُند"
+        23 => "رُند"
+        24 => "سوئینگ H1"
+        25 => "سوئینگ H1"
+        26 => "سقف ماه"
+        27 => "کف ماه"
+        28 => "سقف ماه قبل"
+        29 => "کف ماه قبل"
+        => ""
+
+// fractal swings (levels.fractals, n = 3) over the slice of bars that open at or after `since`
+f_frac(array<int> t, array<float> v, int since, bool hi) =>
+    array<float> outV = array.new<float>()
+    int n = t.size()
+    int s0 = -1
+    if n > 0
+        for i = 0 to n - 1
+            if t.get(i) >= since
+                s0 := i
+                break
+    if s0 >= 0 and n - s0 >= 7
+        for k = s0 + 3 to n - 4
+            float x = v.get(k)
+            bool ok = true
+            for j = k - 3 to k + 3
+                float y = v.get(j)
+                if (hi and y > x) or (not hi and y < x)
+                    ok := false
+                    break
+            if ok
+                outV.push(x)
+    outV
+
+// trend of one timeframe (level_view.trend_of): swing structure of the last two swings AND EMA20/50 with the close
+f_trend(array<float> hs, array<float> ls, float e20, float e50, float cl, float nb) =>
+    int st = 0
+    if hs.size() >= 2 and ls.size() >= 2
+        bool upH = hs.get(hs.size() - 1) > hs.get(hs.size() - 2)
+        bool upL = ls.get(ls.size() - 1) > ls.get(ls.size() - 2)
+        st := upH and upL ? 1 : (not upH and not upL) ? -1 : 0
+    int eb = nb < 56 or na(e20) ? 0 : (e20 > e50 and cl > e20) ? 1 : (e20 < e50 and cl < e20) ? -1 : 0
+    st == 1 and eb == 1 ? 1 : st == -1 and eb == -1 ? -1 : 0
+
+// kinds are kept as ",k1,k2," strings
+f_hasK(string ks, int k) => str.contains(ks, "," + str.tostring(k) + ",")
+f_union(string a, string b) =>
+    string out = a
+    array<string> parts = str.split(b, ",")
+    if parts.size() > 0
+        for p in parts
+            if p != "" and not str.contains(out, "," + p + ",")
+                out := out + p + ","
+    out
+f_score(string ks) =>
+    float s = 0.0
+    array<string> parts = str.split(ks, ",")
+    if parts.size() > 0
+        for p in parts
+            if p != ""
+                s += f_w(int(str.tonumber(p)))
+    s
+f_tags(string ks, float pdg) =>
+    string out = ""
+    array<string> seen = array.new<string>()
+    for k = 1 to 29
+        if f_hasK(ks, k)
+            string nm = (k == 22 or k == 23) ? f_kname(k) + " " + str.tostring(math.round(pdg / 50.0) * 50) : f_kname(k)
+            if not seen.includes(nm)
+                seen.push(nm)
+                out := out == "" ? nm : out + " + " + nm
+    out
+
+f_add(array<float> cp, array<int> ck, float p, int k) =>
+    if not na(p)
+        cp.push(p)
+        ck.push(k)
+    0
+
+// ───────────────────────── محاسبه‌ی سطح‌ها و روند ─────────────────────────
+bool inEval = bar_index >= last_bar_index - EVAL_N
+var int   tr5 = 0
+var int   tr15 = 0
+var int   tr60 = 0
+var int   tr240 = 0
+var float atr5 = na
+var float atr60 = na
+var float atr240 = na
+var float half = 1.0
+var array<float>  zP  = array.new<float>()    // bid price of each merged display zone, ascending
+var array<float>  zD  = array.new<float>()    // DaryaGold price
+var array<float>  zLo = array.new<float>()    // DaryaGold zone edges
+var array<float>  zHi = array.new<float>()
+var array<string> zK  = array.new<string>()
+var array<float>  zS  = array.new<float>()    // strength score of the zone's first item (merge keeps it, as level_view does)
+var array<float>  zR  = array.new<float>()
+var array<float>  cAll = array.new<float>()   // every structural candidate (bid), for the stop-hunt check
+
+if inEval
+    [e20a, e50a, a5, nb5]     = f_cur(h5, l5, c5, s5)
+    [e20b, e50b, a15, nb15]   = f_cur(h15, l15, c15, s15)
+    [e20c, e50c, a60, nb60]   = f_cur(h60, l60, c60, s60)
+    [e20d, e50d, a240, nb240] = f_cur(h240, l240, c240, s240)
+    atr5 := a5
+    atr60 := a60
+    atr240 := nb240 >= 16 ? a240 : na
+    float px = close
+    // swings: trend lookbacks H4 20 d, H1 8 d, M15 2 d, M5 1 d; candidates H4 20 d, H1 8 d, M15 2 d, M5 12 h; equal H/L on M15 3 d
+    array<float> sh240 = f_frac(t240, h240, time - 20 * DAY, true)
+    array<float> sl240 = f_frac(t240, l240, time - 20 * DAY, false)
+    array<float> sh60  = f_frac(t60, h60, time - 8 * DAY, true)
+    array<float> sl60  = f_frac(t60, l60, time - 8 * DAY, false)
+    array<float> sh15  = f_frac(t15, h15, time - 2 * DAY, true)
+    array<float> sl15  = f_frac(t15, l15, time - 2 * DAY, false)
+    array<float> eh15  = f_frac(t15, h15, time - 3 * DAY, true)
+    array<float> el15  = f_frac(t15, l15, time - 3 * DAY, false)
+    array<float> sh5d  = f_frac(t5, h5, time - DAY, true)
+    array<float> sl5d  = f_frac(t5, l5, time - DAY, false)
+    array<float> sh5   = f_frac(t5, h5, time - 12 * HOUR, true)
+    array<float> sl5   = f_frac(t5, l5, time - 12 * HOUR, false)
+    tr240 := f_trend(sh240, sl240, e20d, e50d, px, nb240)
+    tr60  := f_trend(sh60, sl60, e20c, e50c, px, nb60)
+    tr15  := f_trend(sh15, sl15, e20b, e50b, px, nb15)
+    tr5   := f_trend(sh5d, sl5d, e20a, e50a, px, nb5)
+
+    // candidates (levels.compute)
+    array<float> cp = array.new<float>()
+    array<int>   ck = array.new<int>()
+    int nd = dayH.size()
+    if nd > 0
+        f_add(cp, ck, dayH.get(nd - 1), 1)
+        f_add(cp, ck, dayL.get(nd - 1), 2)
+    f_add(cp, ck, asH, 7)
+    f_add(cp, ck, asL, 8)
+    f_add(cp, ck, lnH, 9)
+    f_add(cp, ck, lnL, 10)
+    f_add(cp, ck, nyH, 11)
+    f_add(cp, ck, nyL, 12)
+    f_add(cp, ck, pnH, 13)
+    f_add(cp, ck, pnL, 14)
+    f_add(cp, ck, tdH, 32)
+    f_add(cp, ck, tdL, 33)
+    f_add(cp, ck, loH, 15)
+    f_add(cp, ck, loL, 16)
+    f_add(cp, ck, noH, 17)
+    f_add(cp, ck, noL, 18)
+    if nd > 1
+        for i = math.max(0, nd - 6) to nd - 2
+            f_add(cp, ck, dayH.get(i), 34)
+            f_add(cp, ck, dayL.get(i), 35)
+    for v in sh240
+        f_add(cp, ck, v, 36)
+    for v in sl240
+        f_add(cp, ck, v, 37)
+    for v in sh60
+        f_add(cp, ck, v, 24)
+    for v in sl60
+        f_add(cp, ck, v, 25)
+    for v in sh15
+        f_add(cp, ck, v, 38)
+    for v in sl15
+        f_add(cp, ck, v, 39)
+    for v in sh5
+        f_add(cp, ck, v, 40)
+    for v in sl5
+        f_add(cp, ck, v, 41)
+    f_add(cp, ck, vwD, 19)
+    f_add(cp, ck, vwU, 42)
+    f_add(cp, ck, vwL, 43)
+    f_add(cp, ck, asV > 0.0 ? asPV / asV : na, 44)
+    f_add(cp, ck, lnV > 0.0 ? lnPV / lnV : na, 45)
+    f_add(cp, ck, nyV > 0.0 ? nyPV / nyV : na, 46)
+    if nb240 >= 56
+        f_add(cp, ck, e20d, 47)
+        f_add(cp, ck, e50d, 48)
+    if nb60 >= 56
+        f_add(cp, ck, e20c, 49)
+        f_add(cp, ck, e50c, 50)
+    if nb15 >= 56
+        f_add(cp, ck, e20b, 51)
+        f_add(cp, ck, e50b, 52)
+    f_add(cp, ck, pmH, 28)
+    f_add(cp, ck, pmL, 29)
+    f_add(cp, ck, mH, 26)
+    f_add(cp, ck, mL, 27)
+    float tol = math.max(0.5, 0.25 * nz(atr5))
+    // equal highs / lows: M15 swings of 3 days within tol of each other, at least two
+    for side = 0 to 1
+        array<float> src = eh15
+        if side == 1
+            src := el15
+        if src.size() >= 2
+            array<float> pts = src.copy()
+            pts.sort(order.ascending)
+            float first = pts.get(0)
+            float lastv = pts.get(0)
+            float sum = pts.get(0)
+            int cnt = 1
+            for i = 1 to pts.size()
+                bool endIt = i == pts.size()
+                float p = endIt ? na : pts.get(i)
+                if not endIt and p - first <= tol and p - lastv <= tol
+                    sum += p
+                    cnt += 1
+                    lastv := p
+                else
+                    if cnt >= 2
+                        f_add(cp, ck, math.round(sum / cnt, 2), side == 0 ? 20 : 21)
+                    if not endIt
+                        first := p
+                        lastv := p
+                        sum := p
+                        cnt := 1
+    float rng = math.max(60.0, 8 * (na(atr60) ? 8.0 : atr60))
+    array<float> fp = array.new<float>()
+    array<int>   fk = array.new<int>()
+    for i = 0 to math.max(0, cp.size() - 1)
+        if i < cp.size() and math.abs(cp.get(i) - px) <= rng
+            fp.push(cp.get(i))
+            fk.push(ck.get(i))
+    float r0 = math.floor((px - rng) / 5) * 5
+    float rr_ = r0
+    while rr_ < px + rng
+        int ri = int(math.round(rr_))
+        fp.push(rr_)
+        fk.push(ri % 100 == 0 ? 22 : ri % 50 == 0 ? 23 : ri % 10 == 0 ? 30 : 31)
+        rr_ += 5
+    // cluster (gap ≤ tol), cluster price = mean of structural members (all members if none)
+    cAll.clear()
+    array<int> idx = fp.sort_indices(order.ascending)
+    array<float> itP = array.new<float>()
+    array<string> itK = array.new<string>()
+    array<float>  itS = array.new<float>()    // compute() cluster score without touches (na = structure-only item)
+    array<float>  itR = array.new<float>()    // unrounded cluster price (touch count reference)
+    int nC = idx.size()
+    int i0 = 0
+    while i0 < nC
+        int i1 = i0
+        while i1 + 1 < nC and fp.get(idx.get(i1 + 1)) - fp.get(idx.get(i1)) <= tol
+            i1 += 1
+        float sS = 0.0
+        int nS = 0
+        float sA = 0.0
+        string ks = ","
+        string ka = ","
+        float wS = 0.0
+        for j = i0 to i1
+            float p = fp.get(idx.get(j))
+            int k = fk.get(idx.get(j))
+            sA += p
+            if f_struct(k)
+                sS += p
+                nS += 1
+                cAll.push(p)
+            if k <= 29 and not f_hasK(ks, k)
+                ks := ks + str.tostring(k) + ","
+            if not f_hasK(ka, k)
+                ka := ka + str.tostring(k) + ","
+                wS += f_w(k)
+        float pRaw = nS > 0 ? sS / nS : sA / (i1 - i0 + 1)
+        float pc = math.round(pRaw, 2)
+        // month kinds dropped when more than 3 × ATR(H4) away
+        if not na(atr240) and math.abs(pc - px) > 3 * atr240 + 1e-9
+            for k = 26 to 29
+                ks := str.replace_all(ks, "," + str.tostring(k) + ",", ",")
+        if ks != ","
+            itP.push(pc)
+            itK.push(ks)
+            itS.push(wS)
+            itR.push(pRaw)
+        i0 := i1 + 1
+    half := math.max(1.0, math.round(0.25 * nz(atr5), 2))
+    // week / previous week / month / previous month H/L from the structure block (merged within half)
+    for s = 0 to 7
+        float p = s == 0 ? wkH : s == 1 ? wkL : s == 2 ? pwH : s == 3 ? pwL : s == 4 ? mH : s == 5 ? mL : s == 6 ? pmH : pmL
+        int k = s == 0 ? 3 : s == 1 ? 4 : s == 2 ? 5 : s == 3 ? 6 : s == 4 ? 26 : s == 5 ? 27 : s == 6 ? 28 : 29
+        bool skip = na(p) or (f_month(k) and not na(atr240) and math.abs(p - px) > 3 * atr240 + 1e-9)
+        if not skip and itP.size() > 0
+            for j = 0 to itP.size() - 1
+                if math.abs(itP.get(j) - p) <= half and f_hasK(itK.get(j), k)
+                    skip := true
+                    break
+        if not skip
+            bool merged = false
+            if itP.size() > 0
+                for j = 0 to itP.size() - 1
+                    if math.abs(itP.get(j) - p) <= half
+                        itK.set(j, f_union(itK.get(j), "," + str.tostring(k) + ","))
+                        merged := true
+                        break
+            if not merged
+                itP.push(p)
+                itK.push("," + str.tostring(k) + ",")
+                itS.push(na)
+                itR.push(p)
+    // merge overlapping zones (level_view.merge_zones)
+    zP.clear()
+    zD.clear()
+    zLo.clear()
+    zHi.clear()
+    zK.clear()
+    zS.clear()
+    zR.clear()
+    if itP.size() > 0
+        array<int> o = itP.sort_indices(order.ascending)
+        for j = 0 to o.size() - 1
+            float p = itP.get(o.get(j))
+            float d = math.round(p + dgOff, 2)
+            float lo = math.round(d - half, 2)
+            float hi = math.round(d + half, 2)
+            int m = zP.size() - 1
+            if m >= 0 and zHi.get(m) >= lo - 1e-9
+                zP.set(m, (zP.get(m) + p) / 2.0)
+                zD.set(m, math.round((zD.get(m) + d) / 2.0, 2))
+                zLo.set(m, math.min(zLo.get(m), lo))
+                zHi.set(m, math.max(zHi.get(m), hi))
+                zK.set(m, f_union(zK.get(m), itK.get(o.get(j))))
+            else
+                zP.push(p)
+                zD.push(d)
+                zLo.push(lo)
+                zHi.push(hi)
+                zK.push(itK.get(o.get(j)))
+                zS.push(itS.get(o.get(j)))
+                zR.push(itR.get(o.get(j)))
+
+int nZ = zP.size()
+// index of the first zone above the price (zones with bid price > close are "above")
+f_firstAbove() =>
+    int r = nZ
+    if nZ > 0
+        for i = 0 to nZ - 1
+            if zP.get(i) > close
+                r := i
+                break
+    r
+int iUp = f_firstAbove()
+
+// overall trend (level_view.verdict_line)
+int  hb    = tr240 == tr60 and tr240 != 0 ? tr240 : 0
+bool pull15 = hb != 0 and tr15 == -hb
+bool pull5  = hb != 0 and tr5 == -hb
+bool bothFlat = tr240 == 0 and tr60 == 0
+string overTx = hb == 1 ? "صعودی" : hb == -1 ? "نزولی" : bothFlat ? "خنثی" : "نامشخص"
+string subTx  = hb == 0 ? (bothFlat ? "۴ و ۱ ساعت جهت روشنی ندارند" : "۱ و ۴ ساعت هم‌جهت نیستند") : (tr15 == hb and tr5 == hb) ? "همه هم‌جهت" : pull15 and pull5 ? "۱۵ و ۵ دقیقه در اصلاح" : pull15 ? "۱۵ دقیقه در اصلاح" : pull5 ? "۵ دقیقه در اصلاح" : tr15 == hb ? "۱۵ دقیقه هم‌جهت، ۵ دقیقه خنثی" : tr5 == hb ? "۵ دقیقه هم‌جهت، ۱۵ دقیقه خنثی" : "تایم‌های پایین خنثی"
+
+// closed-bar M5 ATR history (assist.volState: percentile of the last 288 values; one bar ≥ 2.5 × ATR)
+var array<float> atrH = array.new<float>()
+var float lastBig = 0.0
+bool m5Closed = bar_index > 0 and int(math.floor(time / (5 * MIN))) != int(math.floor(time[1] / (5 * MIN)))
+if m5Closed and not na(s5.get(2))
+    atrH.push(s5.get(2))
+    if atrH.size() > 288
+        atrH.shift()
+float atrC = s5.get(2)    // ATR of completed M5 bars (assist.js uses closed bars for setups)
+
+// ───────────────────────── ستاپ‌ها و عدد اعتبار ─────────────────────────
+// Exact port of supabase/functions/tg-bot/assist.js (placeRange, placeSL, placeTP, targets, candidate, scoreSetup, validity).
+// Levels = the 2 above + 2 below of the snapshot (level frame); P = live DaryaGold price; dir +1 buy, −1 sell.
+f_r2(float x) => math.round(x * 100) / 100
+f_clamp(float x) => math.max(0.0, math.min(1.0, x))
+f_offHalf(float x, float away) => math.abs(x * 2 - math.round(x * 2)) < 0.06 ? x + away * 0.07 : x
+f_r5first(float lo) => math.ceil(lo / 5) * 5
+f_pnl(float dx) => dx * tpu - feeT
+
+// the four shown levels (indices into the zone arrays), ascending
+f_lv(int n) =>
+    // n = 0..3 → zones iUp-2, iUp-1, iUp, iUp+1 (those that exist)
+    int iz = iUp - 2 + n
+    iz >= 0 and iz < nZ ? iz : -1
+
+f_strength(int iz) =>
+    // compute(): score = Σ W + min(2, 0.5 × touches) → strong ≥ 6, medium ≥ 3.5; structure-only items are "medium" with 0 touches
+    float sc = zS.get(iz)
+    int touch = 0
+    if not na(sc)
+        float pb = zR.get(iz)
+        float tolT = math.max(0.5, 0.25 * atr5)
+        bool prevN = false
+        if t15.size() > 0
+            for k = 0 to t15.size() - 1
+                if t15.get(k) >= time - 3 * DAY
+                    bool nr = math.abs(h15.get(k) - pb) <= tolT or math.abs(l15.get(k) - pb) <= tolT
+                    if nr and not prevN
+                        touch += 1
+                    prevN := nr
+    float tot = na(sc) ? 4.0 : sc + math.min(2.0, 0.5 * touch)
+    float st = tot >= 6 ? 1.0 : tot >= 3.5 ? 0.65 : 0.35
+    [st, touch]
+
+f_obvious(string ks) =>
+    // assist.js: any kind name with high/low/PDH/PDL (set B: 1-18, 20, 21, 24-29)
+    bool r = false
+    for k = 1 to 29
+        if f_hasK(ks, k) and k != 19 and k != 22 and k != 23
+            r := true
+    r
+
+f_placeTP(int dir, float edge) =>
+    float tp = dir < 0 ? edge + 0.1 : edge - 0.1
+    float r = f_r5first(tp - 0.8)
+    float rEnd = tp + 0.8
+    while r <= rEnd
+        if dir < 0 and r >= tp - 0.3 and r <= tp + 0.7
+            tp := r + 0.35
+        if dir > 0 and r <= tp + 0.3 and r >= tp - 0.7
+            tp := r - 0.35
+        r += 5
+    tp := f_offHalf(tp, dir < 0 ? 1 : -1)
+    f_r2(dir < 0 ? tp + sprd : tp)
+
+f_placeSL(int dir, float edge, float best, float a) =>
+    float buf = math.max(0.5, 0.3 * a)
+    float minD = math.max(1.0, 0.5 * a)
+    float sl = dir < 0 ? math.max(edge + buf, best + minD) : math.min(edge - buf, best - minD)
+    float r0 = f_r5first(sl - 0.8)
+    float rEnd = sl + 0.8
+    float r = r0
+    while r <= rEnd
+        if dir < 0 and r >= sl - 0.8 and r <= sl + 0.3
+            sl := r + 0.6
+        if dir > 0 and r <= sl + 0.8 and r >= sl - 0.3
+            sl := r - 0.6
+        r += 5
+    sl := f_offHalf(sl, dir < 0 ? 1 : -1)
+    f_r2(dir < 0 ? sl + sprd : sl)
+
+f_build(int dir, int iz, float P, float a, float sessF) =>
+    float Lp = zD.get(iz)
+    float w = math.max(0.5, math.min(1.5, 0.2 * a))
+    float lo = 0.0
+    float hi = 0.0
+    if dir < 0
+        hi := Lp
+        lo := hi - w
+        float r = f_r5first(lo)
+        float rEnd = hi + 0.6
+        while r <= rEnd
+            if r > lo
+                hi := r - 0.15
+                lo := hi - w
+            r += 5
+    else
+        lo := Lp
+        hi := lo + w
+        float r = math.floor(hi / 5) * 5
+        float rStart = f_r5first(lo - 0.6)
+        while r >= rStart
+            if r < hi
+                lo := r + 0.15
+                hi := lo + w
+            r -= 5
+    lo := f_offHalf(lo, 1)
+    hi := f_offHalf(hi, -1)
+    if dir > 0
+        lo += sprd
+        hi += sprd
+    lo := f_r2(lo)
+    hi := f_r2(hi)
+    float best  = dir < 0 ? hi : lo
+    float worst = dir < 0 ? lo : hi
+    float mid = f_r2((lo + hi) / 2)
+    float sl = f_placeSL(dir, dir < 0 ? zHi.get(iz) : zLo.get(iz), best, a)
+    // targets: obstacles among the other shown levels beyond `from` ± 0.5, nearest first; near zone edge
+    float fromP = dir < 0 ? lo : hi
+    int o1 = -1
+    int o2 = -1
+    for n = 0 to 3
+        int jj = dir < 0 ? f_lv(3 - n) : f_lv(n)
+        if jj >= 0 and jj != iz and (dir < 0 ? zD.get(jj) < fromP - 0.5 : zD.get(jj) > fromP + 0.5)
+            if o1 < 0
+                o1 := jj
+            else if o2 < 0
+                o2 := jj
+    float tp1 = o1 >= 0 ? f_placeTP(dir, dir < 0 ? zHi.get(o1) : zLo.get(o1)) : f_r2(fromP + dir * math.max(1.5, 1.2 * a))
+    float tp2 = o2 >= 0 ? f_placeTP(dir, dir < 0 ? zHi.get(o2) : zLo.get(o2)) : na
+    if na(tp2) or (tp2 - tp1) * dir < 0.5
+        tp2 := f_r2(tp1 + dir * math.max(1.5, 1.0 * a))
+    float risk = math.abs(sl - worst)
+    float room = math.abs(mid - tp1)
+    float chartP = dir > 0 ? P + sprd : P
+    float dist = dir < 0 ? math.max(0.0, lo - chartP) : math.max(0.0, chartP - hi)
+    bool inside = dir < 0 ? chartP >= lo : chartP <= hi
+    float rr = (math.abs(tp1 - mid) * 80000 - 14000) / (math.abs(sl - mid) * 80000 + 14000)
+    bool crossed = dir < 0 ? P + sprd >= sl : P <= sl
+    bool ok = not crossed and risk <= 9 and dist <= 4 * a and (tp1 - mid) * dir > 0 and room >= math.max(1.0, 0.5 * math.abs(sl - mid)) and rr >= 0.6
+    // credibility (scoreSetup): trend 25, fill 15, level 15, room 10, rr 15, adr 8, session 7, hunt 5
+    float tf = ((tr240 == dir ? 0.3 : tr240 == -dir ? -0.3 : 0.0) + (tr60 == dir ? 0.3 : tr60 == -dir ? -0.3 : 0.0) + (tr15 == dir ? 0.25 : tr15 == -dir ? -0.25 : 0.0) + (tr5 == dir ? 0.15 : tr5 == -dir ? -0.15 : 0.0) + 1) / 2
+    float fillF = inside ? 1.0 : f_clamp(1 - dist / (3 * a))
+    [st, touch] = f_strength(iz)
+    array<float> FRESH = array.from(0.5, 0.9, 1.0, 0.9, 0.75, 0.6)
+    float lvF = 0.6 * st + 0.4 * FRESH.get(math.min(touch, 5))
+    float roomF = f_clamp(room / (1.5 * a))
+    float rrF = f_clamp((rr - 0.5) / 1.5)
+    float adrF = na(adrUsed) ? 0.5 : f_clamp((130 - adrUsed) / 80)
+    bool roundNearSL = f_r5first(sl - 1) <= sl + 1
+    float huntF = f_clamp(1 - (f_obvious(zK.get(iz)) ? 0.25 : 0) - (roundNearSL ? 0.25 : 0))
+    float tot = 25 * f_clamp(tf) + 15 * fillF + 15 * f_clamp(lvF) + 10 * roomF + 15 * rrF + 8 * adrF + 7 * f_clamp(sessF) + 5 * huntF
+    [ok, lo, hi, sl, tp1, tp2, int(math.round(tot))]
+
+// live setups (parallel arrays). Numbers are frozen at birth; valid until `until` (45 min, cut at the next news or the close).
+// Pending: cancelled on expiry, if price hits the SL before the fill ("invalidated") or TP1 before the fill ("missed").
+// Filled: removed on SL, on TP2, or `holdMin` minutes after the fill (the bot tracks outcomes up to 6 h).
+var array<int>   sDir  = array.new<int>()
+var array<float> sLvl  = array.new<float>()
+var array<float> sA_   = array.new<float>()
+var array<float> sB_   = array.new<float>()
+var array<float> sSL   = array.new<float>()
+var array<float> sTP1  = array.new<float>()
+var array<float> sTP2  = array.new<float>()
+var array<int>   sCr   = array.new<int>()
+var array<int>   sUntil = array.new<int>()
+var array<int>   sFill = array.new<int>()
+
+f_del(int i) =>
+    sDir.remove(i)
+    sLvl.remove(i)
+    sA_.remove(i)
+    sB_.remove(i)
+    sSL.remove(i)
+    sTP1.remove(i)
+    sTP2.remove(i)
+    sCr.remove(i)
+    sUntil.remove(i)
+    sFill.remove(i)
+    0
+
+// fixed release starts (NY 08:30, 10:00, optional 14:00) minus nPre, for the next-news cut and the session factor
+f_nextNews(int t) =>
+    int best = na
+    for dd = 0 to 3
+        int base = t + dd * DAY
+        int y = year(base, TZN)
+        int mo = month(base, TZN)
+        int dm = dayofmonth(base, TZN)
+        int wd = dayofweek(base, TZN)
+        if wd >= dayofweek.monday and wd <= dayofweek.friday
+            for q = 0 to 2
+                bool on = q == 0 ? n830 : q == 1 ? n1000 : n1400
+                if on
+                    int ev = timestamp(TZN, y, mo, dm, q == 0 ? 8 : q == 1 ? 10 : 14, q == 0 ? 30 : 0) - nPre * MIN
+                    if ev > t and (na(best) or ev < best)
+                        best := ev
+    best
+
+// entry limit (assist.entryLimit): end of the allowed entry time for t, or na when closed
+f_limit(int t) =>
+    int dow = dayofweek(t, TZT)
+    int m = hour(t, TZT) * 60 + minute(t, TZT)
+    int d0 = timestamp(TZT, year(t, TZT), month(t, TZT), dayofmonth(t, TZT), 0, 0)
+    int clMin = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
+    int opMin = int(math.floor(openHM / 100)) * 60 + openHM % 100
+    int frMin = int(math.floor(friHM / 100)) * 60 + friHM % 100
+    int r = na
+    if m < clMin
+        r := dow == dayofweek.saturday or dow == dayofweek.sunday or dow == dayofweek.monday ? na : d0 + clMin * MIN
+    else if m < opMin or dow == dayofweek.sunday or dow == dayofweek.saturday
+        r := na
+    else if dow == dayofweek.friday
+        r := m >= frMin ? na : d0 + frMin * MIN
+    else
+        r := d0 + (1440 + clMin) * MIN
+    r
+
+int tEval = barstate.isrealtime ? timenow : time_close
+[mktOpen, friCut, soonC, newsC] = f_clock(tEval)
+// volatility (assist.volState) from closed M5 ATR values
+f_volState() =>
+    int st = 0
+    int n = atrH.size()
+    if n >= 60
+        float last = atrH.get(n - 1)
+        int cnt = 0
+        for v in atrH
+            if v <= last
+                cnt += 1
+        float pct = float(cnt) / n * 100
+        int m5n = h5.size()
+        bool big = m5n >= 2 and n >= 2 and h5.get(m5n - 2) - l5.get(m5n - 2) >= 2.5 * atrH.get(n - 2)
+        int m = hour(tEval, TZT) * 60 + minute(tEval, TZT)
+        bool active = m >= 630 and m < 1350
+        st := pct >= 90 or big ? 1 : pct <= 10 and active ? 2 : 0
+    st
+int   vst   = f_volState()
+int   light = not mktOpen ? 9 : friCut ? 8 : newsC ? 4 : soonC ? 5 : vst == 1 ? 1 : vst == 2 ? 2 : 0
+float liveP = close + liveOff
+
+if inEval and not na(atrC)
+    float hiL = high + liveOff
+    float loL = low + liveOff
+    // 1. update live setups (assist.js outcome rules)
+    int i = sDir.size() - 1
+    while i >= 0
+        int d = sDir.get(i)
+        bool kill = false
+        if na(sFill.get(i))
+            bool fl = d < 0 ? hiL >= sA_.get(i) : loL + sprd <= sB_.get(i)
+            bool broke = d < 0 ? hiL + sprd >= sSL.get(i) : loL <= sSL.get(i)
+            bool missed = d < 0 ? loL + sprd <= sTP1.get(i) : hiL >= sTP1.get(i)
+            if tEval >= sUntil.get(i) and not fl
+                kill := true
+            else if not fl and (broke or missed)
+                kill := true
+            else if fl
+                sFill.set(i, time)
+        if not na(sFill.get(i)) and not kill
+            bool slHit = d < 0 ? hiL + sprd >= sSL.get(i) : loL <= sSL.get(i)
+            bool tp2Hit = d < 0 ? loL + sprd <= sTP2.get(i) : hiL >= sTP2.get(i)
+            if slHit or tp2Hit or tEval > sFill.get(i) + holdMin * MIN or not mktOpen
+                kill := true
+        if kill
+            f_del(i)
+        i -= 1
+    // 2. new setups (assist.validity + buildSetups): one per shown level, resistance → sell, else buy; best 2 per side
+    int lim = f_limit(tEval)
+    int nx = f_nextNews(tEval)
+    int until = na(lim) ? na : math.min(tEval + expMin * MIN, lim)
+    if not na(until) and not na(nx) and nx < until
+        until := nx
+    bool canNew = not na(until) and not newsC and until - tEval >= 10 * MIN
+    if canNew and nZ > 0
+        int mT = hour(tEval, TZT) * 60 + minute(tEval, TZT)
+        float sessF = mT >= 420 and mT < 630 ? 0.6 : (mT >= 1380 or mT < 30) ? 0.5 : 1.0
+        if not na(nx) and nx + nPre * MIN - tEval < 60 * MIN
+            sessF := math.min(sessF, 0.4)
+        array<int>   cD = array.new<int>()
+        array<int>   cZ = array.new<int>()
+        array<float> cA = array.new<float>()
+        array<float> cB = array.new<float>()
+        array<float> cS = array.new<float>()
+        array<float> c1 = array.new<float>()
+        array<float> c2 = array.new<float>()
+        array<float> cC = array.new<float>()
+        for n = 0 to 3
+            int iz = f_lv(n)
+            if iz >= 0
+                bool resist = zP.get(iz) > close
+                int dir = (liveP < zLo.get(iz) or (liveP <= zHi.get(iz) and resist)) ? -1 : 1
+                [ok, eA, eB, sl, tp1, tp2, cr] = f_build(dir, iz, liveP, atrC, sessF)
+                if ok
+                    cD.push(dir)
+                    cZ.push(iz)
+                    cA.push(eA)
+                    cB.push(eB)
+                    cS.push(sl)
+                    c1.push(tp1)
+                    c2.push(tp2)
+                    cC.push(cr)
+        if cC.size() > 0
+            array<int> ord = cC.sort_indices(order.descending)
+            for q in ord
+                int dir = cD.get(q)
+                int iz = cZ.get(q)
+                int live = 0
+                bool same = false
+                if sDir.size() > 0
+                    for k = 0 to sDir.size() - 1
+                        if sDir.get(k) == dir
+                            live += 1
+                            if math.abs(sLvl.get(k) - zD.get(iz)) <= half
+                                same := true
+                if live < 2 and not same
+                    sDir.push(dir)
+                    sLvl.push(zD.get(iz))
+                    sA_.push(cA.get(q))
+                    sB_.push(cB.get(q))
+                    sSL.push(cS.get(q))
+                    sTP1.push(c1.get(q))
+                    sTP2.push(c2.get(q))
+                    sCr.push(int(cC.get(q)))
+                    sUntil.push(until)
+                    sFill.push(na)
+
+// ───────────────────────── رسم (فقط روی آخرین کندل) ─────────────────────────
+f_fa(string s) => str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(str.replace_all(s, "0", "۰"), "1", "۱"), "2", "۲"), "3", "۳"), "4", "۴"), "5", "۵"), "6", "۶"), "7", "۷"), "8", "۸"), "9", "۹"), ".", "٫")
+f_px1(float p) => str.tostring(p, "0.0")
+f_px2(float p) => str.tostring(p, "0.00")
+// net toman for the best and the worst edge of the entry range (like the bot's "a تا b")
+f_money2(float v1, float v2) =>
+    float big = math.max(math.abs(v1), math.abs(v2))
+    bool mil = big >= 1e6
+    string a1 = mil ? str.tostring(math.abs(v1) / 1e6, "0.##") : str.tostring(math.round(math.abs(v1) / 1000))
+    string a2 = mil ? str.tostring(math.abs(v2) / 1e6, "0.##") : str.tostring(math.round(math.abs(v2) / 1000))
+    (v1 >= 0 and v2 >= 0 ? "سود " : v1 < 0 and v2 < 0 ? "ضرر " : "") + f_fa((v1 < 0 and v2 >= 0 ? "−" : "") + a1) + " تا " + f_fa((v2 < 0 and v1 >= 0 ? "−" : "") + a2) + (mil ? " میلیون تومان" : " هزار تومان")
+
+color cUp   = color.new(#26a69a, 0)
+color cDn   = color.new(#ef5350, 0)
+color cFlat = color.new(#9e9e9e, 0)
+color cOra  = color.new(#ff9800, 15)
+f_tc(int t) => t == 1 ? cUp : t == -1 ? cDn : cFlat
+f_ar(int t) => t == 1 ? "↑" : t == -1 ? "↓" : "→"
+
+var array<line>  dLines = array.new<line>()
+var array<label> dLbls  = array.new<label>()
+var array<box>   dBoxes = array.new<box>()
+f_pos(string s) => s == "بالا، چپ" ? position.top_left : s == "پایین، راست" ? position.bottom_right : s == "پایین، چپ" ? position.bottom_left : position.top_right
+var table strip = table.new(f_pos(stripP), 4, 6, border_width = 1, border_color = color.new(color.gray, 80))
+
+if barstate.islast
+    while dLines.size() > 0
+        line.delete(dLines.pop())
+    while dLbls.size() > 0
+        label.delete(dLbls.pop())
+    while dBoxes.size() > 0
+        box.delete(dBoxes.pop())
+    float pxd = close + dgOff
+    int xR = bar_index + 8
+    int xL = bar_index - 30
+    // levels: two above and two below (phone: only those within `nearUsd`)
+    for n = 0 to 3
+        int iz = n < 2 ? iUp + n : iUp - 1 - (n - 2)
+        if iz >= 0 and iz < nZ
+            float d = zD.get(iz)
+            if not phone or math.abs(d - pxd) <= nearUsd
+                color lc = n < 2 ? color.new(cDn, 55) : color.new(cUp, 55)
+                dLines.push(line.new(xL, d, xR, d, color = lc, width = 1))
+                string tg = f_tags(zK.get(iz), d)
+                dLbls.push(label.new(xR, d, f_px1(d), style = label.style_label_left, color = color.new(color.black, 100), textcolor = n < 2 ? cDn : cUp, size = f_size(), tooltip = tg))
+                if not phone
+                    dLbls.push(label.new(xL, d, tg, style = label.style_label_right, color = color.new(color.black, 100), textcolor = color.new(color.gray, 30), size = size.small))
+    // setups
+    int best = -1
+    if sDir.size() > 0
+        for k = 0 to sDir.size() - 1
+            if best < 0 or sCr.get(k) > sCr.get(best)
+                best := k
+    if showSet and sDir.size() > 0
+        int xS = bar_index - 4
+        int xE = bar_index + 20
+        for k = 0 to sDir.size() - 1
+            if not phone or k == best
+                int   dir = sDir.get(k)
+                float eA = sA_.get(k)
+                float eB = sB_.get(k)
+                float ent = dir == 1 ? eA : eB    // best edge (assist.js): buy = range low, sell = range high
+                color sc = dir == 1 ? cUp : cDn
+                dBoxes.push(box.new(xS, eB, xE, eA, border_color = color.new(sc, 70), bgcolor = color.new(sc, 85)))
+                dLines.push(line.new(xS, sSL.get(k), xE, sSL.get(k), color = cDn, width = 3))
+                dLines.push(line.new(xS, sTP1.get(k), xE, sTP1.get(k), color = color.new(cUp, 10), width = 1, style = line.style_dashed))
+                dLines.push(line.new(xS, sTP2.get(k), xE, sTP2.get(k), color = color.new(cUp, 35), width = 1, style = line.style_dotted))
+                int left = int(math.ceil((sUntil.get(k) - tEval) / MIN))
+                float dist = dir == 1 ? math.max(0.0, liveP + sprd - eB) : math.max(0.0, eA - liveP)
+                float wst = dir == 1 ? eB : eA
+                int cr = sCr.get(k)
+                string h1 = (cr < warnCr ? "⚠ " : "") + (dir == 1 ? "▲ خرید" : "▼ فروش") + " · اعتبار " + f_fa(str.tostring(cr))
+                string h2 = not na(sFill.get(k)) ? "وارد بازه شد؛ حد ضرر را بگذار" : dist <= 0 ? "قیمت در بازه‌ی ورود · " + f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" : f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" + " · " + f_fa(str.tostring(dist, "0.0")) + " دلار تا ورود"
+                string h3 = f_px2(eA) + " – " + f_px2(eB)
+                dLbls.push(label.new(xE, (eA + eB) / 2, h1 + "\n" + h2 + "\n" + h3, style = label.style_label_left, color = color.new(sc, 20), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sSL.get(k), "SL " + f_px2(sSL.get(k)) + "\n" + f_money2(f_pnl((sSL.get(k) - ent) * dir), f_pnl((sSL.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cDn, 0), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP1.get(k), "TP1 " + f_px2(sTP1.get(k)) + "\n" + f_money2(f_pnl((sTP1.get(k) - ent) * dir), f_pnl((sTP1.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 25), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP2.get(k), "TP2 " + f_px2(sTP2.get(k)) + "\n" + f_money2(f_pnl((sTP2.get(k) - ent) * dir), f_pnl((sTP2.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 45), textcolor = color.white, size = f_size()))
+    // trend strip: 5 15 1H 4H, overall word, lower-timeframe state, market light, room to the next level
+    table.clear(strip, 0, 0, 3, 5)
+    bool sens = newsC or soonC or friCut
+    color bg = sens ? cOra : color.new(chart.bg_color, 15)
+    color fg = sens ? color.black : chart.fg_color
+    table.cell(strip, 0, 0, "5" + f_ar(tr5), text_color = sens ? color.black : f_tc(tr5), bgcolor = bg, text_size = f_size())
+    table.cell(strip, 1, 0, "15" + f_ar(tr15), text_color = sens ? color.black : f_tc(tr15), bgcolor = bg, text_size = f_size())
+    table.cell(strip, 2, 0, "1H" + f_ar(tr60), text_color = sens ? color.black : f_tc(tr60), bgcolor = bg, text_size = f_size())
+    table.cell(strip, 3, 0, "4H" + f_ar(tr240), text_color = sens ? color.black : f_tc(tr240), bgcolor = bg, text_size = f_size())
+    table.cell(strip, 0, 1, overTx, text_color = sens ? color.black : f_tc(hb), bgcolor = bg, text_size = f_size())
+    table.merge_cells(strip, 0, 1, 3, 1)
+    table.cell(strip, 0, 2, subTx, text_color = fg, bgcolor = bg, text_size = size.small)
+    table.merge_cells(strip, 0, 2, 3, 2)
+    string lTx = light == 9 ? "دریاگلد بسته است" : light == 8 ? "ورود تازه ممنوع" : light == 4 ? "خبر نزدیک" : light == 5 ? "پایان کار نزدیک" : light == 1 ? "پرنوسان" : light == 2 ? "کم‌تحرک" : "مناسب"
+    color lC = light == 0 ? cUp : light == 9 ? cFlat : light == 2 ? cFlat : cOra
+    table.cell(strip, 0, 3, "● " + lTx, text_color = sens ? color.black : lC, bgcolor = bg, text_size = f_size())
+    table.merge_cells(strip, 0, 3, 3, 3)
+    float upR = iUp < nZ ? zD.get(iUp) - pxd : na
+    float dnR = iUp - 1 >= 0 ? pxd - zD.get(iUp - 1) : na
+    float roomT = hb == 1 ? upR : hb == -1 ? dnR : na
+    string rTx = "↑" + (na(upR) ? "—" : str.tostring(upR, "0.0")) + "  ↓" + (na(dnR) ? "—" : str.tostring(dnR, "0.0"))
+    table.cell(strip, 0, 4, rTx, text_color = fg, bgcolor = bg, text_size = size.small)
+    table.merge_cells(strip, 0, 4, 2, 4)
+    string fitTx = na(roomT) ? "—" : roomT >= tgtLo ? "جا دارد" : "جا کم است"
+    table.cell(strip, 3, 4, fitTx, text_color = sens ? color.black : na(roomT) ? cFlat : roomT >= tgtLo ? cUp : cOra, bgcolor = bg, text_size = size.small, tooltip = "فاصله تا سطح بعدی در جهت روند کلی، در مقایسه با تارگت معمول شما.")
+    int tfs = timeframe.in_seconds()
+    if tfs > 300 or (not phone and not na(adrUsed))
+        string wTx = tfs > 300 ? "⚠ تایم‌فریم چارت ۵ دقیقه یا کمتر باشد" : "مصرف دامنه‌ی روز " + f_fa(str.tostring(adrUsed, "0")) + "٪"
+        table.cell(strip, 0, 5, wTx, text_color = tfs > 300 ? cOra : fg, bgcolor = bg, text_size = size.small)
+        table.merge_cells(strip, 0, 5, 3, 5)
