@@ -166,7 +166,7 @@ check("direction from trend; none when nothing is clear", A.directionFrom(down).
 // alerts (pure)
 const t0 = ms("2026-11-18T15:00:00Z");
 const la = A.levelAlerts(lv, [[t0 - 120000, 3532, 3533, 3531.5, 3533], [t0 - 60000, 3533, 3535.0, 3532.9, 3534.9]], { day: "2026-11-18", sent: {} });
-check("level touch alert: once, with level price and kind", la.length === 1 && la[0].text.includes("به سطح رسید") && la[0].text.includes("`3536.2`") && la[0].text.includes("مقاومت"));
+check("level touch alert: once, with level price and kind", la.length === 1 && la[0].text.includes("به محدوده‌ی سطح `3536.2` رسید") && la[0].text.includes("مقاومت"));
 check("level touch not repeated the same day", A.levelAlerts(lv, [[t0 - 60000, 3533, 3535.0, 3532.9, 3534.9]], { day: "2026-11-18", sent: { [la[0].key]: 1 } }).length === 0);
 const ta = A.trendAlerts({ M15: "خنثی", H1: "نزولی" }, { M15: "نزولی", H1: "نزولی" }, A.trendSummary(down), t0);
 check("trend change alert only for the TF that changed; none on first run", ta.length === 1 && ta[0].includes("تغییر روند ۱۵ دقیقه") && ta[0].includes("از خنثی به نزولی") &&

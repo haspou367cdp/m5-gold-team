@@ -475,8 +475,8 @@ export function levelAlerts(levels, bars, { day, sent = {}, snapAtMs = 0 }) {
     const fromBelow = prev ? prev[4] < L.lo : hit[0][1] < L.price;
     const through = fromBelow ? last[4] > L.hi : last[4] < L.lo;
     const kind = fromBelow ? "مقاومت" : "حمایت";
-    const verb = through ? (fromBelow ? "از سطح بالاتر رفت" : "از سطح پایین‌تر رفت") : "به سطح رسید";
-    out.push({ key, text: `**📍 قیمت ${verb} \`${p1(L.price)}\`**\n~~${kind}${L.label ? " · " + L.label : ""} · ${hmOf(last[0] + 60000)} به وقت تهران~~\n\nدریاگلد \`${px(last[4])}\`` });
+    const head = through ? `از سطح \`${p1(L.price)}\` ${fromBelow ? "بالاتر" : "پایین‌تر"} رفت` : `به محدوده‌ی سطح \`${p1(L.price)}\` رسید`;
+    out.push({ key, text: `**📍 قیمت ${head}**\n~~${kind}${L.label ? " · " + L.label : ""} · ${hmOf(last[0] + 60000)} به وقت تهران~~\n\nدریاگلد \`${px(last[4])}\`` });
   }
   return out.slice(0, 2);
 }
