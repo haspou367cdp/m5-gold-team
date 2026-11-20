@@ -61,7 +61,7 @@ pg_cron ──dispatch──▶ GitHub Actions .github/workflows/telegram-bot.ym
 - Telegram menus, the bot description and short description (fa + default) are set by `menuCalls()` once per `MENU_VERSION` on the next `/tick` (`state.menu_version`), or by
   `/admin/setup set_commands`.
 
-## 4. Commands (tg-bot build 2026-11-21-assistant-v5.1-onebasis)
+## 4. Commands (tg-bot build 2026-11-21-assistant-v5.2-hours)
 Owner private chat (45639251), menu order: `/setup` `/e` `/trend` `/levels` `/brief` `/status` `/balance` `/offset`
 `/calibrate` `/groupoff` `/groupon` `/help`.
 Group «⬩ Z A R V A ⬩» (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
@@ -117,7 +117,7 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
 
 ## 8. Deployed vs pending
 Deployed (2026-11-21 01:58 Tehran):
-- tg-bot **v27** (build `2026-11-21-assistant-v5.1-onebasis`; v26 = v5 without the exact group title): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
+- tg-bot **v28** (build `2026-11-21-assistant-v5.2-hours`; market open Mon 01:30, alerts from 07:00; v27 = v5.1 exact group title): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
   20 s `tg()` timeout. `MENU_VERSION` `2026-11-21-t246u-b` (menus + bot description/short description) is applied by the
   first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
 - `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
