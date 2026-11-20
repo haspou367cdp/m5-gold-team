@@ -1,0 +1,179 @@
+{
+ "XauMR": {
+  "params": {
+   "adr_max": 195,
+   "buf_max": 7.8,
+   "l2_skip": false,
+   "mr_trend": false,
+   "rsi_lo": 30,
+   "vol_k": 3.4,
+   "sl_atr": 0.89,
+   "time_stop": 35,
+   "tp_atr": 1.1,
+   "tp_r": 2.0
+  },
+  "cooldown": 6,
+  "slg_limit": 2,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauORB": {
+  "params": {
+   "adr_max": 177,
+   "buf_max": 8.6,
+   "l2_skip": true,
+   "orb_buf": 0.2,
+   "orb_max": 3.8,
+   "orb_trend": false,
+   "vol_k": 4.0,
+   "sl_atr": 0.55,
+   "time_stop": 45,
+   "tp_atr": 2.2,
+   "tp_r": 0.8
+  },
+  "cooldown": 2,
+  "slg_limit": 4,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauPullback": {
+  "params": {
+   "adr_max": 167,
+   "buf_max": 8.6,
+   "l2_skip": true,
+   "need_m5": true,
+   "pb_k": 0.0,
+   "vol_k": 4.0,
+   "sl_atr": 0.84,
+   "time_stop": 20,
+   "tp_atr": 1.0,
+   "tp_r": 2.2
+  },
+  "cooldown": 4,
+  "slg_limit": 2,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauS2": {
+  "params": {
+   "adr_max": 109,
+   "buf_max": 7.9,
+   "l1_k": 2.0,
+   "l2_skip": false,
+   "mirror": false,
+   "s2_k": 0.6,
+   "vol_k": 2.8,
+   "sl_atr": 1.09,
+   "time_stop": 45,
+   "tp_atr": 2.3,
+   "tp_r": 2.4
+  },
+  "cooldown": 3,
+  "slg_limit": 2,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauS3": {
+  "params": {
+   "adr_max": 123,
+   "buf_max": 8.9,
+   "l1_k": 1.6,
+   "l2_skip": false,
+   "mirror": true,
+   "s3_k": 0.9,
+   "vol_k": 1.5,
+   "sl_atr": 0.94,
+   "time_stop": 43,
+   "tp_atr": 1.7,
+   "tp_r": 1.5
+  },
+  "cooldown": 2,
+  "slg_limit": 4,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauVWAP": {
+  "params": {
+   "adr_max": 82,
+   "buf_max": 8.3,
+   "l2_skip": false,
+   "vol_k": 2.3,
+   "vw_k": 3.2,
+   "vw_tp_frac": 0.9,
+   "sl_atr": 0.96,
+   "time_stop": 21,
+   "tp_atr": 1.5,
+   "tp_r": 1.5
+  },
+  "cooldown": 5,
+  "slg_limit": 2,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ },
+ "XauZone": {
+  "params": {
+   "adr_max": 117,
+   "buf_max": 8.6,
+   "l2_skip": true,
+   "rr_min": 1.4,
+   "vol_k": 2.7,
+   "sl_atr": 0.35,
+   "time_stop": 42,
+   "tp_atr": 1.5,
+   "tp_r": 2.3
+  },
+  "cooldown": 3,
+  "slg_limit": 2,
+  "minimal_roi": {
+   "0": 10
+  },
+  "stoploss": -0.004,
+  "trailing_stop": false,
+  "trailing_stop_positive": null,
+  "trailing_stop_positive_offset": 0.0,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 1
+ }
+}

@@ -1,0 +1,9 @@
+user_data/data/
+user_data/backtest_results/
+user_data/bt_*/
+user_data/hyperopt_results/
+user_data2/
+user_data/strategies/__pycache__/
+__pycache__/
+logs/
+*.lock
