@@ -155,13 +155,13 @@ export function trendSummary(t) {
   else if (h4 === FLAT && h1 === FLAT) overall = FLAT;
   let line;
   if (higher) {
-    const opp = higher === UP ? DOWN : UP, act = higher === UP ? "بخری" : "بفروشی";
+    const opp = higher === UP ? DOWN : UP, act = higher === UP ? "بخرید" : "بفروشید";
     const pull = ["M15", "M5"].filter((tf) => t[tf] === opp), same = ["M15", "M5"].filter((tf) => t[tf] === higher);
     if (same.length === 2) line = `${higher} است و ۱۵ دقیقه و ۵ دقیقه هم با آن هم‌جهت‌اند.`;
-    else if (pull.length === 2) line = `${higher} است، ولی تایم‌های پایین در اصلاح‌اند. اگر می‌خواهی در جهت روند اصلی ${act}، صبر کن تا ۵ و ۱۵ دقیقه دوباره ${higher} شوند.`;
-    else if (pull.length === 1) line = `${higher} است، ولی ${TF_FA[pull[0]]} در اصلاح است. اگر می‌خواهی در جهت روند اصلی ${act}، صبر کن تا ${TF_FA[pull[0]]} دوباره ${higher} شود.`;
+    else if (pull.length === 2) line = `${higher} است، ولی تایم‌فریم‌های پایین‌تر در اصلاح‌اند. اگر می‌خواهید در جهت روند اصلی ${act}، صبر کنید تا ۵ و ۱۵ دقیقه دوباره ${higher} شوند.`;
+    else if (pull.length === 1) line = `${higher} است، ولی ${TF_FA[pull[0]]} در اصلاح است. اگر می‌خواهید در جهت روند اصلی ${act}، صبر کنید تا ${TF_FA[pull[0]]} دوباره ${higher} شود.`;
     else if (same.length === 1) line = `${higher} است؛ ${TF_FA[same[0]]} هم‌جهت است و ${TF_FA[same[0] === "M15" ? "M5" : "M15"]} فعلاً خنثی است.`;
-    else line = `${higher} است؛ تایم‌های پایین فعلاً خنثی‌اند.`;
+    else line = `${higher} است؛ تایم‌فریم‌های پایین‌تر فعلاً خنثی‌اند.`;
   } else if (overall === FLAT) line = "خنثی است؛ ۴ ساعت و ۱ ساعت جهت روشنی ندارند.";
   else line = `نامشخص است؛ ۴ ساعت ${h4} و ۱ ساعت ${h1} است.`;
   return { overall, higher, line };
@@ -299,7 +299,11 @@ export function insideNews(news, nowMs) {
 export function entryLimit(nowMs) {
   const p = tehParts(nowMs);
   const dayStart = Date.parse(p.date + "T00:00:00+03:30");
-  if (p.min < 30) return p.dow === 6 ? { closed: "friday" } : { untilMs: dayStart + 30 * 60000, why: "close" };
+  if (p.min < 30) {   // 00:00-00:30 belongs to the previous trading day: Sat = Friday tail (entries closed), Sun/Mon = no session
+    if (p.dow === 6) return { closed: "friday" };
+    if (p.dow === 0 || p.dow === 1) return { closed: "closed" };
+    return { untilMs: dayStart + 30 * 60000, why: "close" };
+  }
   if (p.min < 7 * 60 || p.dow === 0 || p.dow === 6) return { closed: "closed" };
   if (p.dow === 5) return p.min >= 23 * 60 + 30 ? { closed: "friday" } : { untilMs: dayStart + (23 * 60 + 30) * 60000, why: "friday" };
   return { untilMs: dayStart + (24 * 60 + 30) * 60000, why: "close" };
@@ -331,7 +335,7 @@ function candidate(ctx, L, dir) {
   let reject = null;
   if (dir < 0 ? P + SPREAD >= sl : P <= sl) reject = "قیمت از سطح عبور کرده است";
   else if (risk > MAX_SL_USD) reject = "حد ضرر لازم بیش از ۹ دلار است";
-  else if (dist > 4 * atr5) reject = "تا بازه‌ی ورود خیلی فاصله است";
+  else if (dist > 4 * atr5) reject = "فاصله تا بازه‌ی ورود زیاد است";
   else if ((t1.tp - mid) * dir <= 0 || room < Math.max(1, 0.5 * Math.abs(sl - mid))) reject = "تا سطح بعدی جا کم است";
   const rr = (Math.abs(t1.tp - mid) * RATE[1] - FEE) / (Math.abs(sl - mid) * RATE[1] + FEE);
   if (!reject && rr < 0.6) reject = "نسبت سود به ضرر ضعیف است";
@@ -385,13 +389,13 @@ function setupBlock(c, i, untilMs, group) {
     `🛑 حد ضرر \`${px(c.sl)}\``, ...moneyLines(c, c.sl, group),
     `🎯 حد سود ۱ \`${px(c.tp1)}\``, ...moneyLines(c, c.tp1, group),
     `🎯 حد سود ۲ \`${px(c.tp2)}\``, ...moneyLines(c, c.tp2, group),
-    `~~سطح \`${p1(lv.price)}\` (${lv.label || "سطح"})` + (t1 ? ` · هدف ۱ پیش از \`${p1(t1.price)}\`` : "") + (t2 ? ` · هدف ۲ پیش از \`${p1(t2.price)}\`` : "") + "~~",
+    `~~سطح \`${p1(lv.price)}\` (${lv.label || "سطح"})` + (t1 ? ` · حد سود ۱ پیش از \`${p1(t1.price)}\`` : "") + (t2 ? ` · حد سود ۲ پیش از \`${p1(t2.price)}\`` : "") + "~~",
     `~~معتبر تا ${hmOf(untilMs)}؛ اگر پیش از ورود قیمت به \`${px(c.invalid)}\` برسد، باطل است~~`,
     `دلیل: ${c.reason}`];
-  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ پرخطر");
+  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ این ستاپ پرخطر است");
   return L.join("\n");
 }
-const WHY_UNTIL = { time: "", news: " (پیش از خبر)", friday: " (پایان ورود جمعه)", close: " (بسته شدن دریاگلد)" };
+const WHY_UNTIL = { time: "", news: " (پیش از خبر)", friday: " (پایان ورود جمعه)", close: " (بسته‌شدن دریاگلد)" };
 export function setupMsg(res, ctx, v, { group = false, snapNote = null } = {}) {
   const t = ctx.trend;
   const head = ["**🎯 ستاپ‌ها**", `~~${hmOf(ctx.nowMs)} به وقت تهران · دریاگلد \`${px(ctx.quote.dg)}\` · معتبر تا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""}~~`,
@@ -403,11 +407,11 @@ export function setupMsg(res, ctx, v, { group = false, snapNote = null } = {}) {
     if (res[k].length) res[k].forEach((c, i) => L.push(setupBlock(c, i + 1, v.untilMs, group)));
     else L.push(`${ICON[k]} فعلاً ستاپ معقولی برای ${SIDE_FA[k]} نیست؛ ${res.why[k]}.`);
   }
-  if (res.SELL.length || res.BUY.length) L.push("~~حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد، پس هنگام ورود یکی را بگذار~~");
+  if (res.SELL.length || res.BUY.length) L.push("~~حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد، پس هنگام ورود یکی را انتخاب کنید~~");
   return L.join("\n\n");
 }
 export function noSetupMsg(v, nowMs) {
-  if (v.closed === "friday") return "**🎯 ستاپ‌ها**\n~~ورود جدید جمعه از 23:30 بسته است؛ ستاپی چیده نمی‌شود~~";
+  if (v.closed === "friday") return "**🎯 ستاپ‌ها**\n~~ورود جدید از ساعت 23:30 جمعه بسته است؛ ستاپی چیده نمی‌شود~~";
   if (v.news) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nپنجره‌ی خبر تا ${hmOf(v.news.endMs)} ادامه دارد؛ تا آن موقع ستاپی چیده نمی‌شود.`;
   if (v.short) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nتا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""} کمتر از ۱۰ دقیقه مانده؛ ستاپ تازه چیده نمی‌شود.`;
   return null;
@@ -453,11 +457,11 @@ export function entryMsg(p, { quote, nowMs, dirWhy = null }) {
     `~~${dirWhy ? `جهت از ${dirWhy} · ` : ""}${hmOf(nowMs)} به وقت تهران` + (quote ? ` · دریاگلد الان \`${px(quote.dg)}\`` : "") + "~~", "",
     `🛑 حد ضرر \`${px(p.sl)}\``, m(p.sl), `🎯 حد سود ۱ \`${px(p.tp1)}\``, m(p.tp1), `🎯 حد سود ۲ \`${px(p.tp2)}\``, m(p.tp2), ""];
   const why = [];
-  why.push(p.slLevel ? `حد ضرر پشت سطح \`${p1(p.slLevel.price)}\`` : "حد ضرر بر پایه‌ی نوسان، چون سطحی در فاصله‌ی ۹ دلاری نبود");
+  why.push(p.slLevel ? `حد ضرر ${p.dir < 0 ? "بالای" : "زیر"} سطح \`${p1(p.slLevel.price)}\`` : "حد ضرر بر پایه‌ی نوسان است، چون تا ۹ دلار سطحی نبود");
   if (p.tp1Level) why.push(`حد سود ۱ پیش از \`${p1(p.tp1Level.price)}\``);
   if (p.tp2Level) why.push(`حد سود ۲ پیش از \`${p1(p.tp2Level.price)}\``);
   L.push(`~~${why.join("؛ ")}~~`, "~~مبلغ‌ها به تومان و با کسر کارمزد · حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد~~");
-  if (quote && Math.abs(p.entry - quote.dg) > 30) L.push("", "⚠ قیمت ورود بیش از ۳۰ دلار با قیمت فعلی فاصله دارد؛ عدد را دوباره ببین.");
+  if (quote && Math.abs(p.entry - quote.dg) > 30) L.push("", "⚠ قیمت ورود بیش از ۳۰ دلار با قیمت فعلی فاصله دارد؛ عدد را دوباره بررسی کنید.");
   return L.join("\n");
 }
 
@@ -500,12 +504,12 @@ export function volState(m5closed, nowMs) {
 }
 export function volAlert(v, atMs) {
   if (v.state === "high") return `**🌪 بازار خیلی پرنوسان است**\n~~نوسان ۵ دقیقه حدود ${Math.round(v.atr * 10) / 10} دلار` +
-    (v.big ? "؛ یک کندل ۵ دقیقه‌ای بیش از ۲٫۵ برابر میانگین" : `؛ بالاتر از ${v.pct}٪ یک روز اخیر`) + ` · ${hmOf(atMs)} به وقت تهران~~\n\nحد ضرر باید دورتر باشد؛ حجم کمتر را در نظر بگیر.`;
-  if (v.state === "low") return `**😴 بازار خیلی کم‌تحرک است**\n~~نوسان ۵ دقیقه حدود ${Math.round(v.atr * 10) / 10} دلار؛ پایین‌تر از ۹۰٪ یک روز اخیر · ${hmOf(atMs)} به وقت تهران~~\n\nحرکت‌ها کوتاه‌اند؛ هدف‌های نزدیک‌تر واقع‌بینانه‌ترند.`;
+    (v.big ? "؛ یک کندل ۵ دقیقه‌ای بیش از ۲٫۵ برابر میانگین" : `؛ بیشتر از ${v.pct}٪ از ۲۴ ساعت گذشته`) + ` · ${hmOf(atMs)} به وقت تهران~~\n\nحد ضرر را دورتر بگذارید و حجم کمتری در نظر بگیرید.`;
+  if (v.state === "low") return `**😴 بازار خیلی کم‌تحرک است**\n~~نوسان ۵ دقیقه حدود ${Math.round(v.atr * 10) / 10} دلار؛ کمتر از ۹۰٪ از ۲۴ ساعت گذشته · ${hmOf(atMs)} به وقت تهران~~\n\nحرکت‌ها کوتاه‌اند؛ هدف‌های نزدیک‌تر واقع‌بینانه‌ترند.`;
   return null;
 }
 const NEWS_FA = [[/non-?farm|nfp/i, "اشتغال غیرکشاورزی آمریکا (NFP)"], [/core cpi/i, "تورم هسته‌ی مصرف‌کننده‌ی آمریکا (Core CPI)"],
-  [/\bcpi\b/i, "تورم مصرف‌کننده‌ی آمریکا (CPI)"], [/core pce/i, "شاخص PCE هسته"], [/\bppi\b/i, "تورم تولیدکننده‌ی آمریکا (PPI)"],
+  [/\bcpi\b/i, "تورم مصرف‌کننده‌ی آمریکا (CPI)"], [/core pce/i, "تورم هسته‌ی PCE آمریکا"], [/\bppi\b/i, "تورم تولیدکننده‌ی آمریکا (PPI)"],
   [/fomc.*(statement|rate|decision)|federal funds|rate decision/i, "تصمیم نرخ بهره‌ی فدرال رزرو"], [/fomc.*minutes/i, "صورت‌جلسه‌ی فدرال رزرو"],
   [/powell/i, "سخنرانی پاول، رئیس فدرال رزرو"], [/fomc member|fed governor|fed chair|speaks/i, "سخنرانی مقام فدرال رزرو"],
   [/gdp/i, "تولید ناخالص داخلی آمریکا (GDP)"], [/retail sales/i, "خرده‌فروشی آمریکا"], [/unemployment claims|jobless/i, "مدعیان بیمه‌ی بیکاری آمریکا"],

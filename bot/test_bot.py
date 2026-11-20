@@ -166,7 +166,7 @@ st = state(); st["day"].update(losses=0, loss_toman=0, records=[]); st["signals_
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 11, 15, 0, tzinfo=B.TEH)
 check("scheduled NO TRADE is silent", run("scheduled") == [])
-out = run("command", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "معامله نه" in out[0])
+out = run("command", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "فعلاً ستاپی نیست" in out[0])
 out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "طلا" in out[0])
 
 # ---- (f) pre-session briefs once per day
@@ -202,13 +202,13 @@ check("/brief: shared levels block with Latin tap-to-copy prices", "<code>3895.3
 check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "H4 نزولی" in br and "H1 خنثی" in br and "جمع‌بندی: نامشخص" in br)
 check("/brief: no day-candle hilo and no glued-level skip line", "سقف روز" not in br and "مقاومت نزدیک" not in br and "حمایت نزدیک" not in br)
 check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
-check("/brief: balance and today's loss cap from the day's start equity", "موجودی ۲٫۹۵ میلیون" in br and "سقف ضرر امروز ۲۰۰ هزار" in br)
+check("/brief: balance line (no daily loss cap: the journal is gone)", "موجودی ۲٫۹۵ میلیون تومان" in br and "سقف ضرر" not in br)
 check("/brief: no 'strong'/قوی, no زیان", not any(w in br for w in ["قوی", "strong", "زیان"]))
 check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز + سوئینگ H4" in br and "سوئینگ H1" in br)
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"},
                     levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 18:50:00"))
 out = run("command", ["/scan"]); sc = out[0] if out else ""
-check("/scan no trade: title + one reason + the same levels block", "معامله نه" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
+check("/scan no trade: title + one reason + the same levels block", "فعلاً ستاپی نیست" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
       BRIEF[0]["levels"]["block"].split("\n")[0].startswith("طلا") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
 check("/scan and /brief share nearest prices", "<code>3895.3</code>" in sc and "<code>3870.3</code>" in sc)
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
@@ -347,7 +347,7 @@ snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("Saturday /levels with a stored snapshot: served with age, no analysis",
-      len(out) == 1 and CALLS[0] == 0 and "سن داده" in out[0] and "<code>3895.3</code>" in out[0] and "H4 نزولی" in out[0] and "بازار بسته است" not in out[0])
+      len(out) == 1 and CALLS[0] == 0 and "به‌روزشده" in out[0] and "<code>3895.3</code>" in out[0] and "H4 نزولی" in out[0] and "بازار بسته است" not in out[0])
 
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
@@ -549,7 +549,7 @@ snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["channel_id"] = GID; st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("/levels is mirrored to the group, same text",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "سن داده" in out[0] and CALLS[0] == 0)
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "به‌روزشده" in out[0] and CALLS[0] == 0)
 CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
 check("/scan and /brief closed lines are mirrored",
       len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and out[0] == out[1] and out[2] == out[3] and
@@ -559,16 +559,16 @@ st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; json.dump(st, 
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 out = run("command", ["/brief"])
 check("/brief is mirrored without balance or the daily loss cap",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and "خلاصه‌ی بازار" in out[0] and "موجودی" in out[0] and "سقف ضرر امروز" in out[0] and
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "خلاصه‌ی بازار" in out[0] and "موجودی" in out[0] and "سقف ضرر" not in out[0] and
       "خلاصه‌ی بازار" in out[1] and "موجودی" not in out[1] and "سقف ضرر" not in out[1] and "<code>3895.3</code>" in out[1])
 out = run("command", ["/scan"])
 check("/scan no-trade is mirrored, same text (no balance)",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "معامله نه" in out[0] and "موجودی" not in out[0])
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "فعلاً ستاپی نیست" in out[0] and "موجودی" not in out[0])
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
 st = state(); st["channel_id"] = GID; st["presession_sent"] = {}; st["signals_sent"] = []; json.dump(st, open(B.STATE_JSON, "w"))
 out = run("scheduled")
 check("pre-session brief is mirrored without balance or the daily loss cap",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[0] and "موجودی" in out[0] and "سقف ضرر امروز" in out[0] and
+      len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[0] and "موجودی" in out[0] and "سقف ضرر" not in out[0] and
       "نیویورک" in out[1] and "موجودی" not in out[1] and "سقف ضرر" not in out[1])
 with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
 check("11:15 signal and London brief are both mirrored; signal risk and brief balance stay private",
@@ -608,7 +608,7 @@ br = B.brief_msg(mk_brief(), state())
 pub = B.public_card("brief", br)
 check("public_card keeps the market card and drops only the balance line",
       "خلاصه‌ی بازار" in (pub or "") and "موجودی" in br and "موجودی" not in (pub or "") and "سقف ضرر امروز" not in (pub or ""))
-check("public_card drops error cards", B.public_card("scan", "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~") is None)
+check("public_card drops error cards", B.public_card("scan", "**⏸ فعلاً ستاپی نیست**\n~~داده‌ی قیمت در دسترس نیست~~") is None)
 sig = B.signal_msg(mk_brief(), {"side": "SELL", "entry": 3880, "sl": 3881.6, "tp": 3876},
                    DG.size_trade(3880, 3881.6, 3876, "SELL", cfg, spread_usd=0.25), state(), cfg)
 ps = B.public_card("signal", sig)
@@ -694,7 +694,7 @@ out = run("command", [("/brief", "group")])
 check("group /brief: group copy only (no balance, no loss cap), owner not messaged",
       len(out) == 1 and SENT_TO == [GID] and "خلاصه‌ی بازار" in out[0] and "موجودی" not in out[0] and "سقف ضرر" not in out[0] and MARKUP[0] is None)
 out = run("command", [("/scan", "group")])
-check("group /scan no-trade: group only", len(out) == 1 and SENT_TO == [GID] and "معامله نه" in out[0])
+check("group /scan no-trade: group only", len(out) == 1 and SENT_TO == [GID] and "فعلاً ستاپی نیست" in out[0])
 out = run("command", [("/levels", "group")])
 check("group /levels: group only", len(out) == 1 and SENT_TO == [GID] and "تومان" not in out[0])
 out = run("command", [("/scan", "group"), "/scan"])

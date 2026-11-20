@@ -11,7 +11,6 @@ const DEFAULT_EQUITY = 2085600;
 export const BOT_KEYS = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow",
   "last_price", "friday_reminder_sent", "levels"];
 export const DEFAULT_OFFSET = 0.3;   // DaryaGold ≈ Dukascopy bid + dg_offset (bot_state.state.dg_offset, set by /offset)
-const RATE = { 1: 80000, 0.5: 40000 }, FEE = 14000;
 
 // ---------------- time (Tehran = UTC+3:30, no DST since 2022) ----------------
 export function teh(d = new Date()) {
@@ -38,7 +37,7 @@ export function sessionDate(now = teh()) {
   const d = new Date(Date.parse(now.date + "T00:00:00Z") - 86400000);
   return d.toISOString().slice(0, 10);
 }
-// any closure (nightly 00:30-07:00 and the weekend): /scan and /brief get the closed line
+// any closure (nightly 00:30-07:00 and the weekend): /brief and /setup get the closed line
 export const weekendClosed = (d = new Date()) => !forexOpen(d);
 export function reopenAt(d = new Date()) {
   let t = new Date(Math.ceil(d.getTime() / 300000) * 300000);
@@ -88,36 +87,47 @@ export function parseAmount(args) {
 }
 
 // Owner decision t226u-t232u (2026-11-20): the bot is an assistant. No automatic entry signals, no trade journal.
+// t238u (2026-11-20): the old journal/signal commands are removed entirely (unknown command reply).
 export const HELP = `**🤖 راهنما**
 ~~دستیار طلای دریاگلد~~
 
 **بازار**
 \`/setup\`  ستاپ‌های خرید و فروش
-\`/e sell 3531.80\`  حد ضرر و حد سود برای ورود
-\`/trend\`  روند تایم‌فریم‌ها
-\`/levels\`  سطوح
+\`/e sell 3531.80\`  حد ضرر و حد سود برای یک ورود
+\`/trend\`  روند هر تایم‌فریم
+\`/levels\`  سطوح مهم قیمت
 \`/brief\`  خلاصه‌ی بازار
 
 **هشدارهای خودکار**
-~~رسیدن به سطح · تغییر روند ۱۵ دقیقه و ۱ ساعت · خبر مهم · نوسان زیاد یا کم · بسته شدن دریاگلد~~
+~~رسیدن به سطح · تغییر روند ۱۵ دقیقه و ۱ ساعت · خبر مهم · نوسان خیلی زیاد یا خیلی کم · بسته‌شدن دریاگلد~~
 
 **تنظیمات**
 \`/status\`  وضعیت سیستم
 \`/balance 2085600\`  ثبت موجودی
 \`/offset\`  اختلاف قیمت دریاگلد
-\`/calibrate 3569.85\`  کالیبره با قیمت دریاگلد
+\`/calibrate 3569.85\`  تنظیم اختلاف با قیمت دریاگلد
 \`/groupoff\`  قطع موقت ارسال به گروه
-\`/groupon\`  وصل دوباره ارسال به گروه
+\`/groupon\`  وصل دوباره‌ی ارسال به گروه
 
-~~خلاصه‌ی بازار ساعت ۷، ۱۱:۱۵ و ۱۶:۱۵ · در گروه: /setup، /trend، /levels و /brief~~`;
-// Telegram menu (setMyCommands): short, same wording as /help, no examples
-export const COMMANDS = [["setup", "ستاپ‌های خرید و فروش"], ["e", "حد ضرر و حد سود برای ورود"], ["trend", "روند تایم‌فریم‌ها"],
-  ["levels", "سطوح"], ["brief", "خلاصه‌ی بازار"], ["status", "وضعیت سیستم"], ["balance", "ثبت موجودی"], ["offset", "اختلاف قیمت دریاگلد"],
-  ["calibrate", "کالیبره با قیمت دریاگلد"], ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
-  .map(([command, description]) => ({ command, description }));
-// Commands switched off with the trade journal and the automatic signals (still answered, so nothing is silently lost).
-export const OFF_CMDS = ["/trade", "/loss", "/win", "/undo", "/shadow", "/entered", "/tp", "/sl", "/closed", "/journal", "/pnl"];
-export const OFF_REPLY = "**⏹ این فرمان خاموش شده است**\n~~ثبت معامله و سیگنال خودکار کنار رفته‌اند · راهنما:~~ `/help`";
+~~خلاصه‌ی بازار ساعت‌های ۷، ۱۱:۱۵ و ۱۶:۱۵ · در گروه: /setup، /trend، /levels و /brief~~`;
+// Telegram menus (setMyCommands): short, same wording as /help, no examples.
+// Owner's private chat: the full list. Groups (and everyone else): the four read-only commands members may run.
+const MENU = [["setup", "ستاپ‌های خرید و فروش"], ["e", "حد ضرر و حد سود برای یک ورود"], ["trend", "روند هر تایم‌فریم"],
+  ["levels", "سطوح مهم قیمت"], ["brief", "خلاصه‌ی بازار"], ["status", "وضعیت سیستم"], ["balance", "ثبت موجودی"], ["offset", "اختلاف قیمت دریاگلد"],
+  ["calibrate", "تنظیم اختلاف با قیمت دریاگلد"], ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره‌ی ارسال به گروه"], ["help", "راهنما"]];
+export const COMMANDS = MENU.map(([command, description]) => ({ command, description }));
+export const GROUP_MENU = COMMANDS.filter((c) => ["setup", "trend", "levels", "brief"].includes(c.command));
+export const MENU_VERSION = "2026-11-20-t238u";
+// Telegram calls that make the menus exactly this (narrow scopes first are cleared, then set)
+export function menuCalls() {
+  return [
+    ["deleteMyCommands", { scope: { type: "all_private_chats" } }],
+    ["deleteMyCommands", { language_code: "fa" }],
+    ["setMyCommands", { commands: GROUP_MENU }],                                            // default scope
+    ["setMyCommands", { commands: GROUP_MENU, scope: { type: "all_group_chats" } }],
+    ["setMyCommands", { commands: COMMANDS, scope: { type: "chat", chat_id: Number(CHAT_ID) } }],   // owner
+  ];
+}
 export const ASSIST_CMDS = { "/setup": "setup", "/signal": "setup", "/scan": "setup", "/trend": "trend", "/e": "e" };
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
 
@@ -150,63 +160,8 @@ export function statusMsg(s) {
     `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
     "⏱ بررسی خودکار دوشنبه تا جمعه، `07:00` تا `00:30`"].join("\n");
 }
-export const dayCap = (s) => (Number(s.day.start_equity) || Number(s.equity_toman)) * 0.2;
-const signed = (v) => (v > 0 ? "+" : "") + toman(v);
 const digits = (t) => String(t).replace(/[۰-۹٠-٩٫]/g, (c) => String(DIGIN[c]));
-// /trade <buy|sell> <entry> <exit> <units 1|0.5>; Persian digits and words accepted
-export function parseTrade(args) {
-  if (args.length !== 4) throw new Error("bad trade");
-  const sd = args[0].toLowerCase();
-  const dir = ["buy", "b", "long", "خرید"].includes(sd) ? 1 : ["sell", "s", "short", "فروش"].includes(sd) ? -1 : 0;
-  const num = (x) => { const t = digits(x).replace(/[,٬]/g, ""); if (!/^\d+(\.\d+)?$/.test(t)) throw new Error("bad"); return parseFloat(t); };
-  const entry = num(args[1]), exit = num(args[2]);
-  const u = digits(args[3]).toLowerCase();
-  const units = ["1", "1.0", "full", "یک", "کامل"].includes(u) ? 1 : ["0.5", ".5", "½", "half", "نیم"].includes(u) ? 0.5 : 0;
-  if (!dir || !units || !(entry > 1000 && entry < 10000 && exit > 1000 && exit < 10000) || Math.abs(exit - entry) > 300)
-    throw new Error("bad trade");
-  const gross = Math.round((exit - entry) * dir * RATE[units]);
-  return { side: dir > 0 ? "buy" : "sell", entry, exit, units, gross, net: gross - FEE, fee: FEE };
-}
-// /trade sanity check: warn (the trade is still recorded) when the input looks wrong
 export const offsetOf = (s) => (Number.isFinite(Number(s.dg_offset)) && s.dg_offset !== null && s.dg_offset !== "" ? Number(s.dg_offset) : DEFAULT_OFFSET);
-export function marketPrice(s, at = new Date()) {   // DaryaGold price from the last analysis run, if < 24 h old
-  const lp = s.last_price;
-  if (!lp || !Number(lp.bid) || !lp.at) return null;
-  const t = Date.parse(String(lp.at).replace(" ", "T") + ":00+03:30");
-  if (!(at - t < 24 * 3.6e6)) return null;
-  return Math.round((Number(lp.bid) + offsetOf(s)) * 100) / 100;
-}
-export function tradeWarn(t, s, at = new Date()) {
-  const w = [];
-  if (t.exit === t.entry) w.push("ورود و خروج یکی است");
-  if (Math.abs(t.exit - t.entry) > 40) w.push("حرکت قیمت بیش از ۴۰ دلار است");
-  const m = marketPrice(s, at);
-  if (m && (Math.abs(t.entry - m) > 50 || Math.abs(t.exit - m) > 50)) w.push("قیمت‌ها بیش از ۵۰ دلار با بازار فاصله دارند");
-  return w.length ? `⚠️ ${w.join("؛ ")}؛ اگر اشتباه است \`/undo\`` : null;
-}
-const BAD_TRADE = "**⚠️ معامله ثبت نشد**\n~~جهت، ورود، خروج و حجم (۱ یا ۰٫۵) را بنویسید، مثل:~~\n\n`/trade sell 3914.07 3909.61 1`\n`/trade buy 3894.11 3898.99 0.5`";
-const GATE_FA = { news: "خبر", volatility: "نوسان", spread: "اسپرد", friday: "جمعه", session: "ساعت", asia: "آسیا" };
-const RES_FA = { tp: "هدف", sl: "حد ضرر", expired: "پایان مهلت", unfilled: "پر نشد", pending: "در انتظار", open: "باز" };
-export function shadowMsg(s) {
-  const e = (s.shadow || []);
-  if (!e.length) return "**🕶 سیگنال‌های ردشده**\n~~هنوز موردی ثبت نشده~~";
-  const n = (k) => e.filter((x) => x.status === k).length;
-  const done = e.filter((x) => ["tp", "sl", "expired"].includes(x.status));
-  const R = done.reduce((a, x) => a + Number(x.R || 0), 0), T = done.reduce((a, x) => a + Number(x.toman || 0), 0);
-  const px = (v, off) => (Number(v) + Number(off ?? 0.3)).toFixed(2).replace(/\.?0+$/, "");
-  const last = e.slice(-3).reverse().map((x) => `${x.at.slice(5, 10).replace("-", "/")} ${x.at.slice(-5)} ${x.side === "BUY" ? "خرید" : "فروش"} \`${px(x.entry, x.offset)}\` · ${(x.gates || []).map((g) => GATE_FA[g] || g).join("، ")} · ${RES_FA[x.status] || x.status}` +
-    (["tp", "sl", "expired"].includes(x.status) ? ` ${Number(x.R) > 0 ? "+" : ""}${Number(x.R).toFixed(1)}R` : ""));
-  const asia = done.filter((x) => x.session === "asia"), aR = asia.reduce((a, x) => a + Number(x.R || 0), 0);
-  const aAll = e.filter((x) => x.session === "asia").length;
-  return ["**🕶 سیگنال‌های ردشده**", "~~ستاپ‌هایی که فقط فیلتر جلویشان را گرفت~~", "",
-    `بسته‌شده ${done.length} · هدف ${n("tp")} · حد ضرر ${n("sl")} · پایان مهلت ${n("expired")}`,
-    `پر نشد ${n("unfilled")} · باز ${n("pending") + n("open")}`,
-    ...(done.length ? [`جمع ${R > 0 ? "+" : ""}${R.toFixed(1)}R · یک واحد ${signed(T)} تومان`] : []),
-    aAll ? `آسیا: بسته‌شده ${asia.length} · هدف ${asia.filter((x) => x.status === "tp").length} · حد ضرر ${asia.filter((x) => x.status === "sl").length}` +
-      (asia.length ? ` · جمع ${aR > 0 ? "+" : ""}${aR.toFixed(1)}R` : "") : "آسیا: هنوز موردی ثبت نشده",
-    "", "**آخرین‌ها**", ...last].join("\n");
-}
-const BAD = "**⚠️ چیزی ثبت نشد**\n~~مبلغ را به تومان بنویسید، مثل:~~\n\n`/loss 150000`\n`/win 200000`\n`/balance 2085600`";
 
 
 // ---------------- shared levels snapshot (computed in Python; never recomputed here) ----------------
@@ -247,7 +202,7 @@ export function levelsMsg(snap, at = new Date()) {
   if (snap && !levelsFresh(snap, at)) {
     const age = levelsAgeMin(snap, at);
     if (age != null && age >= 0) {
-      lines.push(`سن داده  ${Math.round(age)} دقیقه`, "");
+      lines.push(`به‌روزشده ${Math.round(age)} دقیقه پیش`, "");
     }
   }
   lines.push(snap && snap.block ? snap.block : "داده‌ی سطوح در دسترس نیست");
@@ -255,16 +210,13 @@ export function levelsMsg(snap, at = new Date()) {
 }
 
 // Pure command handler: mutates state, returns {reply, queue?}.
-export function handle(s, text, now = teh(), at = new Date(), opts = {}) {
+export function handle(s, text, now = teh(), at = new Date()) {
   const parts = text.trim().split(/\s+/);
   const c = parts[0].split("@")[0].toLowerCase(), args = parts.slice(1);
-  const d = s.day;
   if (c === "/start" || c === "/help") return { reply: HELP };
-  // legacy (tests only): the old /scan queue and the journal commands
-  if (ASSIST_CMDS[c] && !(opts.legacy && c === "/scan")) return { assist: { kind: ASSIST_CMDS[c], args } };
-  if (!opts.legacy && OFF_CMDS.includes(c)) return { reply: OFF_REPLY };
+  if (ASSIST_CMDS[c]) return { assist: { kind: ASSIST_CMDS[c], args } };
   if (c === "/status") return { reply: statusMsg(s) };
-  if (c === "/scan" || c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
+  if (c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
   if (c === "/levels") {
     if (weekendClosed(at))
       return { reply: (s.levels && s.levels.block) ? levelsMsg(s.levels, at) : closedLine(at) };
@@ -298,70 +250,11 @@ export function handle(s, text, now = teh(), at = new Date(), opts = {}) {
   }
   if (c === "/groupoff") { s.group_enabled = false; return { reply: "**⏸ ارسال به گروه موقتاً قطع شد.**" }; }
   if (c === "/groupon") { s.group_enabled = true; return { reply: "**▶️ ارسال به گروه دوباره وصل شد.**" }; }
-  if (c === "/shadow") return { reply: shadowMsg(s) };
-  if (c === "/trade") {
-    let t;
-    try { t = parseTrade(args); } catch (e) { return { reply: BAD_TRADE }; }
-    const warn = tradeWarn(t, s, at);
-    const n = s.trades.filter((x) => x.date === now.date).length + 1;
-    const eqBefore = Number(s.equity_toman);
-    const tr = { id: `${now.date}-T${n}-${t.side.toUpperCase()}`, date: now.date, at: now.hm, ...t, ...(warn ? { warned: true } : {}),
-      equity_before: eqBefore, equity_after: eqBefore + t.net };
-    s.equity_toman = tr.equity_after;
-    s.trades.push(tr);
-    const loss = t.net < 0;
-    d.records.push({ type: loss ? "loss" : "win", toman: Math.abs(t.net), at: now.hm, at_full: now.full, trade: tr.id, net: t.net });
-    if (loss) { d.losses += 1; d.loss_toman += -t.net; } else { d.wins += 1; d.win_toman += t.net; }
-    const net = d.loss_toman - d.win_toman;
-    const stop = d.losses >= 3 || net >= dayCap(s);
-    const journal = { trade_id: tr.id, source: "trade_cmd", verification: "USER_CONFIRMED", side: t.side.toUpperCase(),
-      unit: t.units === 1 ? "1U" : "0.5U", entry: t.entry, exit: t.exit, closed_at: (at || new Date()).toISOString(), session_date: d.date,
-      gross_toman: t.gross, spread_toman: 0, fee_toman: t.fee, net_toman: t.net };
-    return { journal_row: journal, reply: [loss ? "**📉 معامله ثبت شد**" : "**📈 معامله ثبت شد**",
-      `~~${t.side === "buy" ? "خرید" : "فروش"} · ${t.units === 1 ? "یک واحد" : "نیم واحد"}~~`, "",
-      `ورود \`${t.entry}\` · خروج \`${t.exit}\``,
-      `نتیجه‌ی خالص ${signed(t.net)} تومان`,
-      `موجودی جدید ${toman(s.equity_toman)} تومان`, "",
-      `امروز ${d.losses} ضرر · ${d.wins} سود`,
-      ...(stop ? ["", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود"] : []),
-      ...(warn ? ["", warn] : [])].join("\n") };
-  }
-  try {
-    if (c === "/balance") {
-      const v = parseAmount(args);
-      s.equity_toman = v;
-      if (!d.records.length) d.start_equity = v;   // nothing recorded yet today: this is the day's starting equity
-      return { reply: `**💼 موجودی ثبت شد**\n~~${toman(v)} تومان~~\n\nریسک هر معامله تا ${tomanShort(v * 0.1)} تومان\nسقف ضرر روزانه ${tomanShort(dayCap(s))} تومان` };
-    }
-    if (c === "/loss" || c === "/win") {
-      const v = parseAmount(args);
-      d.records.push({ type: c.slice(1), toman: v, at: now.hm, at_full: now.full });
-      if (c === "/loss") { d.losses += 1; d.loss_toman += v; } else { d.wins += 1; d.win_toman += v; }
-      const net = d.loss_toman - d.win_toman;
-      const stop = d.losses >= 3 || net >= dayCap(s);
-      return { reply: [c === "/loss" ? "**📉 ضرر ثبت شد**" : "**📈 سود ثبت شد**", `~~${toman(v)} تومان~~`, "",
-        `امروز ${d.losses} ضرر · ${d.wins} سود`,
-        net > 0 ? `ضرر خالص امروز ${tomanShort(net)} تومان` : `سود خالص امروز ${tomanShort(-net)} تومان`,
-        ...(stop ? ["", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود"] : [])].join("\n") };
-    }
-  } catch (e) { return { reply: BAD }; }
-  if (c === "/undo") {
-    let undo = null;
-    const r = d.records.pop();
-    if (!r) return { reply: "**↩️ چیزی برای حذف نیست**\n~~امروز سود یا ضرری ثبت نشده~~" };
-    if (r.type === "loss") { d.losses = Math.max(0, d.losses - 1); d.loss_toman = Math.max(0, d.loss_toman - r.toman); }
-    else { d.wins = Math.max(0, d.wins - 1); d.win_toman = Math.max(0, d.win_toman - r.toman); }
-    if (r.trade) {
-      undo = { trade: r.trade, signal: r.signal || null };
-      if (r.signal) s.signals_done = (s.signals_done || []).filter((x) => x !== r.signal);
-      const i = s.trades.findIndex((x) => x.id === r.trade);
-      const tr = i >= 0 ? s.trades.splice(i, 1)[0] : null;
-      s.equity_toman = Number(s.equity_toman) - Number(r.net);
-      return { undo, reply: [`**↩️ آخرین معامله حذف شد**`,
-        `~~${tr ? (tr.side === "buy" ? "خرید" : "فروش") + " · " : ""}${signed(r.net)} تومان~~`, "",
-        `موجودی ${toman(s.equity_toman)} تومان`, `امروز ${d.losses} ضرر · ${d.wins} سود`].join("\n") };
-    }
-    return { reply: `**↩️ آخرین ثبت حذف شد**\n~~${r.type === "loss" ? "ضرر" : "سود"} ${toman(r.toman)} تومان~~\n\nامروز ${d.losses} ضرر · ${d.wins} سود` };
+  if (c === "/balance") {
+    let v;
+    try { v = parseAmount(args); } catch { return { reply: "**⚠️ ثبت نشد**\n~~موجودی را به تومان بنویسید، مثل:~~ `/balance 2085600`" }; }
+    s.equity_toman = v;
+    return { reply: `**💼 موجودی ثبت شد**\n~~${toman(v)} تومان~~` };
   }
   return { reply: "**❔ دستور ناشناخته**\n~~راهنما:~~ `/help`" };
 }
@@ -382,16 +275,12 @@ export function channelChat(s) {
 }
 // Group copy of a mirrored card. Drops personal toman/balance and error cards; otherwise the same text.
 export const MIRROR_CMDS = ["/levels", "/brief"];
-export const LEGACY_MIRROR_CMDS = ["/levels", "/scan", "/brief", "/shadow"];
-// Read-only commands any BAROBAX member may run in the group (owner decision t189u). /signal is an alias of /scan.
-export const LEGACY_GROUP_CMDS = { "/scan": "/scan", "/signal": "/scan", "/levels": "/levels", "/brief": "/brief" };
-// t231u/t232u: members may also run /setup (alias /signal, /scan) and /trend; replies are group-safe (no toman, no balance).
+// Group: members may run /setup, /trend, /levels, /brief (t189u, t231u/t232u); /signal and /scan are hidden aliases of /setup. Group-safe replies.
 export const GROUP_CMDS = { "/setup": "/setup", "/signal": "/setup", "/scan": "/setup", "/trend": "/trend", "/levels": "/levels", "/brief": "/brief" };
 export const GROUP_COOLDOWN_MS = 60000;
 export function publicReply(cmd, text) {
   if (!text) return null;
   if (text.includes("داده‌ی قیمت در دسترس نیست")) return null;
-  if (cmd === "/shadow") return text.replace(/ · یک واحد [^\n]*تومان/g, "");
   return text;
 }
 export async function send(env, text, chatId = CHAT_ID, markup = null) {

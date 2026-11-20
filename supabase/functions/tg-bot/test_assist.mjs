@@ -36,6 +36,7 @@ const LEVELS = (p) => ({ computed_at_tehran: "2026-11-18 18:25:00", adr_used_pct
     below: [
     { side: "support", kinds: ["H1 swing low"], price_dg: p - 7.4, zone_dg: [p - 8.9, p - 5.9], label_fa: "سوئینگ H1", strength: "strong", touches_m15_3d: 1, distance_atr: -1.8 },
     { side: "support", kinds: ["Week low"], price_dg: p - 19.6, zone_dg: [p - 21.1, p - 18.1], label_fa: "کف هفته", strength: "weak", touches_m15_3d: 0, distance_atr: -4.9 }] } });
+const TGCALLS = [];
 const DB = { row: { state: { equity_toman: 5689600, channel_id: GID, levels: LEVELS(3530) }, news: { windows: [] }, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64), telegram_bot_token: "1:T" } };
 const SETUPS = [], SENT = [];
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
@@ -63,6 +64,7 @@ globalThis.fetch = async (url, init = {}) => {
     const b = JSON.parse(init.body);
     if (url.endsWith("/sendMessage")) { SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } }); }
     if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "XauscalperBot" } });
+    if (/\/(setMyCommands|deleteMyCommands|answerCallbackQuery)$/.test(url)) { TGCALLS.push([url.split("/").pop(), b]); return J({ ok: true }); }
     return J({ ok: true });
   }
   throw new Error("unexpected fetch " + url);
@@ -84,7 +86,7 @@ async function tick(key = DB.vault.tg_webhook_secret) {
 }
 const plain = (h) => h.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 const ALL = [];
-const rules = (t) => !/زیان|قوی|داریاگلد|مسئولیت|توصیه‌ی سرمایه/.test(t);
+const rules = (t) => !/زیان|قوی|داریاگلد|دریا گلد|مسئولیت|توصیه‌ی سرمایه|بسته شدن|پشت سطح|می‌خواهی |صبر کن |ببین|بگذار~|بخری|بفروشی/.test(t);
 
 // ================= pure helpers =================
 check("emaLast = pandas ewm(adjust=False)", Math.abs(A.emaLast([1, 2, 3], 2) - (2 / 3 * 3 + 1 / 3 * (2 / 3 * 2 + 1 / 3 * 1))) < 1e-9);
@@ -93,7 +95,7 @@ check("fractals: 3-bar swing high confirmed only with 3 bars each side", fr.high
 const down = { M5: "نزولی", M15: "نزولی", H1: "نزولی", H4: "نزولی" };
 check("trend summary: aligned", A.trendSummary(down).line === "نزولی است و ۱۵ دقیقه و ۵ دقیقه هم با آن هم‌جهت‌اند." && A.trendSummary(down).overall === "نزولی");
 check("trend summary: lower TFs correcting (t228u wording)", A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "صعودی", H4: "صعودی" }).line ===
-  "صعودی است، ولی تایم‌های پایین در اصلاح‌اند. اگر می‌خواهی در جهت روند اصلی بخری، صبر کن تا ۵ و ۱۵ دقیقه دوباره صعودی شوند.");
+  "صعودی است، ولی تایم‌فریم‌های پایین‌تر در اصلاح‌اند. اگر می‌خواهید در جهت روند اصلی بخرید، صبر کنید تا ۵ و ۱۵ دقیقه دوباره صعودی شوند.");
 check("trend summary: one TF correcting", A.trendSummary({ M5: "صعودی", M15: "نزولی", H1: "نزولی", H4: "نزولی" }).line.includes("ولی ۵ دقیقه در اصلاح است"));
 check("trend summary: H4≠H1 → نامشخص; both flat → خنثی", A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "نزولی" }).overall === "نامشخص" &&
   A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "خنثی" }).overall === "خنثی");
@@ -115,6 +117,9 @@ check("parseEntry rejects bad input", bad === 5);
 // session limits and validity
 const ms = (iso) => U(iso).getTime();
 check("entry limit: Friday 23:20 → until 23:30 (no new entry after)", A.entryLimit(ms("2026-11-20T19:50:00Z")).why === "friday" && A.hmOf(A.entryLimit(ms("2026-11-20T19:50:00Z")).untilMs) === "23:30");
+check("entry limit: Sunday 00:10 and Monday 00:10 Tehran are closed (no session); Tuesday 00:10 open until 00:30",
+  A.entryLimit(ms("2026-11-21T20:40:00Z")).closed === "closed" && A.entryLimit(ms("2026-11-22T20:40:00Z")).closed === "closed" &&
+  A.hmOf(A.entryLimit(ms("2026-11-23T20:40:00Z")).untilMs) === "00:30" && A.entryLimit(ms("2026-11-23T20:40:00Z")).why === "close");
 check("entry limit: Friday 23:40 and Saturday 00:10 closed; Wednesday until 00:30", A.entryLimit(ms("2026-11-20T20:10:00Z")).closed === "friday" &&
   A.entryLimit(ms("2026-11-20T20:40:00Z")).closed === "friday" && A.hmOf(A.entryLimit(ms("2026-11-18T15:00:00Z")).untilMs) === "00:30");
 const newsAt = (start, end, tier = "A", label = "US CPI m/m") => ({ windows: [{ start, end, tier, label, event_time_tehran: start.slice(0, 11) + "16:00", fomc: false }] });
@@ -128,7 +133,7 @@ v = A.validity(baseCtx({ news: newsAt("2026-11-18T18:20", "2026-11-18T19:00") })
 check("inside a news window: no setup, says until when", v.news && A.noSetupMsg(v, ms("2026-11-18T15:00:00Z")).includes("پنجره‌ی خبر تا 19:00"));
 v = A.validity(baseCtx({ news: newsAt("2026-11-18T18:20", "2026-11-18T19:00", "C") }));
 check("tier C news does not block setups", !v.news);
-check("Friday after 23:30: setup says entries are closed", A.noSetupMsg(A.validity(baseCtx({ nowMs: ms("2026-11-20T20:05:00Z") })), 0).includes("جمعه از 23:30 بسته است"));
+check("Friday after 23:30: setup says entries are closed", A.noSetupMsg(A.validity(baseCtx({ nowMs: ms("2026-11-20T20:05:00Z") })), 0).includes("از ساعت 23:30 جمعه بسته است"));
 
 // setups
 const res = A.buildSetups(baseCtx());
@@ -218,10 +223,16 @@ out = await owner("/e 3530.10");
 check("owner /e without side: direction from the trend is named", out.length === 1 && /جهت از روند (کلی|۱ ساعت|۱۵ دقیقه) (نزولی|صعودی)/.test(plain(out[0].text)));
 out = await owner("/e hold");
 check("/e bad input: usage", out.length === 1 && out[0].text.includes("/e sell 3531.80"));
-for (const c of ["/trade sell 3900 3890 1", "/journal", "/pnl", "/entered 001", "/shadow", "/undo", "/loss 1000"]) {
+check("/e card: SL side named correctly (sell = بالای سطح, never «پشت سطح»)", !plain(ALL.at(-1)).includes("پشت سطح") && (/حد ضرر بالای سطح/.test(plain(ALL.at(-1))) || /بر پایه‌ی نوسان/.test(plain(ALL.at(-1)))));
+{ const pb = A.entryMsg(A.planEntry({ levels: A.snapLevels(LEVELS(3530)), atr5: 3 }, 1, 3524.9), { quote: null, nowMs: CLOCK.getTime() });
+  check("/e buy card: SL «زیر سطح» or volatility, never «پشت سطح»", !plain(pb).includes("پشت سطح") && (/حد ضرر زیر سطح/.test(plain(pb)) || /بر پایه‌ی نوسان/.test(plain(pb)))); ALL.push(pb); }
+for (const c of ["/trade sell 3900 3890 1", "/journal", "/pnl", "/entered 001", "/shadow", "/undo", "/loss 1000", "/win 1000", "/tp 001", "/sl 001", "/closed 001 3900"]) {
   out = await owner(c);
-  check(`${c.split(" ")[0]}: switched off (answered, nothing recorded)`, out.length === 1 && out[0].text.includes("خاموش شده"));
+  check(`${c.split(" ")[0]}: removed (unknown-command hint, nothing recorded)`, out.length === 1 && out[0].text.includes("دستور ناشناخته") && !out[0].text.includes("خاموش"));
 }
+await app(new Request(SB + "/functions/v1/tg-bot/tg", { method: "POST", headers: { "x-telegram-bot-api-secret-token": DB.vault.tg_webhook_secret },
+  body: JSON.stringify({ update_id: ++uid, callback_query: { id: "cb1", data: "c:a:tp:S-1", from: { id: Number(OWNER) }, message: { chat: { id: Number(OWNER), type: "private" }, message_id: 1 } } }) }));
+check("old inline button: answered silently, nothing sent", TGCALLS.some(([m, b]) => m === "answerCallbackQuery" && b.callback_query_id === "cb1"));
 // group
 SENT.length = 0; const before = SETUPS.length;
 out = await group("/setup");
@@ -264,9 +275,12 @@ DB.row.state.dg_mid_offset = null;
 
 // ================= /tick =================
 CLOCK = U("2026-11-18T15:10:00Z");
-check("tick: wrong key → 403", (await tick("x")).status === 403);
+check("tick: wrong key → 403, no menu change", (await tick("x")).status === 403 && !TGCALLS.some(([m]) => m === "setMyCommands"));
 DB.row.state.levels = LEVELS(3530); DB.row.state.levels.computed_at_tehran = "2026-11-18 18:35:00";
 let tk = await tick();
+{ const sets = TGCALLS.filter(([m]) => m === "setMyCommands").map(([, b]) => b);
+  check("tick: menus synced once after a deploy (owner 12, groups/default 4)", tk.body.menus && sets.length === 3 && DB.row.state.menu_version === tk.body.menus &&
+    sets.find((b) => b.scope && b.scope.type === "chat").commands.length === 12 && sets.filter((b) => !b.scope || b.scope.type === "all_group_chats").every((b) => b.commands.map((c) => c.command).join() === "setup,trend,levels,brief")); }
 check("tick: first run stores trend/vol state; alerts only to the owner", tk.status === 200 && DB.row.state.assist && DB.row.state.assist.trend && tk.out.every((x) => String(x.chat_id) === OWNER));
 // force a level touch: put a resistance right above the live price
 const live = A.quoteOf(await A.fetchMarket(CLOCK.getTime(), { tfs: [] }), 0.02).dg;
@@ -278,6 +292,7 @@ const lvlMsgs = tk.out.filter((x) => x.text.includes("سطح"));
 check("tick: level touch alert sent once", lvlMsgs.length === 1 && String(lvlMsgs[0].chat_id) === OWNER);
 CLOCK = U("2026-11-18T15:24:00Z");
 tk = await tick();
+check("tick: menus not re-sent on later ticks", !tk.body.menus && TGCALLS.filter(([m]) => m === "setMyCommands").length === 3);
 check("tick: same level not alerted again that day", tk.out.filter((x) => x.text.includes("سطح")).length === 0);
 // trend change
 DB.row.state.assist.trend = { M15: "صعودی", H1: "نزولی" };

@@ -11,7 +11,7 @@ export const CAL = {
 };
 export const STATUS_FA = {
   NORMAL_ALIGNMENT: "هم‌راستا", MINOR_BASIS: "اختلاف جزئی", ELEVATED_BASIS: "اختلاف زیاد",
-  FEED_DESYNCHRONIZATION: "ناهمگامی فید", DATA_UNAVAILABLE: "داده‌ی مرجع در دسترس نیست",
+  FEED_DESYNCHRONIZATION: "ناهمگامی داده‌ی مرجع", DATA_UNAVAILABLE: "داده‌ی مرجع در دسترس نیست",
 };
 const SESSION_FA = { asia: "آسیا", london: "لندن", newyork: "نیویورک", closed: "بسته" };
 const FA = "۰۱۲۳۴۵۶۷۸۹";
@@ -87,7 +87,7 @@ export function statsLines(st, cur) {
   const L = [`نمونه‌های ${faN(CAL.WINDOW_DAYS)} روز اخیر: ${faN(st.count)}` +
     (st.count ? ` · میانه ${faN(sgn(st.median))} · انحراف معیار ${st.std === null ? "—" : faN(r2(st.std))}` : "")];
   const ses = Object.entries(st.by_session).map(([k, x]) => `${SESSION_FA[k] || k} ${faN(x.count)} (${faN(sgn(x.median))})`);
-  if (ses.length) L.push("به تفکیک جلسه: " + ses.join(" · "));
+  if (ses.length) L.push("به تفکیک بازار: " + ses.join(" · "));
   if (st.latest_age_h !== null) L.push(`آخرین نمونه ${faN(st.latest_age_h)} ساعت پیش`);
   if (st.calibrated) L.push(`✅ اختلاف دریاگلد از این به بعد ${faN(sgn(st.offset))} دلار (میانه‌ی نمونه‌ها)`);
   else {
@@ -96,4 +96,4 @@ export function statsLines(st, cur) {
   }
   return L;
 }
-export const CAL_HELP = "**🎯 کالیبره‌ی قیمت**\n~~قیمت فعلی دریاگلد را بفرستید، مثل:~~ `/calibrate 3569.85`\n~~با قیمت خرید:~~ `/calibrate 3569.85 3570.10`";
+export const CAL_HELP = "**🎯 کالیبره‌کردن قیمت**\n~~قیمت فعلی دریاگلد را بفرستید، مثل:~~ `/calibrate 3569.85`\n~~با قیمت خرید:~~ `/calibrate 3569.85 3570.10`";

@@ -1,9 +1,8 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import * as JR from "./ledger.js";
 import { CAL, basisStats, basisStatus, parseCalibrate, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { sessionDate, HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
+import { sessionDate, HELP, render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort, forexOpen, weekendClosed, closedLine, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -41,7 +40,7 @@ globalThis.fetch = async (url, init = {}) => {
       if (failHtml && b.parse_mode) return J({ ok: false });
       SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } });
     }
-    if (url.endsWith("/setMyCommands")) { DB.menu = b.commands; return J({ ok: true }); }
+    if (url.endsWith("/setMyCommands")) { (DB.menus = DB.menus || []).push(b); DB.menu = b.commands; return J({ ok: true }); }
     if (url.endsWith("/deleteMyCommands")) { (DB.menuDeleted = DB.menuDeleted || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/answerCallbackQuery")) { (DB.answers = DB.answers || []).push(b); return J({ ok: true }); }
@@ -95,7 +94,7 @@ async function jwt(claims) {
 }
 const good = { iss: "https://token.actions.githubusercontent.com", aud: "m5-gold-bot", repository: "haspou367cdp/m5-gold-team", ref: "refs/heads/main", exp: Date.now() / 1000 + 300 };
 let CLOCK = new Date("2026-11-11T10:30:00Z");   // Wednesday 14:00 Tehran (market open)
-const app = makeApp({ url: SB, key: "service", clock: () => CLOCK, legacy: true });   // legacy signal/journal set (dormant in production)
+const app = makeApp({ url: SB, key: "service", clock: () => CLOCK });
 const FN = SB + "/functions/v1/tg-bot";
 const gh = async (path, method = "GET", body) => app(new Request(FN + path, { method, body: body && JSON.stringify(body),
   headers: { authorization: "Bearer " + (await jwt(good)) } }), jw);
@@ -121,9 +120,13 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 12 commands (assistant set: /setup /e /trend /levels /brief + settings), same wording as /help, no examples or digits", o.commands && DB.menu.length === 12 && ["setup", "e", "trend"].every((k) => DB.menu.some((c) => c.command === k)) && !DB.menu.some((c) => ["scan", "trade", "journal", "shadow"].includes(c.command)) && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
-  DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
-  (c.command === "help" || HELP.includes(c.description))));
+check("setup menus: owner chat = 12 commands, groups/default = setup·trend·levels·brief; same wording as /help, no examples or digits; no removed command",
+  o.commands && DB.menus.length === 3 && DB.menuDeleted.length === 2 && (() => {
+    const own = DB.menus.find((m) => m.scope && m.scope.type === "chat" && m.scope.chat_id === 45639251), grp = DB.menus.find((m) => m.scope && m.scope.type === "all_group_chats"), def = DB.menus.find((m) => !m.scope);
+    const names = (m) => m.commands.map((c) => c.command).join(",");
+    return own && grp && def && own.commands.length === 12 && names(grp) === "setup,trend,levels,brief" && names(def) === names(grp) &&
+      !own.commands.some((c) => ["scan", "signal", "trade", "journal", "shadow", "loss", "win", "undo", "pnl", "tp", "sl", "closed", "entered"].includes(c.command)) &&
+      own.commands.every((c) => (c.command === "help" || (HELP.includes(`/${c.command}`) && HELP.includes(c.description))) && !/\d/.test(c.description)); })());
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
   o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
   st().equity_toman === 2085600 && DB.hook.max_connections === 1 &&
@@ -141,36 +144,33 @@ check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).sta
 const v0 = DB.row.version;
 check("other chat ignored", (await tgSend("/balance 1", 999)).out.length === 0 && DB.row.version === v0);
 let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f") &&
-  r.out[0].includes("\u200f\u200e<code>/e sell 3531.80</code>\u200e  حد ضرر و حد سود برای ورود") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
+  r.out[0].includes("\u200f\u200e<code>/e sell 3531.80</code>\u200e  حد ضرر و حد سود برای یک ورود") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
   !/زیان|۱۱:۳۰/.test(r.out[0]) && r.out[0].split("\n").every((l) => !l.trim() || l.startsWith("\u200f")));
 r = await tgSend("/balance ۲٬۰۸۵٬۶۰۰"); check("/balance Persian digits", st().equity_toman === 2085600 && r.out[0].includes("۲٬۰۸۵٬۶۰۰"));
-for (const bad of ["/balance", "/balance -5", "/balance nan", "/loss", "/loss 0", "/win abc"]) {
-  const before = JSON.stringify([st().equity_toman, st().day]);
-  r = await tgSend(bad); check(`invalid '${bad}' rejected`, r.out[0].includes("چیزی ثبت نشد") && JSON.stringify([st().equity_toman, st().day]) === before);
+for (const bad of ["/balance", "/balance -5", "/balance nan"]) {
+  const before = st().equity_toman;
+  r = await tgSend(bad); check(`invalid '${bad}' rejected`, r.out[0].includes("ثبت نشد") && st().equity_toman === before);
 }
-r = await tgSend("/loss ۱۵۰۰۰۰"); check("/loss", st().day.losses === 1 && st().day.loss_toman === 150000 && r.out[0].includes("ضرر ثبت شد"));
-raceOnce = true; r = await tgSend("/win 150 000"); check("/win with space (survives a concurrent GitHub write)", st().day.win_toman === 150000 && r.out.length === 1);
-r = await tgSend("/undo"); check("/undo last (win)", st().day.wins === 0 && st().day.losses === 1);
-await tgSend("/undo"); r = await tgSend("/undo"); check("/undo empty safe", r.out[0].includes("چیزی برای حذف"));
-await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/loss 100000");
-check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
-DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
-await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
+raceOnce = true; r = await tgSend("/balance 2085600"); check("/balance survives a concurrent GitHub write", st().equity_toman === 2085600 && r.out.length === 1 && !r.out[0].includes("سقف ضرر"));
+for (const gone of ["/trade sell 3914.07 3909.61 1", "/loss 150000", "/win 1", "/undo", "/shadow", "/entered 001", "/tp 001", "/sl 001", "/closed 001 3900", "/journal", "/pnl", "/risk"]) {
+  const v = JSON.stringify([st().equity_toman, st().day, st().trades]);
+  r = await tgSend(gone); check(`removed command '${gone.split(" ")[0]}' -> unknown-command hint, nothing changes`, r.out.length === 1 && r.out[0].includes("دستور ناشناخته") && JSON.stringify([st().equity_toman, st().day, st().trades]) === v);
+}
 r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("سیگنال خودکار: خاموش") && r.out[0].includes("<code>07:00</code>") && r.out[0].includes("<code>00:30</code>"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
 check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
 check("Tehran clock is UTC+3:30", teh(new Date("2026-11-13T20:30:00Z")).full === "2026-11-14 00:00");
-// /scan -> queue + dispatch
-DISPATCHED.length = 0; r = await tgSend("/scan");
-check("/scan -> instant ack + workflow dispatch", r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1 && DISPATCHED[0].inputs.mode === "command");
-r = await tgSend("/brief"); check("/scan then /brief within 90 s: both dispatched, both queued", DISPATCHED.length === 2 &&
+// /levels -> queue + dispatch
+DISPATCHED.length = 0; r = await tgSend("/levels");
+check("/levels -> instant ack + workflow dispatch", r.out[0].includes("در حال بررسی") && DISPATCHED.length === 1 && DISPATCHED[0].inputs.mode === "command");
+r = await tgSend("/brief"); check("/levels then /brief within 90 s: both dispatched, both queued", DISPATCHED.length === 2 &&
   DISPATCHED[1].inputs.mode === "command" && st().pending_cmds.length === 2 && r.out[0].includes("در حال بررسی"));
-r = await tgSend("/scan"); check("repeated /scan within 90 s: deduped (no new dispatch, not queued twice), still acked",
+r = await tgSend("/levels"); check("repeated /levels within 90 s: deduped (no new dispatch, not queued twice), still acked",
   DISPATCHED.length === 2 && st().pending_cmds.length === 2 && r.out[0].includes("در حال بررسی"));
 r = await tgSend("/brief"); check("repeated /brief within 90 s: deduped", DISPATCHED.length === 2 && st().pending_cmds.length === 2);
-DB.row.state.last_dispatch = Date.now() - 120000; r = await tgSend("/scan");
-check("same /scan still pending after 90 s: re-dispatched, not queued twice", DISPATCHED.length === 3 && st().pending_cmds.length === 2);
+DB.row.state.last_dispatch = Date.now() - 120000; r = await tgSend("/levels");
+check("same /levels still pending after 90 s: re-dispatched, not queued twice", DISPATCHED.length === 3 && st().pending_cmds.length === 2);
 const before = uid; await tgSend("/help"); uid = before;
 r = await tgSend("/help"); check("Telegram retry (same update_id) ignored", r.out.length === 0); uid += 5;
 // GitHub state API
@@ -178,43 +178,11 @@ const g = await (await gh("/state")).json();
 check("GET /state (OIDC) returns state + news", g.state.equity_toman === 2085600 && g.news_windows && g.state.pending_cmds.length === 2);
 const ids = g.state.pending_cmds.map((x) => x.id);
 await gh("/state", "POST", { patch: { last_run_tehran: "2026-11-13 17:30", equity_toman: 1, day: {} }, done_cmds: ids });
-check("POST /state merges bot keys only, clears done cmds", st().last_run_tehran === "2026-11-13 17:30" && st().equity_toman === 2085600 && st().day.losses === 2 && st().pending_cmds.length === 0);
+check("POST /state merges bot keys only, clears done cmds", st().last_run_tehran === "2026-11-13 17:30" && st().equity_toman === 2085600 && st().pending_cmds.length === 0);
 check("/state without token -> 401", (await app(new Request(FN + "/state"), jw)).status === 401);
 // GitHub dispatch failure -> honest reply, retried next time
-ghStatus = 403; DB.row.state.last_dispatch = 0; r = await tgSend("/scan"); ghStatus = 204;
+ghStatus = 403; DB.row.state.last_dispatch = 0; r = await tgSend("/brief"); ghStatus = 204;
 check("dispatch failure: queued, reply says next automatic check", r.out[0].includes("در صف") && st().pending_cmds.length === 1 && st().last_dispatch === 0);
-// /trade (manual trades): equity, day ledger, daily stop, /undo
-const day0 = () => { DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [], start_equity: 2954400 }; DB.row.state.equity_toman = 2954400; DB.row.state.trades = []; };
-day0();
-check("parseTrade sell full", JSON.stringify(parseTrade(["sell", "3914.07", "3909.61", "1"])) === JSON.stringify({ side: "sell", entry: 3914.07, exit: 3909.61, units: 1, gross: 356800, net: 342800, fee: 14000 }));
-check("parseTrade buy half, Persian digits", parseTrade(["خرید", "۳۸۹۴٫۱۱", "۳۸۹۸٫۹۹", "۰٫۵"]).gross === 195200 && parseTrade(["buy", "3894.11", "3898.99", "نیم"]).net === 181200);
-for (const bad of [[], ["sell", "3914", "3909"], ["hold", "3914", "3909", "1"], ["sell", "3914", "3909", "2"], ["sell", "abc", "3909", "1"], ["sell", "39", "3909", "1"], ["sell", "3914", "3909", "-1"]]) {
-  let ok = false; try { parseTrade(bad); } catch { ok = true; } check(`parseTrade rejects '${bad.join(" ")}'`, ok);
-}
-r = await tgSend("/trade sell 3914.07 3909.61 1");
-check("/trade win: equity + net, one win, reply", st().equity_toman === 3297200 && st().day.wins === 1 && st().day.win_toman === 342800 &&
-  st().trades.length === 1 && st().trades[0].id.endsWith("-T1-SELL") && r.out[0].includes("<code>3914.07</code>") &&
-  r.out[0].includes("+۳۴۲٬۸۰۰") && r.out[0].includes("۳٬۲۹۷٬۲۰۰") && r.out[0].includes("یک واحد") && !/زیان/.test(r.out[0]));
-r = await tgSend("/undo"); check("/undo reverses the last /trade exactly", st().equity_toman === 2954400 && st().day.wins === 0 && st().day.win_toman === 0 && st().trades.length === 0 && r.out[0].includes("۲٬۹۵۴٬۴۰۰"));
-r = await tgSend("/trade buy ۳۹۰۰ ۳۸۹۹ ۰٫۵"); check("/trade loss half (Persian digits): -54,000 net, loss counted once", st().equity_toman === 2900400 && st().day.losses === 1 && st().day.loss_toman === 54000 && r.out[0].includes("نیم واحد") && r.out[0].includes("ضرر"));
-const v1 = DB.row.version; r = await tgSend("/trade buy 3900"); check("/trade bad syntax: nothing recorded, usage shown", r.out[0].includes("ثبت نشد") && r.out[0].includes("/trade sell") && st().trades.length === 1);
-await tgSend("/trade sell 3900 3901 1"); r = await tgSend("/trade sell 3900 3901 1");
-check("3 losing trades -> daily stop", st().day.losses === 3 && r.out[0].includes("توقف روزانه"));
-day0(); r = await tgSend("/trade buy 3900 3893 1");
-check("20% cap uses the day's starting equity (equity drop does not shrink it)", st().day.loss_toman === 574000 && !r.out[0].includes("توقف روزانه"));
-r = await tgSend("/trade buy 3900 3899.8 1"); check("…and the cap triggers at 20% of 2,954,400 = 590,880", st().day.loss_toman === 604000 && r.out[0].includes("توقف روزانه"));
-day0(); DB.row.state.day.start_equity = 0; await tgSend("/balance 1000000"); check("/balance before any record sets the day's start equity", st().day.start_equity === 1000000);
-await tgSend("/loss 1000"); await tgSend("/balance 2000000"); check("/balance after a record keeps the day's start equity", st().day.start_equity === 1000000);
-day0();
-// /shadow
-check("/shadow empty", shadowMsg({ shadow: [] }).includes("هنوز موردی"));
-DB.row.state.shadow = [{ at: "2026-11-13 18:10", side: "SELL", entry: 3894.2, sl: 3896.2, tp: 3890.2, offset: 0.3, gates: ["news"], status: "tp", R: 2, toman: 306000 },
-  { at: "2026-11-13 18:40", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["volatility", "news"], status: "sl", R: -1, toman: -174000 },
-  { at: "2026-11-13 19:00", side: "SELL", entry: 3890, sl: 3892, tp: 3886, offset: 0.3, gates: ["friday"], status: "pending" }];
-r = await tgSend("/shadow"); check("/shadow summary: counts, R, toman, DaryaGold Latin prices, no ‘زیان’", r.out[0].includes("هدف ۱") && r.out[0].includes("حد ضرر ۱") &&
-  r.out[0].includes("+۱٫۰R") && r.out[0].includes("+۱۳۲٬۰۰۰") && r.out[0].includes("<code>3894.5</code>") && r.out[0].includes("نوسان، خبر") && !/زیان|قوی/.test(r.out[0]));
-const g2 = await (await gh("/state")).json(); await gh("/state", "POST", { patch: { shadow: [{ at: "x", status: "pending" }] }, done_cmds: [] });
-check("GitHub may merge 'shadow' but not equity/trades", st().shadow.length === 1 && st().equity_toman === 2954400 && Array.isArray(st().trades) && g2.state.day.start_equity === 2954400);
 check("/help lists the assistant set, no journal or signal commands", HELP.includes("`/setup`") && HELP.includes("`/trend`") && HELP.includes("`/e sell 3531.80`") && HELP.includes("`/levels`") && !HELP.includes("/trade") && !HELP.includes("/shadow") && !HELP.includes("/scan"));
 // HTML fallback
 failHtml = true; r = await tgSend("/help"); failHtml = false;
@@ -241,17 +209,17 @@ check("trading day: 00:15 Tehran belongs to the previous day; 07:00 starts a new
   const s1 = normalize({ day: { date: "2026-11-12", losses: 3, loss_toman: 1, wins: 0, win_toman: 0, records: [] } }, { date: "2026-11-13", hm: "07:05", full: "2026-11-13 07:05" });
   check("daily stop kept until the 00:30 close and reset at 07:00", s0.day.losses === 3 && s1.day.losses === 0 && s1.day.date === "2026-11-13"); }
 CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pending_cmds.length;
-r = await tgSend("/scan"); check("Saturday /scan: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
+r = await tgSend("/brief"); check("Saturday /brief: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
   r.out[0].includes("دوشنبه ۰۷:۰۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
 r = await tgSend("/brief"); check("Saturday /brief: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 r = await tgSend("/levels"); check("Saturday /levels with no snapshot: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0 && (st().pending_cmds || []).every((x) => x.cmd !== "/levels"));
 const LVBLOCK = "طلا  `3900.3`\nH4 نزولی  ·  H1 خنثی  ·  روند نامشخص\n\nبالا\n▸ `3910.3`  (+10.0)  مهم\n  سقف دیروز + سوئینگ H4  ·  2 تماس M15\n  پهنه  `3909.9`–`3910.7`";
 DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOCK };
 r = await tgSend("/levels");
-check("Saturday /levels with stored snapshot: served with age, no dispatch", r.out.length === 1 && r.out[0].includes("سن داده") && r.out[0].includes("<code>3900.3</code>") && r.out[0].includes("H4 نزولی") && !r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
-CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/scan"); check("Saturday 01:40, after the 00:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
-CLOCK = U("2026-11-13T20:15:00Z"); DB.row.state.last_dispatch = 0; r = await tgSend("/scan");
-check("Friday 23:45 (entries closed, market open): /scan still analysed (bot answers «جمعه‌شب»)", DISPATCHED.length === 1 && r.out[0].includes("در حال بررسی"));
+check("Saturday /levels with stored snapshot: served with age, no dispatch", r.out.length === 1 && r.out[0].includes("به‌روزشده") && r.out[0].includes("<code>3900.3</code>") && r.out[0].includes("H4 نزولی") && !r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/brief"); check("Saturday 01:40, after the 00:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+CLOCK = U("2026-11-13T20:15:00Z"); DB.row.state.last_dispatch = 0; r = await tgSend("/brief");
+check("Friday 23:45 (entries closed, market open): /brief still analysed (bot answers «جمعه‌شب»)", DISPATCHED.length === 1 && r.out[0].includes("در حال بررسی"));
 DB.row.state.pending_cmds = [];
 // weekday /levels: fresh snapshot is served instantly; stale queues like /scan
 CLOCK = U("2026-11-11T10:30:00Z");  // Wednesday 14:00 Tehran
@@ -272,18 +240,6 @@ CLOCK = U("2026-11-14T08:00:00Z"); SENT.length = 0; let h = await (await app(new
 check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۷:۰۰") && h.build && SENT.length === 0);
 CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
 check("/health on a weekday: market open", h.market_closed === false && !h.closed_line);
-// ---- /trade sanity check (warn, still record)
-day0(); DB.row.state.last_price = { bid: 3900, at: teh(CLOCK).full }; DB.row.state.dg_offset = undefined;
-r = await tgSend("/trade buy 3900.3 3903.3 1"); check("/trade normal: no warning", !r.out[0].includes("⚠️") && st().trades.length === 1 && !st().trades[0].warned);
-r = await tgSend("/trade sell 3900 3900 1"); check("/trade exit = entry: one warning line, still recorded", r.out[0].includes("ورود و خروج یکی است") && r.out[0].includes("/undo") &&
-  r.out[0].split("\n").filter((l) => l.includes("⚠️")).length === 1 && st().trades.length === 2 && st().trades[1].warned);
-r = await tgSend("/trade buy ۳۹۰۰ ۳۹۴۵ ۰٫۵"); check("/trade move > $40 (Persian digits): warning, recorded", r.out[0].includes("بیش از ۴۰ دلار") && st().trades.length === 3);
-r = await tgSend("/trade sell 3990 3985 1"); check("/trade > $50 from the last known price: warning", r.out[0].includes("بیش از ۵۰ دلار با بازار") && st().trades.length === 4);
-DB.row.state.last_price = { bid: 3900, at: "2026-11-09 10:00" }; r = await tgSend("/trade sell 3990 3985 1");
-check("/trade: stale price (> 24 h) -> no distance warning", !r.out[0].includes("⚠️") && st().trades.length === 5);
-check("tradeWarn/marketPrice pure: uses dg_offset, combines reasons in one line", marketPrice({ last_price: { bid: 3900, at: teh(CLOCK).full }, dg_offset: 0.5 }, CLOCK) === 3900.5 &&
-  tradeWarn({ entry: 3800, exit: 3800 }, { last_price: { bid: 3900, at: teh(CLOCK).full } }, CLOCK).split("؛").length === 3);
-day0();
 // ---- /offset (owner chat only)
 r = await tgSend("/offset"); check("/offset shows the default 0.3", r.out[0].includes("۰٫۳") && r.out[0].includes("<code>/offset 0.4</code>"));
 r = await tgSend("/offset ۰٫۴"); check("/offset ۰٫۴ (Persian digits) sets 0.4", st().dg_offset === 0.4 && r.out[0].includes("ثبت شد") && r.out[0].includes("۰٫۴"));
@@ -295,12 +251,7 @@ await gh("/state", "POST", { patch: { dg_offset: 9, last_price: { bid: 3901, at:
 check("GitHub may merge last_price but never dg_offset", st().dg_offset === 0.4 && st().last_price.bid === 3901);
 await gh("/state", "POST", { patch: { levels: { block: "x", computed_at_tehran: "2026-11-11 14:00:00" }, dg_offset: 1 }, done_cmds: [] });
 check("GitHub may merge levels but never dg_offset", st().levels && st().levels.block === "x" && st().dg_offset === 0.4);
-// ---- /shadow Asia line
-const asiaS = { shadow: [{ at: "2026-11-11 09:04", side: "SELL", entry: 3900, sl: 3902, tp: 3896, offset: 0.3, gates: ["asia"], session: "asia", status: "tp", R: 2, toman: 306000 },
-  { at: "2026-11-11 15:00", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["news"], status: "sl", R: -1, toman: -174000 }] };
-check("/shadow: Asia line with its own counts; empty Asia says so", shadowMsg(asiaS).includes("آسیا: بسته‌شده 1 · هدف 1 · حد ضرر 0 · جمع +2.0R") &&
-  shadowMsg({ shadow: [asiaS.shadow[1]] }).includes("آسیا: هنوز موردی ثبت نشده") && !/زیان|قوی/.test(shadowMsg(asiaS)));
-check("/help lists /offset, /groupoff and /groupon; no زیان or قوی", HELP.includes("`/offset`") && HELP.includes("`/groupoff`") && HELP.includes("`/groupon`") && HELP.includes("قطع موقت ارسال به گروه") && HELP.includes("وصل دوباره ارسال به گروه") && !/زیان|قوی/.test(HELP));
+check("/help lists /offset, /groupoff and /groupon; no زیان or قوی", HELP.includes("`/offset`") && HELP.includes("`/groupoff`") && HELP.includes("`/groupon`") && HELP.includes("قطع موقت ارسال به گروه") && HELP.includes("وصل دوباره‌ی ارسال به گروه") && !/زیان|قوی/.test(HELP));
 check("OIDC: tampered payload rejected", !(await verifyOidc(new Request("https://x", { headers: { authorization: "Bearer " + t.split(".")[0] + "." + enc({ ...good, x: 1 }) + "." + t.split(".")[2] } }), jw)));
 
 // ---- group mirror (BAROBAX / channel_id): only /levels from the private chat
@@ -330,13 +281,9 @@ r = await tgSend("/status");
 check("private /status stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("وضعیت"));
 r = await tgSend("/help");
 check("private /help stays private", r.out.length === 1 && r.chats.every((c) => c === "45639251"));
-day0(); r = await tgSend("/trade sell 3914.07 3909.61 1");
-check("private /trade stays private", r.out.length === 1 && r.chats[0] === "45639251");
 DISPATCHED.length = 0; DB.row.state.last_dispatch = 0; DB.row.state.pending_cmds = [];
-r = await tgSend("/scan");
-check("private /scan ack stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی"));
 r = await tgSend("/brief");
-check("private /brief ack stays private", r.out.length === 1 && r.chats[0] === "45639251");
+check("private /brief ack stays private", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی"));
 DB.row.state.pending_cmds = []; DB.row.state.last_dispatch = 0; DISPATCHED.length = 0;
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:00:00", block: LVBLOCK };
 r = await tgSend("/levels");
@@ -344,35 +291,17 @@ check("stale /levels ack stays private (not mirrored)", r.out.length === 1 && r.
 CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0;
 DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOCK };
 r = await tgSend("/levels");
-check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("سن داده") && DISPATCHED.length === 0);
-r = await tgSend("/scan");
-check("Saturday /scan closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
+check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("به‌روزشده") && DISPATCHED.length === 0);
 r = await tgSend("/brief");
 check("Saturday /brief closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
 DB.row.state.group_cmd_at = {};
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 777 }, text: "/scan" } });
-check("Saturday: member /scan in the group gets the closed line in the group only", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("بازار بسته است"));
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/shadow" } });
-check("/shadow in the group is ignored", r.out.length === 0);
-DB.row.state.shadow = [{ at: "2026-11-13 18:10", side: "SELL", entry: 3894.2, sl: 3896.2, tp: 3890.2, offset: 0.3, gates: ["news"], status: "tp", R: 2, toman: 306000 },
-  { at: "2026-11-13 18:40", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["volatility", "news"], status: "sl", R: -1, toman: -174000 }];
-r = await tgSend("/shadow");
-check("private /shadow is mirrored without the toman P&L line", r.out.length === 2 && r.chats[0] === "45639251" && r.chats[1] === GID &&
-  r.out[0].includes("تومان") && r.out[0].includes("یک واحد") && !r.out[1].includes("تومان") && !r.out[1].includes("یک واحد") &&
-  r.out[1].includes("+۱٫۰R") && r.out[1].includes("<code>3894.5</code>") && r.out[1].includes("هدف ۱"));
-DB.row.state.shadow = [];
-r = await tgSend("/shadow");
-check("empty /shadow is mirrored in full (no money)", r.out.length === 2 && r.out[0] === r.out[1] && r.out[0].includes("هنوز موردی") && !r.out[0].includes("تومان"));
-check("publicReply drops toman P&L from /shadow and leaves /levels untouched",
-  publicReply("/shadow", "جمع +1.0R · یک واحد +132,000 تومان\nآسیا: بسته‌شده 1").includes("جمع +1.0R") &&
-  !publicReply("/shadow", "جمع +1.0R · یک واحد +132,000 تومان").includes("تومان") &&
-  publicReply("/levels", "سطوح") === "سطوح" && publicReply("/scan", "داده‌ی قیمت در دسترس نیست") === null);
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 777 }, text: "/brief" } });
+check("Saturday: member /brief in the group gets the closed line in the group only", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("بازار بسته است"));
+check("publicReply leaves /levels untouched and drops data errors", publicReply("/levels", "سطوح") === "سطوح" && publicReply("/setup", "داده‌ی قیمت در دسترس نیست") === null);
 CLOCK = U("2026-11-11T10:30:00Z");
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
 failGroup = true; r = await tgSend("/levels"); failGroup = false;
 check("group send failure does not block the owner's /levels", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح"));
-failGroup = true; r = await tgSend("/shadow"); failGroup = false;
-check("group send failure does not block the owner's /shadow", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سیگنال‌های ردشده"));
 const kept = st().channel_id;
 await gh("/state", "POST", { patch: { channel_id: "999", last_price: { bid: 3911, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may not overwrite channel_id", st().channel_id === kept && st().last_price.bid === 3911);
@@ -388,8 +317,6 @@ check("/status shows group sending is off", r.out.length === 1 && r.out[0].inclu
 DISPATCHED.length = 0;
 r = await tgSend("/levels");
 check("/levels is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح") && DISPATCHED.length === 0);
-r = await tgSend("/shadow");
-check("/shadow is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251");
 const geOff = st().group_enabled;
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/groupon" } });
 check("/groupon in the group is ignored", r.out.length === 0 && st().group_enabled === geOff);
@@ -416,15 +343,13 @@ check("/levels@BotName answers after the cooldown", r.out.length === 1 && r.chat
 CLOCK = U("2026-11-11T10:33:00Z");
 r = await G("/levels@OtherBot");
 check("/levels@OtherBot is ignored", r.out.length === 0);
-r = await G("/scan");
-check("member /scan: group-only queued run, dispatched, no ack line in the group", r.out.length === 0 && DISPATCHED.length === 1 && st().pending_cmds.some((x) => x.cmd === "/scan" && x.origin === "group"));
-r = await G("/signal");
-check("/signal is an alias of /scan (same cooldown, no second run)", r.out.length === 0 && DISPATCHED.length === 1 && st().pending_cmds.filter((x) => x.cmd === "/scan").length === 1);
 r = await G("/brief");
-check("member /brief: group-only queued run", r.out.length === 0 && DISPATCHED.length === 2 && st().pending_cmds.some((x) => x.cmd === "/brief" && x.origin === "group"));
-r = await tgSend("/scan");
-check("owner /scan while a group /scan is pending: own item + private ack", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی") &&
-  st().pending_cmds.filter((x) => x.cmd === "/scan").length === 2 && st().pending_cmds.some((x) => x.cmd === "/scan" && !x.origin));
+check("member /brief: group-only queued run, dispatched, no ack line in the group", r.out.length === 0 && DISPATCHED.length === 1 && st().pending_cmds.some((x) => x.cmd === "/brief" && x.origin === "group"));
+r = await tgSend("/brief");
+check("owner /brief while a group /brief is pending: own item + private ack", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی") &&
+  st().pending_cmds.filter((x) => x.cmd === "/brief").length === 2 && st().pending_cmds.some((x) => x.cmd === "/brief" && !x.origin));
+DUKA_DOWN = true; r = await G("/scan"); const r2s = await G("/signal"); DUKA_DOWN = false;
+check("/scan and /signal are hidden aliases of /setup in the group (one cooldown; no live price -> nothing posted, no run queued)", r.out.length === 0 && r2s.out.length === 0 && DISPATCHED.length === 2 && !st().pending_cmds.some((x) => x.cmd === "/scan"));
 let quiet = true;
 for (const c of ["/status", "/help", "/trade sell 3900 3890 1", "/journal", "/pnl", "/calibrate 3569.8", "/groupoff", "/groupon", "/shadow", "/offset 0.5", "/entered S-20261111-001", "/undo"]) {
   const v = DB.row.version; r = await G(c, 45639251);
@@ -490,157 +415,4 @@ check("database failure -> short error to the owner only", r.out.length === 1 &&
 await tgSend("/offset 0.5");
 check("/offset marks a manual offset", st().dg_offset === 0.5 && st().dg_offset_source === "manual");
 
-// ---------------- Phase 3: signals, journal, buttons, reports ----------------
-{
-  const p = JR.pnl("SELL", 3914.07, 3909.61, "1U");
-  check("pnl: SELL 1U 4.46 → gross 356,800, spread 20,000, fee once 14,000 → net 322,800", p.gross === 356800 && p.spread === 20000 && p.fee === 14000 && p.net === 322800);
-  const h = JR.pnl("BUY", 3894.11, 3898.99, "0.5U", false);
-  check("pnl: BUY 0.5U without spread = journal.csv M3 net 181,200", h.net === 181200);
-  check("riskToman = stop distance·rate + spread + fee", JR.riskToman({ entry: 3880.3, sl: 3881.9, unit: "1U" }) === 128000 + 20000 + 14000);
-  const now = { date: "2026-11-20", hm: "13:30" }, late = { date: "2026-11-21", hm: "00:10" };
-  check("resolveId: full, short, Persian digits, trading day after midnight",
-    JR.resolveId("S-20261120-001", now) === "S-20261120-001" && JR.resolveId("20261120-7", now) === "S-20261120-007" &&
-    JR.resolveId("۲", now) === "S-20261120-002" && JR.resolveId("3", late) === "S-20261120-003");
-  const pc = (c, a) => { try { return JR.parseJournalCmd(c, a, now); } catch { return "ERR"; } };
-  check("parseJournalCmd: /closed needs a price; /tp takes none; junk rejected",
-    pc("/closed", ["001"]) === "ERR" && pc("/closed", ["001", "3569.85"]).price === 3569.85 && pc("/closed", ["3569.85"]).id === null &&
-    pc("/tp", ["001", "3570"]) === "ERR" && pc("/tp", []).act === "t" && pc("/entered", ["2", "3880.1"]).price === 3880.1 && pc("/sl", ["abc"]) === "ERR" &&
-    pc("/journal", []).view === "journal");
-  check("parseCallback: only known actions and IDs", JR.parseCallback("a:e:S-20261120-001").act === "e" && JR.parseCallback("c:m:S-20261120-001:3569.85").price === 3569.85 &&
-    JR.parseCallback("x").cancel && JR.parseCallback("c:z:S-20261120-001") === null && JR.parseCallback("c:t:DROP") === null && JR.parseCallback("c:m:S-20261120-001:1") === null);
-}
-CLOCK = new Date("2026-11-20T10:00:00Z");   // Friday 13:30 Tehran
-DB.row.state.channel_id = GID; DB.row.state.equity_toman = 3000000; TBL.journal.length = 0; TBL.signals.length = 0;
-const SIG = (n, side = "SELL", extra = {}) => ({ key: `k${n}`, at: "2026-11-20 13:30", id: `S-20261120-00${n}`, sent_at: "2026-11-20T13:30:00+03:30",
-  session_date: "2026-11-20", side, unit: "1U", entry: 3880.3, sl: side === "SELL" ? 3881.9 : 3878.7, tp: side === "SELL" ? 3876.3 : 3884.3,
-  valid_until: "2026-11-20T14:00:00+03:30", net_rr: 1.6, risk_toman: 162000, ...extra });
-let sr = await (await gh("/state", "POST", { patch: { signals_sent: [SIG(1), SIG(2, "BUY"), { key: "legacy", at: "x" }, { ...SIG(9), id: "S-1; drop" }] }, done_cmds: [] })).json();
-check("/state stores new signals (server table), ignores legacy/bad IDs", sr.signals_stored === 2 && TBL.signals.length === 2 && TBL.signals[0].status === "sent");
-sr = await (await gh("/state", "POST", { patch: { signals_sent: [SIG(1), SIG(2, "BUY")] }, done_cmds: [] })).json();
-check("/state again: no duplicates", TBL.signals.length === 2);
-const cb = (data, from = 45639251, chat = 45639251, type = "private", mid = 77) => tgUpdate({ callback_query: { id: "q" + uid, data, from: { id: from },
-  message: { message_id: mid, chat: { id: chat, type } } } });
-DB.answers = []; DB.edits = [];
-r = await cb("a:e:S-20261120-001");
-check("button «وارد شدم» → confirmation card with ✅/❌, nothing recorded yet", r.out.length === 1 && r.chats[0] === "45639251" &&
-  SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:e:S-20261120-001" && TBL.signals[0].status === "sent" && DB.answers.length === 1);
-r = await cb("x");
-check("❌ cancel: buttons removed, nothing recorded", r.out.length === 0 && DB.edits.length === 1 && TBL.signals[0].status === "sent");
-r = await cb("c:e:S-20261120-001");
-check("✅ confirm entry → status entered with fill = card entry", TBL.signals[0].status === "entered" && TBL.signals[0].entry_fill === 3880.3 && r.out[0].includes("ورود ثبت شد"));
-r = await cb("c:e:S-20261120-001");
-check("second confirm of the same action → «already» error, no change", r.out[0].includes("ثبت نشد") && TBL.signals[0].status === "entered");
-r = await cb("c:t:S-20261120-001", 999);
-check("button from another user → ignored (answered only)", r.out.length === 0 && TBL.signals[0].status === "entered");
-r = await cb("c:t:S-20261120-001", 45639251, Number(GID), "supergroup");
-check("button in the group → ignored", r.out.length === 0 && TBL.signals[0].status === "entered");
-CLOCK = new Date(CLOCK.getTime() + 40000);   // 40 s later
-r = await tgSend("/tp 001");
-check("/tp 001 → preview with net P&L and R, confirm buttons, private only", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("حد سود") &&
-  r.out[0].includes("<code>3876.3</code>") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:t:S-20261120-001" && TBL.journal.length === 0);
-const eq0 = Number(st().equity_toman), w0 = st().day.wins, l0 = st().day.losses;
-r = await cb("c:t:S-20261120-001");
-const j1 = TBL.journal.find((x) => x.trade_id === "S-20261120-001");
-check("confirm TP → closed, journal row (net = 4.0·80k − 20k − 14k = 286,000), +R, held 40 s → under-60s flag", TBL.signals[0].status === "closed" &&
-  j1 && j1.net_toman === 286000 && j1.gross_toman === 320000 && j1.spread_toman === 20000 && j1.fee_toman === 14000 && j1.under_60s === true &&
-  j1.hold_seconds === 40 && j1.source === "signal" && j1.verification === "USER_CONFIRMED" && TBL.signals[0].r_multiple === Math.round(286000 / 162000 * 100) / 100 &&
-  r.out[0].includes("۶۰ ثانیه"));
-check("TP feeds the daily record and equity (daily stop input) and releases the signal lock", Number(st().equity_toman) === eq0 + 286000 &&
-  st().day.wins === w0 + 1 && st().day.records.at(-1).signal === "S-20261120-001" && st().signals_done.includes("S-20261120-001"));
-r = await cb("c:s:S-20261120-001");
-check("closing a closed signal again → refused, journal still one row", r.out[0].includes("ثبت نشد") && TBL.journal.length === 1);
-r = await tgSend("/undo");
-check("/undo of a signal close: equity back, journal row deleted, signal reopened (entered)", Number(st().equity_toman) === eq0 &&
-  TBL.journal.length === 0 && TBL.signals[0].status === "entered" && !st().signals_done.includes("S-20261120-001"));
-CLOCK = new Date(CLOCK.getTime() + 60000);
-r = await tgSend("/closed 001 3878.3");
-check("/closed 001 3878.3 → preview (manual), then confirm with the price", r.out[0].includes("بستن دستی") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:m:S-20261120-001:3878.3");
-r = await cb("c:m:S-20261120-001:3878.3");
-const j2 = TBL.journal.find((x) => x.trade_id === "S-20261120-001");
-check("manual close 2.0 × 80k − 20k − 14k = 126,000; held 100 s → no flag", j2 && j2.net_toman === 126000 && j2.exit_type === "manual" && j2.under_60s === false);
-r = await cb("a:m:S-20261120-002");
-check("button «بستن دستی» asks for the price with the /closed format", r.out[0].includes("/closed 002"));
-r = await cb("c:e:S-20261120-002"); CLOCK = new Date(CLOCK.getTime() + 20000); r = await cb("c:s:S-20261120-002");
-const j3 = TBL.journal.find((x) => x.trade_id === "S-20261120-002");
-check("SL after 20 s: loss −1.6×80k −20k −14k = −162,000 = −1R; SL is exempt from the 60 s flag; loss counted", j3 && j3.net_toman === -162000 &&
-  Number(TBL.signals[1].r_multiple) === -1 && j3.under_60s === false && st().day.losses === l0 + 1 && r.out[0].includes("حد ضرر"));
-r = await tgSend("/trade sell 3914.07 3909.61 1");
-check("/trade also writes a journal row (trade_cmd, user-confirmed, spread 0)", TBL.journal.some((x) => x.source === "trade_cmd" && x.net_toman === 342800 && x.spread_toman === 0));
-r = await tgSend("/journal");
-check("/journal lists rows, private only, Latin prices", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("<code>3914.07</code>") && r.out[0].includes("ژورنال"));
-r = await tgSend("/pnl");
-check("/pnl: today / 7 days / all, net after costs", r.out.length === 1 && r.out[0].includes("امروز") && r.out[0].includes("۷ روز") && r.out[0].includes("همه"));
-r = await tgSend("/tp 9xx");
-check("/tp junk → format hint", r.out[0].includes("ثبت نشد") && r.out[0].includes("/closed 001"));
-r = await tgSend("/sl 005");
-check("/sl unknown ID → not found", r.out[0].includes("پیدا نشد"));
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, from: { id: 45639251 }, text: "/pnl" } });
-check("/pnl in the group is ignored", r.out.length === 0);
-// expiry + not taken
-await gh("/state", "POST", { patch: { signals_sent: [SIG(3, "SELL", { valid_until: "2026-11-20T13:31:00+03:30" }), SIG(4)] }, done_cmds: [] });
-r = await cb("c:n:S-20261120-004");
-check("«وارد نشدم» → not_taken, lock released", TBL.signals.find((x) => x.id === "S-20261120-004").status === "not_taken" && st().signals_done.includes("S-20261120-004"));
-check("effectiveStatus: sent past valid_until shows expired", JR.effectiveStatus(TBL.signals.find((x) => x.id === "S-20261120-003"), CLOCK.getTime()) === "expired");
-// reports (pg_cron → /report with the webhook secret)
-const rep = (kind, key = DB.vault.tg_webhook_secret) => { SENT.length = 0; return app(new Request(FN + "/report", { method: "POST", headers: { "x-report-key": key }, body: JSON.stringify({ kind }) }), jw); };
-let rr = await rep("daily", "wrong");
-check("/report with a wrong key → 403, nothing sent", rr.status === 403 && SENT.length === 0);
-CLOCK = new Date("2026-11-20T21:15:00Z");   // Saturday 00:45 Tehran → reports Friday's session
-rr = await (await rep("daily")).json();
-check("daily report after 00:30: Friday session, private chat only, counts + net + expired marked",
-  rr.ok && rr.key === "daily:2026-11-20" && SENT.length === 1 && String(SENT[0].chat_id) === "45639251" && SENT[0].text.includes("گزارش روز") &&
-  SENT[0].text.includes("تومان") && TBL.signals.find((x) => x.id === "S-20261120-003").status === "expired");
-rr = await (await rep("daily")).json();
-check("daily report is sent once per day", rr.skipped && SENT.length === 0);
-CLOCK = new Date("2026-11-21T06:30:00Z");   // Saturday 10:00 Tehran
-rr = await (await rep("weekly")).json();
-check("weekly report Saturday: Sat–Fri range ending Friday, private only", rr.key === "weekly:2026-11-20" && SENT.length === 1 && String(SENT[0].chat_id) === "45639251" && SENT[0].text.includes("گزارش هفته"));
-const gtxt = JR.reportMsg("daily", { signals: TBL.signals, journal: TBL.journal, shadow: [], calibration: null }, "2026-11-20", "2026-11-20", CLOCK.getTime(), true);
-check("group version of a report carries no toman/balance", !gtxt.includes("تومان") && !gtxt.includes("موجودی") && gtxt.includes("R"));
-const allTxt = [JR.BAD_JOURNAL, gtxt, SENT[0].text, JR.journalMsg(TBL.journal), JR.pnlMsg(TBL.journal)].join("\n");
-check("Phase 3 texts: Persian, «ضرر» not «زیان», never «قوی»", !allTxt.includes("زیان") && !/(^|[\s،.])قوی([\s،.]|$)/.test(allTxt));
-TBL_FAIL = true; r = await tgSend("/journal"); TBL_FAIL = false;
-check("journal database down → short error to the owner", r.out.length === 1 && r.out[0].includes("ثبت نشد"));
-o = await (await gh("/admin/setup", "POST", { set_webhook: true })).json();
-check("setup: webhook also receives button presses (callback_query)", DB.hook.allowed_updates.includes("callback_query") && DB.hook.allowed_updates.includes("message"));
-
-// ---------------- Phase 4: forward tracking (MFE/MAE) + /trade double-count guard ----------------
-CLOCK = new Date("2026-11-23T10:00:00Z");   // Monday 13:30 Tehran
-TBL.signals.length = 0; TBL.journal.length = 0;
-const S5 = { ...SIG(5), id: "S-20261123-005", session_date: "2026-11-23", sent_at: "2026-11-23T13:00:00+03:30", valid_until: "2026-11-23T13:30:00+03:30" };
-const fresh = { outcome: "tp", fill_at: "2026-11-23T09:31:00+00:00", mfe_usd: 4.1, mae_usd: 0.6, mfe_r: 2.56, mae_r: 0.38, tracked_at: "2026-11-23T09:59:00+00:00", final: true };
-sr = await (await gh("/state", "POST", { patch: { signals_sent: [S5, { ...SIG(6), id: "S-20261123-006", session_date: "2026-11-23",
-  track: { ...fresh, tracked_at: "2026-11-23T08:00:00+00:00" } }] }, done_cmds: [] })).json();
-sr = await (await gh("/state", "POST", { patch: { signals_sent: [{ ...S5, track: fresh }, { ...SIG(6), id: "S-20261123-006", session_date: "2026-11-23",
-  track: { ...fresh, outcome: "sl", tracked_at: "2026-11-23T08:00:00+00:00" } }] }, done_cmds: [] })).json();
-const t5 = TBL.signals.find((x) => x.id === "S-20261123-005"), t6 = TBL.signals.find((x) => x.id === "S-20261123-006");
-check("tracking: fresh MFE/MAE written to the signal row; stale tracking (older than 30 min) not rewritten",
-  sr.signals_tracked === 1 && t5.track_outcome === "tp" && t5.mfe_r === 2.56 && t5.mae_r === 0.38 && t5.mfe_usd === 4.1 && !t6.track_outcome);
-sr = await (await gh("/state", "POST", { patch: { signals_sent: [{ ...S5, id: "S-1;x", track: fresh }, { ...S5, track: { ...fresh, outcome: "drop table" } }] }, done_cmds: [] })).json();
-check("tracking: bad IDs / unknown outcomes ignored", !sr.signals_tracked);
-r = await tgSend("/journal");
-check("/journal shows signal tracking (outcome, best/worst in R)", r.out[0].includes("پیگیری سیگنال") && r.out[0].includes("<code>S-20261123-005</code>") &&
-  r.out[0].includes("به هدف رسید") && r.out[0].includes("+۲٫۵۶R") && (r.out[0].includes("−۰٫۳۸R") || r.out[0].includes("-۰٫۳۸R")));
-const wk = JR.reportMsg("weekly", { signals: TBL.signals, journal: [], shadow: [], calibration: null }, "2026-11-23", "2026-11-23", CLOCK.getTime());
-check("weekly report includes the tracking line (TP/SL/no-fill and average MFE/MAE)", wk.includes("پیگیری سیگنال") && wk.includes("هدف 1") && wk.includes("+2.56R"));
-// /trade guard
-const eqT = Number(st().equity_toman), nJ = TBL.journal.length;
-r = await tgSend("/trade sell 3880.0 3876.5 1");
-check("/trade that matches an open signal → question card (same signal / separate / cancel), nothing recorded yet",
-  r.out.length === 1 && r.out[0].includes("همان سیگنال") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:j:S-20261123-005:3880:3876.5:1" &&
-  SENT[0].reply_markup.inline_keyboard[1][0].callback_data === "tr:sell:3880:3876.5:1" && TBL.journal.length === nJ && Number(st().equity_toman) === eqT);
-r = await cb("c:j:S-20261123-005:3880:3876.5:1");
-const jl = TBL.journal.find((x) => x.trade_id === "S-20261123-005");
-check("«همان سیگنال» → one journal row from the signal with the owner's fills (no extra spread): 3.5×80k − 14k = 266,000",
-  jl && jl.net_toman === 266000 && jl.spread_toman === 0 && jl.entry === 3880 && TBL.signals.find((x) => x.id === "S-20261123-005").status === "closed" &&
-  Number(st().equity_toman) === eqT + 266000 && TBL.journal.filter((x) => x.source === "trade_cmd").length === 0);
-r = await tgSend("/trade buy 3880.0 3882.5 0.5");
-check("/trade with no matching open signal is recorded directly", r.out[0].includes("معامله ثبت شد") && TBL.journal.some((x) => x.source === "trade_cmd" && x.unit === "0.5U"));
-await gh("/state", "POST", { patch: { signals_sent: [{ ...SIG(7), id: "S-20261123-007", session_date: "2026-11-23" }] }, done_cmds: [] });
-r = await tgSend("/trade sell 3880.5 3879 1");
-r = await cb("tr:sell:3880.5:3879:1");
-check("«معامله‌ی جدا» → recorded as its own trade; the signal stays open", r.out[0].includes("معامله ثبت شد") &&
-  TBL.journal.some((x) => x.source === "trade_cmd" && x.entry === 3880.5) && TBL.signals.find((x) => x.id === "S-20261123-007").status === "sent");
-check("parseCallback rejects malformed link/trade buttons", JR.parseCallback("c:j:S-20261123-005:1:2:1") === null && JR.parseCallback("tr:hold:3880:3879:1") === null &&
-  JR.parseCallback("tr:sell:3880:3879:2") === null);
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

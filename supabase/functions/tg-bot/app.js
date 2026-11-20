@@ -6,11 +6,10 @@
 // /calibrate: owner-entered DaryaGold price + live Dukascopy 1-minute bid/ask -> public.price_observations (service role only).
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { matchSignal, tradeMatchCard, JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
-import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, LEGACY_GROUP_CMDS, LEGACY_MIRROR_CMDS, forexOpen } from "./lib.js";
+import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
 import * as A from "./assist.js";
 
-export const BUILD = "2026-11-21-assistant-v2";
+export const BUILD = "2026-11-21-assistant-v3";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -18,8 +17,7 @@ const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(r2(x));
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
-  const LEG = !!cfg.legacy;   // tests only: the pre-2026-11-21 signal/journal command set (production: off)
-  const MIRROR = LEG ? LEGACY_MIRROR_CMDS : MIRROR_CMDS, GROUPS = LEG ? LEGACY_GROUP_CMDS : GROUP_CMDS;
+  const MIRROR = MIRROR_CMDS, GROUPS = GROUP_CMDS;
   const hdr = { apikey: KEY, authorization: `Bearer ${KEY}`, "content-type": "application/json" };
   const rpc = async (fn, args = {}) => {
     const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method: "POST", headers: hdr, body: JSON.stringify(args) });
@@ -101,7 +99,7 @@ export function makeApp(cfg) {
     return L.join("\n");
   }
 
-  // ---------------- Phase 3: signals + journal (tables are service-role only) ----------------
+  // ---------------- REST helper; signals table = archive of the old automatic signals (written by the GitHub run) ----------------
   const rest = async (path, { method = "GET", body, prefer } = {}) => {
     const r = await fetch(`${SB}/rest/v1/${path}`, { method, headers: { ...hdr, ...(prefer ? { prefer } : {}) },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -109,8 +107,6 @@ export function makeApp(cfg) {
     const t = await r.text();
     return t ? JSON.parse(t) : null;
   };
-  const getSignal = async (id) => (await rest(`signals?id=eq.${encodeURIComponent(id)}&select=*`))[0] || null;
-  const latestOpen = async () => (await rest("signals?status=in.(sent,entered)&select=*&order=sent_at.desc&limit=1"))[0] || null;
   const TRACK_OUT = ["no_fill", "open", "tp", "sl", "close"];
   const SIG_FIELDS = ["id", "sent_at", "session_date", "side", "unit", "entry", "sl", "tp", "valid_until", "net_rr", "risk_toman"];
   async function storeSignals(list) {
@@ -136,121 +132,10 @@ export function makeApp(cfg) {
     }
     return n;
   }
-  const NOT_FOUND = "**⚠️ سیگنال پیدا نشد**\n~~شناسه را از پایین کارت سیگنال بردارید، مثل~~ `/tp 001`";
-  // Confirmed action: guarded status update, journal row, then the day record + equity (feeds the daily stop).
-  async function confirmAction(id, act, price, link = null) {
-    const sig0 = await getSignal(id);
-    if (!sig0) return NOT_FOUND;
-    const nowMs = clock().getTime();
-    // link = a /trade confirmed as this signal: the owner's own fills and unit, spread already inside the fills
-    const sig = link ? { ...sig0, entry_fill: link.entry, unit: link.unit } : sig0;
-    const res = applyAction(sig, link ? "m" : act, price, nowMs, link ? { fills: true } : {});
-    if (link && res.update) Object.assign(res.update, { entry_fill: link.entry });
-    if (res.error) return `**⚠️ ثبت نشد**\n~~${res.error}~~`;
-    const upd = await rest(`signals?id=eq.${encodeURIComponent(id)}&status=eq.${sig.status}`, { method: "PATCH",
-      body: { ...res.update, updated_at: new Date(nowMs).toISOString() }, prefer: "return=representation" });
-    if (!upd || !upd.length) return "**⚠️ قبلاً ثبت شده**\n~~وضعیت این سیگنال همین الان عوض شده بود~~";
-    const L = [doneText(sig, link ? "m" : act, res)];
-    if (res.journal) {
-      await rest("journal?on_conflict=trade_id", { method: "POST", body: [res.journal], prefer: "resolution=ignore-duplicates,return=minimal" });
-      const now = teh(new Date(nowMs));
-      const day = await mutate(async (s) => {
-        const d = s.day, rec = res.record;
-        d.records.push({ type: rec.type, toman: rec.toman, at: now.hm, at_full: now.full, trade: id, signal: id, net: rec.net });
-        if (rec.type === "loss") { d.losses += 1; d.loss_toman += rec.toman; } else { d.wins += 1; d.win_toman += rec.toman; }
-        s.equity_toman = Number(s.equity_toman) + rec.net;
-        s.signals_done = [...(s.signals_done || []).filter((x) => x !== id), id].slice(-20);
-        const cap = (Number(d.start_equity) || Number(s.equity_toman)) * 0.2;
-        return { losses: d.losses, wins: d.wins, eq: s.equity_toman, stop: d.losses >= 3 || d.loss_toman - d.win_toman >= cap };
-      });
-      L.push(`موجودی جدید ${toman(day.eq)} تومان`, "", `امروز ${day.losses} ضرر · ${day.wins} سود`);
-      if (day.stop) L.push("", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود");
-    } else if (act === "n") {
-      await mutate(async (s) => { s.signals_done = [...(s.signals_done || []).filter((x) => x !== id), id].slice(-20); return true; });
-    }
-    return L.join("\n");
-  }
-  async function askConfirm(env, act, id, price) {
-    const sig = id ? await getSignal(id) : await latestOpen();
-    if (!sig) return send(env, NOT_FOUND);
-    if (act === "m" && price == null)
-      return send(env, `**✋ بستن دستی** \`${sig.id}\`\n~~قیمت خروج را بفرستید:~~\n\`/closed ${sig.id.slice(-3)} 3569.85\``);
-    const text = previewText(sig, act, price, clock().getTime());
-    const ok = !text.startsWith("این سیگنال");
-    return send(env, ok ? text : `**⚠️ ثبت نشد**\n~~${text}~~`, CHAT_ID, ok ? confirmKeyboard(act, sig.id, price) : null);
-  }
-  async function onJournal(env, j) {
-    if (j.error) return send(env, BAD_JOURNAL);
-    if (j.view === "journal") {
-      const rows = await rest("journal?select=*&order=closed_at.desc&limit=10");
-      const ids = [...new Set(rows.map((r) => r.signal_id).filter(Boolean))];
-      const tr = ids.length ? await rest(`signals?select=id,mfe_r,mae_r,track_outcome&id=in.(${ids.join(",")})`) : [];
-      const recent = await rest("signals?select=id,side,track_outcome,mfe_r,mae_r&track_outcome=not.is.null&order=sent_at.desc&limit=5");
-      return send(env, journalMsg(rows, Object.fromEntries(tr.map((x) => [x.id, x])), recent));
-    }
-    if (j.view === "pnl") return send(env, pnlMsg(await rest("journal?select=session_date,net_toman,r_multiple,under_60s&limit=10000"), teh(clock())));
-    return askConfirm(env, j.act, j.id, j.price);
-  }
-  async function onCallback(env, u) {
-    const cq = u.callback_query, msg = cq.message || {};
-    const owner = String((cq.from || {}).id || "") === CHAT_ID && String((msg.chat || {}).id || "") === CHAT_ID && (msg.chat || {}).type === "private";
-    const answer = (text) => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, ...(text ? { text } : {}) });
-    if (!owner) { await answer(); return new Response("ok"); }
-    const fresh = await mutate(async (s) => {
-      if ((s.seen_updates || []).includes(u.update_id)) return null;
-      s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
-      return true;
-    });
-    if (!fresh) return new Response("ok");
-    const c = parseCallback(cq.data);
-    const strip = () => tg(env, "editMessageReplyMarkup", { chat_id: msg.chat.id, message_id: msg.message_id, reply_markup: { inline_keyboard: [] } });
-    if (!c) { await answer(); return new Response("ok"); }
-    if (c.cancel) { await answer("لغو شد"); await strip(); return new Response("ok"); }
-    if (c.trade) {   // «معامله‌ی جدا»: record the /trade as its own trade
-      await answer("ثبت شد"); await strip();
-      const r = await mutate(async (s) => handle(s, c.trade, teh(), clock(), { legacy: LEG }));
-      await send(env, r.reply);
-      if (r.journal_row) {
-        try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
-        catch (e) { console.error("journal sync:", String(e && e.message || e)); }
-      }
-      return new Response("ok");
-    }
-    if (c.step === "a") { await answer(); await askConfirm(env, c.act, c.id, c.price); return new Response("ok"); }
-    await answer("ثبت شد");
-    await strip();   // a confirmation card works once
-    let out;
-    try { out = await confirmAction(c.id, c.act, c.price, c.act === "j" ? { entry: c.entry, unit: c.unit } : null); }
-    catch (e) { console.error("confirm:", String(e && e.message || e)); out = "**⚠️ ثبت نشد**\n~~ذخیره ممکن نشد؛ چند دقیقه‌ی دیگر دوباره بزنید~~"; }
-    await send(env, out);
+  async function onCallback(env, u) {   // the bot sends no buttons any more; an old button just gets an empty answer
+    await tg(env, "answerCallbackQuery", { callback_query_id: u.callback_query.id });
     return new Response("ok");
   }
-  async function onReport(req) {
-    const env = await secrets();
-    if (!env.WEBHOOK || (req.headers.get("x-report-key") || "") !== env.WEBHOOK) return new Response("forbidden", { status: 403 });
-    const b = await req.json().catch(() => ({}));
-    const kind = b.kind === "weekly" ? "weekly" : "daily";
-    const now = clock(), nowMs = now.getTime(), sd = sessionDate(teh(now));
-    const shift = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
-    const to = kind === "weekly" ? shift(sd, -1) : sd, from = kind === "weekly" ? shift(to, -6) : sd;
-    const key = `${kind}:${to}`;
-    const first = await mutate(async (s) => {
-      if ((s.reports_sent || []).includes(key)) return null;
-      s.reports_sent = [...(s.reports_sent || []), key].slice(-30);
-      return true;
-    });
-    if (!first) return Response.json({ ok: true, skipped: "already sent", key });
-    await rest(`signals?status=eq.sent&valid_until=lt.${encodeURIComponent(now.toISOString())}`, { method: "PATCH",
-      body: { status: "expired", updated_at: now.toISOString() }, prefer: "return=minimal" });
-    const [signals, journal, row] = await Promise.all([
-      rest(`signals?select=*&session_date=gte.${from}&session_date=lte.${to}`),
-      rest(`journal?select=*&session_date=gte.${from}&session_date=lte.${to}`), loadRow()]);
-    const s = normalize(row.state);
-    const text = reportMsg(kind, { signals, journal, shadow: s.shadow, calibration: s.calibration }, from, to, nowMs, false);
-    const sent = await send(env, text);   // owner's private chat only
-    return Response.json({ ok: sent, key, signals: signals.length, trades: journal.length });
-  }
-
   // ---------------- assistant: /setup /trend /e (owner t226u-t232u) ----------------
   const BAD_E = "**⚠️ ورود را بنویسید**\n~~جهت اختیاری است و قیمت با نقطه، مثل:~~\n\n`/e sell 3531.80`\n`/e 3531.80`";
   const NO_DIR = "**⚠️ جهت را بنویسید**\n~~روند فعلاً روشن نیست، مثل:~~ `/e sell 3531.80`";
@@ -315,11 +200,28 @@ export function makeApp(cfg) {
     return A.setupMsg(res, ctx, v, { group, snapNote });
   }
 
+  // Telegram menus: owner chat = full list, groups/default = the 4 member commands. Re-applied once per MENU_VERSION.
+  async function syncMenus(env) {
+    let ok = true;
+    for (const [m, b] of menuCalls()) {
+      const r = await tg(env, m, b);
+      if (m === "setMyCommands" && !(r && r.ok)) ok = false;
+    }
+    return ok;
+  }
+
   // ---------------- /tick: pg_cron every 2 min (Mon-Fri). Alerts go to the owner's private chat only. ----------------
   async function onTick(req) {
     const env = await secrets();
     if (!env.WEBHOOK || (req.headers.get("x-report-key") || "") !== env.WEBHOOK) return new Response("forbidden", { status: 403 });
     const now = clock(), nowMs = now.getTime(), open = forexOpen(now), out = { ok: true, sent: 0, setups: 0 };
+    try {   // menus follow the code: applied on the first tick after a deploy that changes MENU_VERSION
+      const s0 = normalize((await loadRow()).state);
+      if (s0.menu_version !== MENU_VERSION && await syncMenus(env)) {
+        await mutate(async (x) => { x.menu_version = MENU_VERSION; return true; });
+        out.menus = MENU_VERSION;
+      }
+    } catch (e) { console.error("menus:", String(e && e.message || e)); }
     let pend = [];
     try {
       pend = await rest(`setups?status=in.(pending,filled)&created_at=gte.${encodeURIComponent(new Date(nowMs - 8 * 3.6e6).toISOString())}&select=*&order=created_at.asc&limit=50`);
@@ -385,15 +287,7 @@ export function makeApp(cfg) {
     const res = await mutate(async (s) => {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
-      const c0 = text.split(/\s+/)[0].split("@")[0].toLowerCase();
-      if (LEG && c0 === "/trade") {   // checked against open signals first (double-count guard)
-        try { return { tradeCheck: parseTrade(text.split(/\s+/).slice(1)) }; } catch { /* bad input: handle() answers with the format */ }
-      }
-      if (LEG && JOURNAL_CMDS.includes(c0)) {
-        try { return { journal: parseJournalCmd(c0, text.split(/\s+/).slice(1), teh(clock())) }; }
-        catch { return { journal: { error: true } }; }
-      }
-      const r = handle(s, text, teh(), clock(), { legacy: LEG });
+      const r = handle(s, text, teh(), clock());
       if (r.assist) return r;
       if (r.queue) {
         // a different command always gets its own run (a run already in progress may have pulled the state
@@ -416,30 +310,6 @@ export function makeApp(cfg) {
       if (msg) await send(env, msg);
       return new Response("ok");
     }
-    if (res.tradeCheck) {
-      let sig = null;
-      try {
-        const sigs = await rest(`signals?select=*&side=eq.${res.tradeCheck.side.toUpperCase()}&status=in.(sent,entered,expired)&order=sent_at.desc&limit=5`);
-        sig = matchSignal(res.tradeCheck, sigs, sessionDate(teh(clock())));
-      } catch (e) { console.error("trade check:", String(e && e.message || e)); }
-      if (sig) {
-        const card = tradeMatchCard(res.tradeCheck, sig);
-        await send(env, card.text, CHAT_ID, card.markup);
-        return new Response("ok");
-      }
-      const r = await mutate(async (s) => handle(s, text, teh(), clock(), { legacy: LEG }));
-      await send(env, r.reply);
-      if (r.journal_row) {
-        try { await rest("journal?on_conflict=trade_id", { method: "POST", body: [r.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" }); }
-        catch (e) { console.error("journal sync:", String(e && e.message || e)); }
-      }
-      return new Response("ok");
-    }
-    if (res.journal) {   // private chat only; never mirrored
-      try { await onJournal(env, res.journal); }
-      catch (e) { console.error("journal:", String(e && e.message || e)); await send(env, "**⚠️ ثبت نشد**\n~~ژورنال در دسترس نیست؛ چند دقیقه‌ی دیگر دوباره بفرستید~~"); }
-      return new Response("ok");
-    }
     if (res.calibrate) {
       let msg;
       try { msg = await onCalibrate(res.calibrate); }
@@ -449,19 +319,11 @@ export function makeApp(cfg) {
     }
     if (res.queue) {
       const d = res.recent ? { ok: true } : await dispatch(env, "command");
-      await send(env, d.ok ? "**⏳ در حال بررسی…**\n~~جواب تا حدود یک دقیقه‌ی دیگر~~"
-                           : "**⏳ در صف بررسی**\n~~جواب در بررسی خودکار بعدی~~");
+      await send(env, d.ok ? "**⏳ در حال بررسی…**\n~~جواب حدود یک دقیقه‌ی دیگر می‌رسد~~"
+                           : "**⏳ در صف بررسی**\n~~جواب با بررسی خودکار بعدی می‌رسد~~");
       if (!d.ok) await mutate(async (s) => { s.last_dispatch = 0; s.last_dispatch_error = d.why; return true; });
     } else {
       await send(env, res.reply);
-      try {
-        if (res.journal_row) await rest("journal?on_conflict=trade_id", { method: "POST", body: [res.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" });
-        if (res.undo) {
-          await rest(`journal?trade_id=eq.${encodeURIComponent(res.undo.trade)}`, { method: "DELETE", prefer: "return=minimal" });
-          if (res.undo.signal) await rest(`signals?id=eq.${encodeURIComponent(res.undo.signal)}&status=eq.closed`, { method: "PATCH", prefer: "return=minimal",
-            body: { status: "entered", closed_at: null, exit_price: null, exit_type: null, net_toman: null, r_multiple: null, under_60s: null, updated_at: new Date().toISOString() } });
-        }
-      } catch (e) { console.error("journal sync:", String(e && e.message || e)); }
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
       const pub = (MIRROR.includes(cmd) && res.mirror) ? publicReply(cmd, res.reply) : null;
       if (pub) {
@@ -498,7 +360,7 @@ export function makeApp(cfg) {
       s.group_cmd_at = s.group_cmd_at && typeof s.group_cmd_at === "object" ? s.group_cmd_at : {};
       if (nowMs - (Number(s.group_cmd_at[cmd]) || 0) < GROUP_COOLDOWN_MS) return null;
       s.group_cmd_at[cmd] = nowMs;
-      const r = handle(s, cmd, teh(), clock(), { legacy: LEG });   // read-only: assist, reply or queue
+      const r = handle(s, cmd, teh(), clock());   // read-only: assist, reply or queue
       if (r.assist) return { assist: r.assist, chat: String(chat.id) };
       if (r.queue) {
         const already = s.pending_cmds.some((x) => x.cmd === r.queue);
@@ -543,10 +405,7 @@ export function makeApp(cfg) {
       out.last_error = info.last_error_message || null;
     }
     if (b.set_commands) {
-      // one menu for everyone: clear narrower menus that would shadow the default one, then set it
-      for (const x of [{ scope: { type: "all_private_chats" } }, { language_code: "fa" }, { scope: { type: "chat", chat_id: Number(CHAT_ID) } }])
-        await tg(env, "deleteMyCommands", x);
-      out.commands = !!(await tg(env, "setMyCommands", { commands: COMMANDS })).ok;
+      out.commands = await syncMenus(env);
     }
     if (b.send_help) out.help_sent = await send(env, HELP);
     if (b.announce) {
@@ -566,7 +425,6 @@ export function makeApp(cfg) {
     const origin = `${SB}/functions/v1/tg-bot`;
     try {
       if (p.endsWith("/tg") && req.method === "POST") return await onTelegram(req);
-      if (p.endsWith("/report") && req.method === "POST") return await onReport(req);
       if (p.endsWith("/tick") && req.method === "POST") return await onTick(req);
       if (p.endsWith("/state") || p.endsWith("/admin/setup")) {
         if (!(await verifyOidc(req, jwks))) return new Response("unauthorized", { status: 401 });

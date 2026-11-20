@@ -151,7 +151,7 @@ def public_card(kind, text):
     if "داده‌ی قیمت در دسترس نیست" in text:
         return None
     if kind in ("brief", "presession"):
-        lines = [ln for ln in text.split("\n") if not ("موجودی" in ln and "سقف ضرر امروز" in ln)]
+        lines = [ln for ln in text.split("\n") if not ln.startswith("💼 موجودی")]
         while lines and lines[-1] == "":
             lines.pop()
         return "\n".join(lines)
@@ -652,19 +652,19 @@ def levels_card(b, state, title="سطوح"):
     if snap and not LVIEW.is_fresh(snap, t):
         age = LVIEW.age_minutes(snap, t)
         if age is not None and age >= 0:
-            L += [f"سن داده  {int(round(age))} دقیقه", ""]
+            L += [f"به‌روزشده {int(round(age))} دقیقه پیش", ""]
     L.append((snap or {}).get("block") or levels_block(b, state))
     return "\n".join(L)
 
 def short_brief(b, state, cfg, reasons=None, title=None):
     """/scan without a signal: lead with the reason and its clear time, then the 2+2 zones."""
     if b.get("error") or b.get("price_bid") is None:
-        return "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~"
+        return "**⏸ فعلاً ستاپی نیست**\n~~داده‌ی قیمت در دسترس نیست~~"
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     rs = reasons if reasons else (dec.get("reasons_reject") or [])
     snap = enrich_snap(b, state)
     body = (snap or {}).get("block") or levels_block(b, state)
-    return "\n".join(["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "", body])
+    return "\n".join(["**⏸ فعلاً ستاپی نیست**", f"~~{short_reason(b, rs)}~~", "", body])
 
 def market_summary(b, state, title):
     """/brief and the pre-session briefs: the shared levels block, remaining news,
@@ -685,7 +685,7 @@ def market_summary(b, state, title):
         L += [f" {a} تا {z}" for a, z in wins]
     elif not wins:
         L.append("🔔 امروز خبر مهم دیگری ثبت نشده")
-    L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} · سقف ضرر امروز {toman_short(day_cap(state, CFG))}"]
+    L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} تومان"]
     return "\n".join(L)
 
 PRESESSION_TITLE = {"morning": "🌅 خلاصه‌ی صبح؛ دریاگلد باز شد", "am": "☀️ لندن باز می‌شود", "pm": "🌆 نیویورک باز می‌شود"}
