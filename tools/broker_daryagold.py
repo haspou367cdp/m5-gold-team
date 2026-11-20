@@ -345,113 +345,148 @@ def _hm(s, default="17:00"):
     return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
 
 
+FA_WD = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+
+
 def session_cfg(cfg=None):
-    """DaryaGold session = forex hours, times from broker_daryagold.json (DST via NY)."""
+    """DaryaGold session in Tehran time (owner, 2026-11-20): Mon-Fri 07:00 to 00:30 next day; Sat/Sun closed."""
     cfg = cfg or load_config()
     s = cfg.get("session") or {}
     hours = s.get("no_new_entries_hours_before_friday_close")
     if hours is None:
-        hours = cfg.get("friday_close_no_entry_hours") or 2
+        hours = 2
     return {
-        "tz": ZoneInfo(s.get("timezone") or "America/New_York"),
-        "open_day": int(s.get("open_day", 6)),
-        "open": _hm(s.get("open"), "17:00"),
-        "close_day": int(s.get("close_day", 4)),
-        "close": _hm(s.get("close"), "17:00"),
-        "break_start": _hm(s.get("daily_break_start"), "17:00"),
-        "break_end": _hm(s.get("daily_break_end"), "18:00"),
+        "tz": TEH,
+        "days": tuple(int(d) for d in s.get("days", (0, 1, 2, 3, 4))),
+        "open": _hm(s.get("open"), "07:00"),
+        "close": _hm(s.get("close"), "00:30"),
         "hours": float(hours),
+        "reminder_min": int(s.get("close_reminder_minutes_before", 30)),
     }
 
 
-def forex_open(now=None, cfg=None):
-    """True while the forex/gold session is open (Sun 17:00 NY to Fri 17:00 NY, daily break excluded)."""
-    sc = session_cfg(cfg)
+def _as_teh(now):
     t = now or datetime.now(UTC)
     if t.tzinfo is None:
         t = t.replace(tzinfo=TEH)
-    n = t.astimezone(sc["tz"])
-    wd, hm = n.weekday(), n.hour * 60 + n.minute
+    return t.astimezone(TEH)
+
+
+def _bounds(day, sc):
+    """(start, end) of the session that opens on calendar date `day` (Tehran)."""
     oh, om = sc["open"]
     ch, cm = sc["close"]
-    bh, bm = sc["break_start"]
-    eh, em = sc["break_end"]
-    if wd == 5:
-        return False
-    if wd == sc["open_day"]:
-        return hm >= oh * 60 + om
-    if wd == sc["close_day"]:
-        return hm < ch * 60 + cm
-    return not (bh * 60 + bm <= hm < eh * 60 + em)
+    start = datetime(day.year, day.month, day.day, oh, om, tzinfo=TEH)
+    end = datetime(day.year, day.month, day.day, ch, cm, tzinfo=TEH)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
 
 
-def _friday_close_ny(now, sc):
-    n = now.astimezone(sc["tz"])
-    ch, cm = sc["close"]
-    return (n + timedelta(days=(sc["close_day"] - n.weekday()))).replace(
-        hour=ch, minute=cm, second=0, microsecond=0
-    )
+def current_session(now=None, cfg=None):
+    """(start, end) of the session open at `now`, else None."""
+    sc = session_cfg(cfg)
+    t = _as_teh(now)
+    for back in (0, 1):
+        d = (t - timedelta(days=back)).date()
+        if d.weekday() in sc["days"]:
+            s, e = _bounds(d, sc)
+            if s <= t < e:
+                return s, e
+    return None
+
+
+def next_session(now=None, cfg=None):
+    """(start, end) of the next session that opens after `now`."""
+    sc = session_cfg(cfg)
+    t = _as_teh(now)
+    for k in range(0, 9):
+        d = (t + timedelta(days=k)).date()
+        if d.weekday() in sc["days"]:
+            s, e = _bounds(d, sc)
+            if s > t:
+                return s, e
+    raise RuntimeError("no DaryaGold session configured")
+
+
+def market_open(now=None, cfg=None):
+    return current_session(now, cfg) is not None
+
+
+forex_open = market_open   # back-compat name used by bot.py
+
+
+def _friday_session(t, sc, cfg):
+    """The Friday session that is open now, or the next one."""
+    cur = current_session(t, cfg)
+    if cur and cur[0].weekday() == 4:
+        return cur
+    d = t.date()
+    for k in range(0, 8):
+        day = d + timedelta(days=k)
+        if day.weekday() == 4:
+            s, e = _bounds(day, sc)
+            if e > t:
+                return s, e
+    raise RuntimeError("no Friday session")
 
 
 def session_entry_block(now=None, cfg=None):
-    """No new entries outside forex hours, or in the last N hours before Friday 17:00 NY close.
+    """No new entries while DaryaGold is closed (00:30-07:00, Sat/Sun) or in the last N hours of Friday.
 
-    Overnight weekday holds are allowed. There is no daily 22:30/00:30 cutoff.
-    Friday close and the entry cutoff are DST-aware (computed in America/New_York).
+    Signals stop at the daily close; open positions are never closed by this system, the owner checks them.
     """
     cfg = cfg or load_config()
     sc = session_cfg(cfg)
-    t = now or datetime.now(UTC)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=TEH)
-    n = t.astimezone(sc["tz"])
-    teh = n.astimezone(TEH)
-    hours = sc["hours"]
-    close = _friday_close_ny(t, sc)
-    start = close - timedelta(hours=hours)
-    in_friday_window = start <= n < close
-    is_open = forex_open(t, cfg)
+    t = _as_teh(now)
+    cur = current_session(t, cfg)
+    is_open = cur is not None
+    fs, fe = _friday_session(t, sc, cfg)
+    f_start = fe - timedelta(hours=sc["hours"])
+    in_friday_window = is_open and cur[0].weekday() == 4 and f_start <= t < fe
     blocked = (not is_open) or in_friday_window
-    close_teh = close.astimezone(TEH)
-    start_teh = start.astimezone(TEH)
-    start_fa, close_fa, close_ny_fa = (fa_digits(x.strftime("%H:%M")) for x in (start_teh, close_teh, close))
+    o, c = (f"{h:02d}:{m:02d}" for h, m in (sc["open"], sc["close"]))
+    o_fa, c_fa, fstart_fa = fa_digits(o), fa_digits(c), fa_digits(f_start.strftime("%H:%M"))
+    close = cur[1] if is_open else next_session(t, cfg)[1]
+    reopen = None if is_open else next_session(t, cfg)[0]
     if in_friday_window:
-        reason = (
-            f"فقط جمعه: از {start_fa} تهران ورود جدید ممنوع است "
-            f"و همه معاملات باید پیش از بسته شدن فارکس "
-            f"({close_ny_fa} نیویورک / {close_fa} تهران) بسته شوند. "
-            "تصمیم: NO TRADE."
-        )
+        reason = (f"جمعه از {fstart_fa} ورود جدید ممنوع است و همه‌ی معامله‌ها باید پیش از {c_fa} بسته شوند. "
+                  "تصمیم: NO TRADE.")
     elif not is_open:
-        reason = (
-            "بازار دریاگلد خارج از ساعت فارکس است "
-            "(ساعت کاری برابر فارکس: از دوشنبه تا جمعه، شنبه و یکشنبه تعطیل). "
-            "تصمیم: NO TRADE."
-        )
+        reason = (f"بازار دریاگلد بسته است (دوشنبه تا جمعه {o_fa} تا {c_fa} تهران). "
+                  f"بازگشایی {FA_WD[reopen.weekday()]} {fa_digits(reopen.strftime('%H:%M'))}. تصمیم: NO TRADE.")
     else:
-        reason = (
-            f"ورود جدید از {start_fa} تهران جمعه تا بسته شدن فارکس "
-            f"({close_fa} تهران / {close_ny_fa} نیویورک) ممنوع است. "
-            "نگهداری شبانه در روزهای هفته مجاز است."
-        )
+        reason = (f"بازار تا {fa_digits(close.strftime('%H:%M'))} باز است. "
+                  f"جمعه از {fstart_fa} ورود جدید ممنوع است.")
     return {
         "blocked": blocked,
-        "hours": hours,
-        "forex_open": is_open,
+        "hours": sc["hours"],
+        "forex_open": is_open,          # key kept for older readers; means "DaryaGold open"
+        "market_open": is_open,
         "friday_window": in_friday_window,
-        "close_tehran": close_teh.strftime("%Y-%m-%d %H:%M"),
-        "block_start_tehran": start_teh.strftime("%Y-%m-%d %H:%M"),
-        "close_ny": close.strftime("%Y-%m-%d %H:%M"),
-        "now_tehran": teh.strftime("%Y-%m-%d %H:%M"),
+        "close_tehran": close.strftime("%Y-%m-%d %H:%M"),
+        "block_start_tehran": f_start.strftime("%Y-%m-%d %H:%M"),
+        "friday_close_tehran": fe.strftime("%Y-%m-%d %H:%M"),
+        "reopen_tehran": reopen.strftime("%Y-%m-%d %H:%M") if reopen else None,
+        "now_tehran": t.strftime("%Y-%m-%d %H:%M"),
         "reason_fa": reason,
         "hours_line_fa": (
-            f"ساعت کاری دریاگلد برابر ساعت فارکس است (از دوشنبه تا جمعه، شنبه و یکشنبه تعطیل). "
-            f"نگهداری شبانه در روزهای هفته مجاز است و قطع روزانه ۲۲:۳۰/۰۰:۳۰ وجود ندارد. "
-            f"فقط جمعه: از {start_fa} تهران ورود جدید نیست و همه معاملات باید "
-            f"پیش از {close_fa} تهران "
-            f"(بسته شدن فارکس، {close_ny_fa} نیویورک، با احتساب تغییر ساعت) بسته شوند."
+            f"ساعت کار دریاگلد: دوشنبه تا جمعه {o_fa} تا {c_fa} تهران؛ شنبه و یکشنبه بسته. "
+            f"ساعت {c_fa} سیگنال‌ها متوقف می‌شوند و وضعیت معامله‌های باز را خودت بررسی کن. "
+            f"جمعه از {fstart_fa} ورود جدید ممنوع است."
         ),
     }
+
+
+def close_reminder(now=None, cfg=None):
+    """Text in the last N minutes before the daily close (never closes anything), else None."""
+    sc = session_cfg(cfg)
+    t = _as_teh(now)
+    cur = current_session(t, cfg)
+    if not cur or not (cur[1] - timedelta(minutes=sc["reminder_min"]) <= t < cur[1]):
+        return None
+    c = fa_digits(cur[1].strftime("%H:%M"))
+    return f"**🔔 ساعت {c} بازار بسته می‌شود**\n~~وضعیت معامله‌ها و سفارش‌های باز را خودت بررسی کن~~"
 
 
 def friday_close_block(now=None, cfg=None):
@@ -506,7 +541,6 @@ def daily_loss_veto(cfg):
 def hold_rules_fa(cfg):
     sec = int(cfg.get("min_hold_seconds") or 60)
     return (f"حداقل نگهداری معامله {sec} ثانیه است (بستن دستی و حد سود؛ حد ضرر و حراج مستثنی‌اند). "
-            "نگهداری شبانه در روزهای هفته مجاز است. "
             "معامله را روی تعطیلی آخر هفته یا تعطیلات رسمی ایران باز نگذار؛ "
             "پلتفرم ممکن است در تعطیلات رسمی ایران بسته شود.")
 
@@ -535,9 +569,9 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         f"**دروازه‌های ریسک (دریاگلد، ارزش حساب {toman(equity)} تومان، "
         f"سقف ریسک هر معامله { _n(risk_pct, 0)}٪ = {toman(budget)} تومان، "
         f"سقف ضرر روزانه { _n(day_pct, 0)}٪ = {toman(day_budget)} تومان):** "
-        f"حجم فقط «نیم واحدی» (وجه تضمین {toman(half.get('margin') or 500000)}، "
+        f"حجم فقط «نیم واحدی» (وجه تضمین {toman(half.get('margin') or 1000000)}، "
         f"هر ۱ دلار {toman(half.get('toman_per_usd') or 40000)}) یا «یک واحد» "
-        f"(وجه تضمین {toman(full.get('margin') or 1000000)}، "
+        f"(وجه تضمین {toman(full.get('margin') or 2000000)}، "
         f"هر ۱ دلار {toman(full.get('toman_per_usd') or 80000)})؛ "
         f"بزرگ‌ترین حجمی انتخاب می‌شود که ضرر حد ضرر + کارمزد + هزینه اسپرد از بودجه ریسک بیشتر نشود. "
         f"ورود ترجیحاً با اوردر (حد، بدون اسپرد). "
@@ -545,7 +579,7 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         f"نسبت سود به ضرر خالص بعد از کارمزد و اسپرد حداقل {_n(cfg.get('min_net_rr') or 1.5)}. "
         f"حداکثر {cfg.get('max_positions') or 1} پوزیشن باز. "
         f"توقف روز بعد از {cfg.get('max_consecutive_losses') or 3} ضرر یا {toman(day_budget)} تومان ضرر. "
-        f"حراج وقتی {liq}٪ کل پرتفو درگیر ضرر شود. "
+        f"حراج وقتی ضرر به {liq}٪ وجه تضمین برسد. "
         f"اسپرد فعلی {cur_s} دلار / معمول این ساعت {typ_s} دلار "
         f"(حد: بیشتر از ۲ برابر معمول همین ساعت و هم‌زمان بالاتر از ۰٫۸۰ دلار → ورود ممنوع)"
         f"{flag}{known}.{fee_note} "

@@ -128,6 +128,9 @@ gate("Friday 23:30 session block", False, mk_brief(session_entry={"blocked": Tru
 gate("daily stop 3 losses", False, setup=lambda s: s["day"].update(losses=3))
 gate("daily stop 20% net", False, setup=lambda s: s["day"].update(loss_toman=420000))
 gate("net R:R < 1.5", False, mk_brief(tp=3877.6))
+gate("net R:R >= 1.5 only with the fee charged once (risk gate uses entry+exit fee)", False, mk_brief(tp=3876.15))
+why = gate("weekday 03:00 Tehran: DaryaGold closed (brief without session_entry)", False, {k: v for k, v in mk_brief().items() if k != "session_entry"}, setup=lambda s: CLOCK.__setitem__(0, datetime(2026, 11, 11, 3, 0, tzinfo=B.TEH)))
+check("closed reason names the 07:00 reopen", any("بازگشایی" in w for w in why)); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 gate("SL < $1", False, mk_brief(sl=3880.8, tp=3877.0))
 gate("stale data 11 min", False, mk_brief(quality={"ok": True, "age_minutes": 11}))
 gate("futures fallback", False, mk_brief(fallback=True))
@@ -144,7 +147,7 @@ out = run("scheduled"); check("scheduled: signal sent once", len(out) == 1 and "
 sig = out[0] if out else ""
 check("single target (no TP2)", sig.count("<code>") == 3 and "هدف ۲" not in sig)
 check("copy prices Latin '.' digits", "<code>3880.3</code>" in sig and "<code>3876.3</code>" in sig)
-check("rest of signal Persian digits", "۱٫۸" in sig and "1.8" not in sig.replace("<code>", "|"))
+check("rest of signal Persian digits (worst-case fee R:R)", "۱٫۵" in sig and "1.5" not in sig.replace("<code>", "|"))
 check("every line RLM", all(l.startswith("\u200f") for l in sig.split("\n") if l.strip()))
 CLOCK[0] = datetime(2026, 11, 11, 14, 15, tzinfo=B.TEH)
 check("scheduled: duplicate not resent", run("scheduled") == [])
@@ -304,29 +307,29 @@ fresh(); BRIEF[0] = mk_brief()
 CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
 check("Friday 22:00 (before the cutoff): normal signal", len(out) == 1 and "فروش طلا" in out[0])
 fresh(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); CALLS[0] = 0; out = run("scheduled")
-check("Friday 23:30: one short close reminder (flat by 01:30), no signal, no analysis", len(out) == 1 and "ورود جدید بسته است" in out[0] and "۰۱:۳۰" in out[0] and
+check("Friday 23:30: one short close reminder (flat by 00:30), no signal, no analysis", len(out) == 1 and "ورود جدید بسته است" in out[0] and "۰۰:۳۰" in out[0] and
       "<code>" not in out[0] and len([l for l in out[0].split("\n") if l.strip()]) == 2 and CALLS[0] == 0 and state()["signals_sent"] == [])
 CLOCK[0] = datetime(2026, 11, 13, 23, 45, tzinfo=B.TEH); a1 = run("scheduled")
-CLOCK[0] = datetime(2026, 11, 14, 0, 45, tzinfo=B.TEH); a2 = run("scheduled")
-check("close reminder sent once (23:45 and Saturday 00:45 silent)", a1 == [] and a2 == [])
+CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); a2 = run("scheduled")
+check("close reminder sent once (23:45 and Saturday 00:15 silent)", a1 == [] and a2 == [])
 fresh(); CLOCK[0] = datetime(2026, 7, 17, 23, 30, tzinfo=B.TEH); out = run("scheduled")
 check("summer Friday 23:30: reminder says flat by 00:30", len(out) == 1 and "۰۰:۳۰" in out[0])
 fresh(); BRIEF[0] = mk_brief(session_entry={"blocked": True, "friday_window": True}, decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
-CLOCK[0] = datetime(2026, 11, 14, 0, 45, tzinfo=B.TEH); out = run("command", ["/scan"])
-check("Saturday 00:45 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
+CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); out = run("command", ["/scan"])
+check("Saturday 00:15 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
 BRIEF[0] = mk_brief()
 for when, nm in [(datetime(2026, 11, 14, 1, 45, tzinfo=B.TEH), "Saturday 01:45"), (datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), "Saturday noon"),
-                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 1, 15, tzinfo=B.TEH), "Monday 01:15")]:
+                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 6, 59, tzinfo=B.TEH), "Monday 06:59"), (datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH), "Saturday 00:30")]:
     CLOCK[0] = when; CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
-    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 01:30), no analysis",
-          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۱:۳۰" in x for x in out) and CALLS[0] == 0)
+    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 07:00), no analysis",
+          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۷:۰۰" in x for x in out) and CALLS[0] == 0)
 
 # /levels on the weekend: never re-analyse; last snapshot (with age) or the same closed line
 CLOCK[0] = datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH)
 st = state(); st.pop("levels", None); json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("Saturday /levels with no snapshot: same closed line, no analysis",
-      len(out) == 1 and out[0].count("\n") == 0 and "بازار بسته است" in out[0] and "دوشنبه ۰۱:۳۰" in out[0] and CALLS[0] == 0)
+      len(out) == 1 and out[0].count("\n") == 0 and "بازار بسته است" in out[0] and "دوشنبه ۰۷:۰۰" in out[0] and CALLS[0] == 0)
 snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
@@ -336,13 +339,21 @@ check("Saturday /levels with a stored snapshot: served with age, no analysis",
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
     check(f"weekend scheduled run {when:%a %H:%M}: silent, no analysis", run("scheduled") == [] and CALLS[0] == 0)
-check("forex open Sunday 17:00 NY: Monday 01:30 Tehran open, 01:29 closed; summer 00:30; close Friday 17:00 NY = Saturday 01:30",
-      DG.forex_open(datetime(2026, 11, 16, 1, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 1, 29, tzinfo=B.TEH), cfg) and
-      DG.forex_open(datetime(2026, 7, 20, 0, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 7, 20, 0, 29, tzinfo=B.TEH), cfg) and
-      DG.forex_open(datetime(2026, 11, 14, 1, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 14, 1, 30, tzinfo=B.TEH), cfg) and
-      DG.session_entry_block(datetime(2026, 11, 13, 20, 0, tzinfo=B.TEH), cfg)["close_tehran"] == "2026-11-14 01:30")
-check("daily break is not a weekend closure; weekday market open", not B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
-      not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
+check("DaryaGold hours Mon-Fri 07:00-00:30 Tehran: Mon 07:00 open, 06:59 closed; Tue 00:29 open, 00:30 closed; Sat 00:29 open (Friday session), Sat 07:00 / Sun closed",
+      DG.forex_open(datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 6, 59, tzinfo=B.TEH), cfg) and
+      DG.forex_open(datetime(2026, 11, 17, 0, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 17, 0, 30, tzinfo=B.TEH), cfg) and
+      DG.forex_open(datetime(2026, 11, 14, 0, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 14, 7, 0, tzinfo=B.TEH), cfg) and
+      not DG.forex_open(datetime(2026, 11, 15, 12, 0, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 0, 15, tzinfo=B.TEH), cfg) and
+      DG.session_entry_block(datetime(2026, 11, 13, 20, 0, tzinfo=B.TEH), cfg)["close_tehran"] == "2026-11-14 00:30")
+check("weekday night 01:45 closed (reopen Thursday 07:00); weekday afternoon open", B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
+      "پنجشنبه 07:00" in B.closed_line(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
+# daily 00:30 close: one reminder in the last 30 min (Wednesday session), no analysis; nothing is closed automatically
+fresh(); CLOCK[0] = datetime(2026, 11, 12, 0, 0, tzinfo=B.TEH); CALLS[0] = 0; r1 = run("scheduled")
+CLOCK[0] = datetime(2026, 11, 12, 0, 20, tzinfo=B.TEH); r2 = run("scheduled")
+check("daily close reminder at 00:00: once, mentions ۰۰:۳۰ and checking open positions, no analysis",
+      len(r1) == 1 and "۰۰:۳۰" in r1[0] and "بررسی کن" in r1[0] and r2 == [] and CALLS[0] == 0)
+CLOCK[0] = datetime(2026, 11, 13, 0, 5, tzinfo=B.TEH); CALLS[0] = 0; r3 = run("scheduled")
+check("daily close reminder: next session gets its own reminder", len(r3) == 1 and "۰۰:۳۰" in r3[0])
 # Asia: log-only
 check("Asia window 03:30-11:15 weekdays only", B.in_asia(datetime(2026, 11, 16, 3, 30, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 16, 3, 29, tzinfo=B.TEH)) and
       not B.in_asia(datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH)) and B.in_asia(datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 14, 9, 0, tzinfo=B.TEH)))
@@ -490,9 +501,9 @@ def flag_at(dt):
     CLOCK[0] = dt; return B.friday_flag()
 _c = CLOCK[0]
 check("Friday flag: none on Friday afternoon", flag_at(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)) == [])
-check("Friday flag: winter warning 22:30 -> 23:30", "23:30" in "".join(flag_at(datetime(2026, 11, 13, 22, 30, tzinfo=B.TEH))))
-check("Friday flag: Saturday 00:30 still closing (01:30)", "01:30" in "".join(flag_at(datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH))))
-check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 2, 0, tzinfo=B.TEH)) == [])
+check("Friday flag: warning 21:30 -> cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 11, 13, 21, 30, tzinfo=B.TEH))))
+check("Friday flag: Saturday 00:15 still closing (00:30)", "00:30" in "".join(flag_at(datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH))))
+check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH)) == [])
 check("Friday flag: summer cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 7, 17, 21, 30, tzinfo=B.TEH))))
 check("Friday flag: none on a Wednesday night", flag_at(datetime(2026, 11, 11, 22, 45, tzinfo=B.TEH)) == [])
 CLOCK[0] = _c

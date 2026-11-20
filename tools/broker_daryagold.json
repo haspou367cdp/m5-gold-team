@@ -6,24 +6,28 @@
     "half_unit": {
       "key": "half_unit",
       "label_fa": "نیم واحدی",
-      "margin": 500000,
+      "margin": 1000000,
       "toman_per_usd": 40000,
       "fee": 14000,
       "fee_unconfirmed": false,
       "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
       "fee_confirmed_by": "owner",
-      "fee_confirmed_at": "2026-11-13"
+      "fee_confirmed_at": "2026-11-13",
+      "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
+      "margin_note": "Owner spec 2026-11-20 (1U 2,000,000 / 0.5U 1,000,000; stop-out at 80% of margin). Mirrors tools/darya_model.py."
     },
     "full_unit": {
       "key": "full_unit",
       "label_fa": "یک واحد",
-      "margin": 1000000,
+      "margin": 2000000,
       "toman_per_usd": 80000,
       "fee": 14000,
       "fee_unconfirmed": false,
       "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
       "fee_confirmed_by": "owner",
-      "fee_confirmed_at": "2026-11-13"
+      "fee_confirmed_at": "2026-11-13",
+      "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
+      "margin_note": "Owner spec 2026-11-20 (1U 2,000,000 / 0.5U 1,000,000; stop-out at 80% of margin). Mirrors tools/darya_model.py."
     }
   },
   "typical_spread_usd": 0.25,
@@ -54,20 +58,26 @@
   "news_buffers_note": "Single source of truth: tools/news_windows.py (effective_doc). Effective window = union of these floors (from the official release time) and the stored start/end in data/news_windows.json; never shrunk. Tier A and tier B are both no-entry blocks inside the effective window; for tier B be flat (positions closed, pending orders cancelled) before the effective start. Tier C is monitor only.",
   "no_hold_over_weekend_or_iranian_holidays": true,
   "session": {
-    "kind": "forex",
-    "timezone": "America/New_York",
-    "open_day": 6,
-    "open": "17:00",
-    "close_day": 4,
-    "close": "17:00",
-    "daily_break_start": "17:00",
-    "daily_break_end": "18:00",
+    "kind": "tehran_fixed",
+    "timezone": "Asia/Tehran",
+    "days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "open": "07:00",
+    "close": "00:30",
     "no_new_entries_hours_before_friday_close": 2,
-    "note": "DaryaGold follows forex/gold hours (Sun 17:00 NY open = Mon 01:30 Tehran in US winter / 00:30 in summer, to Fri 17:00 NY close = Sat 01:30 / 00:30 Tehran, DST-aware; owner confirmed 2026-11-14: exactly like forex). Overnight weekday holds are allowed; there is no daily 22:30/00:30 cutoff. Friday only: no new entries from 2 hours before 17:00 NY (23:30 Tehran in US winter) and all trades must be closed before Friday 17:00 NY (01:30 Tehran in US winter)."
+    "close_reminder_minutes_before": 30,
+    "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
+    "note": "Owner 2026-11-20: DaryaGold trades Mon-Fri 07:00 to 00:30 (next day) Tehran; Saturday and Sunday closed. Signals stop at 00:30; the bot only reminds the owner to check open positions (never closes anything). Friday: no new entries from 2 hours before the 00:30 close (22:30)."
   },
   "news_block_tiers": [
     "A",
     "B"
   ],
-  "news_semantics": "Single source of truth for DaryaGold news windows. Effective window = union of the stored data/news_windows.json start/end and event_time minus before_min / plus after_min. For tiers in news_block_tiers (A and B): no new entries and no pending orders from the effective start until the effective end, and any open position must be closed before the effective start. Example: US PPI 17:00 Tehran stored 16:45-17:15 -> no entries from 16:45 (not 16:50) to 17:15, close open trades before 16:45. Tier C is monitor only."
+  "news_semantics": "Single source of truth for DaryaGold news windows. Effective window = union of the stored data/news_windows.json start/end and event_time minus before_min / plus after_min. For tiers in news_block_tiers (A and B): no new entries and no pending orders from the effective start until the effective end, and any open position must be closed before the effective start. Example: US PPI 17:00 Tehran stored 16:45-17:15 -> no entries from 16:45 (not 16:50) to 17:15, close open trades before 16:45. Tier C is monitor only.",
+  "liquidation_note": "Stop-out at 80% of margin (1U 1,600,000 / 0.5U 800,000 toman). USER_PROVIDED — NOT CURRENTLY VERIFIED"
 }

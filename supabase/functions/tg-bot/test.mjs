@@ -186,25 +186,26 @@ const req = async (c) => new Request(FN + "/state", { headers: { authorization: 
 for (const [n, c] of [["other repo", { repository: "evil/x" }], ["other branch", { ref: "refs/heads/dev" }], ["wrong audience", { aud: "x" }], ["expired", { exp: 1 }]])
   check(`OIDC: ${n} rejected`, !(await verifyOidc(await req({ ...good, ...c }), jw)));
 const t = await jwt(good);
-// ---- market hours / weekend (DST via New York)
+// ---- DaryaGold hours (Tehran, no DST)
 const U = (x) => new Date(x);
-check("forex hours: Sat closed, Fri 23:45 Tehran open, Sat 01:45 Tehran closed, Mon 01:15 closed, Mon 01:35 open (Sun 17:00 NY)",
-  !forexOpen(U("2026-11-14T08:00:00Z")) && forexOpen(U("2026-11-13T20:15:00Z")) && !forexOpen(U("2026-11-13T22:15:00Z")) &&
-  !forexOpen(U("2026-11-15T21:45:00Z")) && forexOpen(U("2026-11-15T22:05:00Z")) && forexOpen(U("2026-07-19T21:05:00Z")) && !forexOpen(U("2026-07-19T20:55:00Z")));
-check("weekendClosed: weekend yes, daily 1-hour break no", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-13T22:05:00Z")) &&
-  !weekendClosed(U("2026-11-11T22:15:00Z")) && !weekendClosed(U("2026-11-11T10:30:00Z")) && weekendClosed(U("2026-11-15T21:45:00Z")) && !weekendClosed(U("2026-11-15T22:30:00Z")));
-check("closed line: reopen Monday ۰۱:۳۰ Tehran (winter) / ۰۰:۳۰ (summer), Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۱:۳۰" &&
-  closedLine(U("2026-07-18T08:00:00Z")).endsWith("دوشنبه ۰۰:۳۰") && render(closedLine(U("2026-11-14T08:00:00Z"))).includes("۰۱:۳۰") && !/\d/.test(closedLine(U("2026-11-14T08:00:00Z"))));
+check("DaryaGold hours Mon-Fri 07:00-00:30 Tehran: Mon 07:00 open / 06:59 closed, Tue 00:29 open / 00:30 closed, Sat 00:29 open / 00:30 closed, Sunday and Mon 00:15 closed",
+  forexOpen(U("2026-11-16T03:30:00Z")) && !forexOpen(U("2026-11-16T03:29:00Z")) && forexOpen(U("2026-11-16T20:59:00Z")) && !forexOpen(U("2026-11-16T21:00:00Z")) &&
+  forexOpen(U("2026-11-13T20:59:00Z")) && !forexOpen(U("2026-11-13T21:00:00Z")) && !forexOpen(U("2026-11-15T08:30:00Z")) && !forexOpen(U("2026-11-15T20:45:00Z")) &&
+  forexOpen(U("2026-11-11T10:30:00Z")));
+check("weekendClosed = any closure (weekend and nightly 00:30-07:00)", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-11T22:15:00Z")) &&
+  !weekendClosed(U("2026-11-11T10:30:00Z")) && !weekendClosed(U("2026-11-13T20:15:00Z")));
+check("closed line: reopen Monday ۰۷:۰۰ / Thursday ۰۷:۰۰ at night, Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۷:۰۰" &&
+  closedLine(U("2026-11-11T22:15:00Z")).endsWith("پنجشنبه ۰۷:۰۰") && !/\d/.test(closedLine(U("2026-11-14T08:00:00Z"))));
 CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pending_cmds.length;
 r = await tgSend("/scan"); check("Saturday /scan: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
-  r.out[0].includes("دوشنبه ۰۱:۳۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
+  r.out[0].includes("دوشنبه ۰۷:۰۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
 r = await tgSend("/brief"); check("Saturday /brief: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 r = await tgSend("/levels"); check("Saturday /levels with no snapshot: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0 && (st().pending_cmds || []).every((x) => x.cmd !== "/levels"));
 const LVBLOCK = "طلا  `3900.3`\nH4 نزولی  ·  H1 خنثی  ·  روند نامشخص\n\nبالا\n▸ `3910.3`  (+10.0)  مهم\n  سقف دیروز + سوئینگ H4  ·  2 تماس M15\n  پهنه  `3909.9`–`3910.7`";
 DB.row.state.levels = { computed_at_tehran: "2026-11-13 17:30:00", block: LVBLOCK };
 r = await tgSend("/levels");
 check("Saturday /levels with stored snapshot: served with age, no dispatch", r.out.length === 1 && r.out[0].includes("سن داده") && r.out[0].includes("<code>3900.3</code>") && r.out[0].includes("H4 نزولی") && !r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
-CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/scan"); check("Friday after the 01:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
+CLOCK = U("2026-11-13T22:10:00Z"); r = await tgSend("/scan"); check("Saturday 01:40, after the 00:30 close: closed line", r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 CLOCK = U("2026-11-13T20:15:00Z"); DB.row.state.last_dispatch = 0; r = await tgSend("/scan");
 check("Friday 23:45 (entries closed, market open): /scan still analysed (bot answers «جمعه‌شب»)", DISPATCHED.length === 1 && r.out[0].includes("در حال بررسی"));
 DB.row.state.pending_cmds = [];
@@ -224,7 +225,7 @@ DB.row.state.pending_cmds = [];
 check("levelsFresh helper", levelsFresh({ computed_at_tehran: "2026-11-11 13:50:00" }, CLOCK) && !levelsFresh({ computed_at_tehran: "2026-11-11 13:00:00" }, CLOCK));
 check("faDate Jalali matches Python (11 Nov 2026 = 20 Aban)", faDate(CLOCK).includes("آبان"));
 CLOCK = U("2026-11-14T08:00:00Z"); SENT.length = 0; let h = await (await app(new Request(FN + "/health"))).json();
-check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۱:۳۰") && h.build && SENT.length === 0);
+check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۷:۰۰") && h.build && SENT.length === 0);
 CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
 check("/health on a weekday: market open", h.market_closed === false && !h.closed_line);
 // ---- /trade sanity check (warn, still record)

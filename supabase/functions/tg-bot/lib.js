@@ -22,23 +22,18 @@ export function teh(d = new Date()) {
   return { date, hm, full: `${date} ${hm}`, dow: t.getUTCDay() };
 }
 
-// ---------------- forex hours (DaryaGold = forex, DST via New York; tools/broker_daryagold.json session) ----------------
-// Open Sunday 17:00 NY (exactly like forex), close Friday 17:00 NY, weekday daily break 17:00-18:00 NY.
-const NY_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-function nyClock(d) {
-  const p = Object.fromEntries(NY_FMT.formatToParts(d).map((x) => [x.type, x.value]));
-  return { wd: WD[p.weekday], min: Number(p.hour) * 60 + Number(p.minute) };
+// ---------------- DaryaGold hours (owner 2026-11-20; tools/broker_daryagold.json session) ----------------
+// Mon-Fri 07:00 to 00:30 (next day) Tehran; Saturday and Sunday closed. Tehran is UTC+3:30 with no DST.
+const OPEN_MIN = 7 * 60, CLOSE_MIN = 30;
+export function forexOpen(d = new Date()) {   // name kept for app.js; means "DaryaGold open"
+  const { hm, dow } = teh(d);
+  const min = Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+  if (min >= OPEN_MIN) return dow >= 1 && dow <= 5;          // session opened today (Mon-Fri)
+  if (min < CLOSE_MIN) return dow >= 2 && dow <= 6;          // tail of yesterday's session (Tue-Sat 00:00-00:30)
+  return false;
 }
-export function forexOpen(d = new Date()) {
-  const { wd, min } = nyClock(d);
-  if (wd === 6) return false;
-  if (wd === 0) return min >= 17 * 60;
-  if (wd === 5) return min < 17 * 60;
-  return !(min >= 17 * 60 && min < 18 * 60);
-}
-// weekend closure (Friday after the close, Saturday, Sunday before the open, New York time), not the daily break
-export const weekendClosed = (d = new Date()) => !forexOpen(d) && [5, 6, 0].includes(nyClock(d).wd);
+// any closure (nightly 00:30-07:00 and the weekend): /scan and /brief get the closed line
+export const weekendClosed = (d = new Date()) => !forexOpen(d);
 export function reopenAt(d = new Date()) {
   let t = new Date(Math.ceil(d.getTime() / 300000) * 300000);
   for (let i = 0; i < 4 * 288 && !forexOpen(t); i++) t = new Date(t.getTime() + 300000);

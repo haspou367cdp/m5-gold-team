@@ -17,6 +17,7 @@ from datetime import datetime
 sys.path.insert(0, "/workspace/m5-gold-team/tools")
 from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, market_open, now_utc, month_starts_utc
 import pandas as pd
+import risk_gate as RG
 import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
 import broker_daryagold as DG
@@ -127,6 +128,12 @@ def _apply_broker_gates(decision, lv, b, cfg, session):
                                    cfg, spread_usd=spread)
             if not sizing.get("ok"):
                 vetoes.append(sizing["reason_fa"])
+            elif plan.get("tp") is not None:
+                # same cost rules as the final gate in bot.py (tools/risk_gate.py): worse fee scenario, market spread
+                rej, _, _ = RG.cost_checks(plan["side"], plan["entry"], plan["sl"], plan["tp"],
+                                           unit=sizing["size"]["key"], order_type="MARKET", spread_usd=spread,
+                                           min_net_rr=float(cfg.get("min_net_rr", 1.5)))
+                vetoes += rej
     out = dict(decision or {})
     if vetoes:
         if out.get("decision") in ("BUY", "SELL"):

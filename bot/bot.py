@@ -19,6 +19,7 @@ sys.path.insert(0, f"{ROOT}/tools")
 from zoneinfo import ZoneInfo
 TEH = ZoneInfo("Asia/Tehran")
 import broker_daryagold as DG
+import risk_gate as RG
 import shadow as SH
 import level_view as LVIEW
 
@@ -259,19 +260,24 @@ def risk_check(b, state, cfg, news_ok):
         return False, None, None, reasons
     eq = float(state["equity_toman"])
     q = b.get("quality") or {}
-    if not q.get("ok") or (q.get("age_minutes") or 0) > 10:
-        reasons.append("داده‌ی قیمت تازه نیست (بیش از ۱۰ دقیقه گذشته است).")
     if b.get("fallback"):
         reasons.append("قیمت از منبع جایگزین (قرارداد آتی) آمده است، نه بازار نقدی؛ با این داده سیگنال داده نمی‌شود.")
-    if not news_ok:
-        reasons.append("تقویم خبری به‌روز در دسترس نیست و بدون آن سیگنال داده نمی‌شود.")
-    nwin = b.get("news_window") or {}
-    if nwin.get("inside") and nwin.get("action") == "block":
-        reasons.append("اکنون داخل پنجره‌ی خبری هستیم و ورود ممنوع است.")
-    if nwin.get("soon_block"):
-        reasons.append("پنجره‌ی خبری بعدی خیلی نزدیک است و ورود جدید ممنوع است.")
-    if (b.get("session_entry") or {}).get("blocked"):
-        reasons.append((b["session_entry"].get("reason_fa")) or "در این ساعت ورود مجاز نیست.")
+    # session, news blackout, data freshness, net R:R (worse fee scenario) and stop-out: tools/risk_gate.py
+    gate = None
+    if plan and sizing and sizing.get("size") and plan.get("tp") is not None:
+        gate = RG.evaluate(now_teh(), side, plan.get("entry"), plan.get("sl"), plan.get("tp"),
+                           unit=sizing["size"].get("key") or "full_unit", order_type="MARKET",
+                           spread_usd=(b.get("spread") or {}).get("current"),
+                           data_ok=bool(q.get("ok")), data_age_min=q.get("age_minutes"),
+                           session=b.get("session_entry"), news_window=b.get("news_window") if "news_window" in b else None,
+                           news_ok=news_ok, cfg=cfg, min_net_rr=float(cfg.get("min_net_rr", 1.5)))
+        reasons += gate["reasons_fa"]
+        sizing["gate"] = {"status": gate["status"], "warnings_fa": gate["warnings_fa"], "net_rr": gate["metrics"].get("net_rr")}
+    else:   # no numeric plan: still report the market-condition reasons
+        g = RG.evaluate(now_teh(), None, None, None, None, data_ok=bool(q.get("ok")), data_age_min=q.get("age_minutes"),
+                        session=b.get("session_entry"), news_window=b.get("news_window") if "news_window" in b else None,
+                        news_ok=news_ok, cfg=cfg)
+        reasons += [r for r in g["reasons_fa"] if r != "ستاپ تأییدشده‌ای وجود ندارد."]
     d = state["day"]
     last = (state.get("signals_sent") or [None])[-1]
     if last and last.get("at"):
@@ -294,7 +300,7 @@ def risk_check(b, state, cfg, news_ok):
             reasons.append("حد سود مشخصی بر اساس ساختار بازار پیدا نشد.")
         if float(s.get("risk_toman") or 1e18) > eq * float(cfg.get("risk_per_trade_pct_max", 10)) / 100 + 1:
             reasons.append("ریسک این معامله بیش از ۱۰٪ حساب است.")
-        if float(s.get("net_rr") or 0) < float(cfg.get("min_net_rr", 1.5)):
+        if float(s.get("net_rr") or 0) < float(cfg.get("min_net_rr", 1.5)) and gate is None:
             reasons.append(f"نسبت سود به ضرر خالص ({s.get('net_rr')}) کمتر از ۱٫۵ است.")
         if abs(float(plan["entry"]) - float(plan["sl"])) + 1e-9 < float(cfg.get("min_sl_usd", 1.0)):
             reasons.append("فاصله‌ی حد ضرر کمتر از ۱ دلار است.")
@@ -515,8 +521,7 @@ def p1(bid):
     return f"{dg:.1f}"
 
 def friday_flag():
-    """Friday-close note from the DST-aware session gate: shown from 1.5 h before the entry cutoff
-    (23:30 Tehran in US winter, 22:30 in US summer) until the forex close (01:30 / 00:30 Tehran)."""
+    """Friday-close note: shown from 1.5 h before the Friday entry cutoff (22:30 Tehran) until the 00:30 close."""
     t = now_teh()
     try:
         se = DG.session_entry_block(t, CFG)
@@ -640,13 +645,22 @@ def signal_msg(b, plan, sizing, state, cfg, sample=False):
                 exp = ns
         except ValueError:
             pass
+    try:
+        close = datetime.strptime(DG.session_entry_block(now, cfg)["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+        if now < close < exp:
+            exp = close   # signals stop at the daily close
+    except Exception:
+        pass
+    g = sizing.get("gate") or {}
     icon, word = ("🟢", "خرید") if plan["side"] == "BUY" else ("🔴", "فروش")
     sub = ("نمونه · " if sample else "") + f"سفارش محدود · اعتبار تا {exp:%H:%M}"
     L = [f"**{icon} {word} طلا**", f"~~{sub}~~", "",
          f"▸ ورود    `{p1(plan['entry'])}`",
          f"▸ حد ضرر  `{p1(plan['sl'])}`",
          f"▸ هدف     `{p1(plan['tp'])}`"]  # DaryaGold cannot partial-close: single target only
-    L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(s['net_rr']):.1f}"]
+    rr = g.get("net_rr") if g.get("net_rr") is not None else s["net_rr"]
+    L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(rr):.1f}"]
+    L += [f"⚠️ {w}" for w in g.get("warnings_fa") or []]
     L += friday_flag()
     return "\n".join(L)
 
@@ -711,8 +725,8 @@ def shadow_step(state, b, cfg, news_ok, now, record=True, session=None, valid=No
 
 # ---------------- weekend / Friday close ----------------
 def weekend_closed(t, cfg):
-    """Weekend closure (Friday after the close, Saturday, Sunday before the open, New York time), not the daily break."""
-    return not DG.forex_open(t, cfg) and t.astimezone(DG.session_cfg(cfg)["tz"]).weekday() in (4, 5, 6)
+    """DaryaGold closed (00:30-07:00 Tehran, Saturday, Sunday): commands get the closed line, no analysis."""
+    return not DG.market_open(t, cfg)
 
 def reopen_at(t, cfg):
     x = t.replace(second=0, microsecond=0) + timedelta(minutes=(-t.minute) % 5)
@@ -727,15 +741,22 @@ def closed_line(t, cfg):
     return f"🔒 بازار بسته است؛ بازگشایی {FA_WEEKDAY[r.weekday()]} {r:%H:%M}"
 
 def friday_reminder(t, cfg):
-    """Close reminder text while the Friday entry cutoff is active (23:30-01:30 Tehran in US winter), else None."""
+    """Close reminder text while the Friday entry cutoff is active (22:30-00:30 Tehran), else None."""
     try:
         se = DG.session_entry_block(t, cfg)
     except Exception:
         return None
-    if not (se.get("friday_window") and se.get("forex_open")):
+    if not (se.get("friday_window") and se.get("market_open")):
         return None
     close = datetime.strptime(se["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
     return f"**🏳️ جمعه: ورود جدید بسته است**\n~~همه‌ی معامله‌ها و سفارش‌ها را تا {close:%H:%M} ببندید~~"
+
+def close_reminder(t, cfg):
+    """Daily close reminder (last 30 min before 00:30). Only a message; nothing is ever closed automatically."""
+    try:
+        return DG.close_reminder(t, cfg)
+    except Exception:
+        return None
 
 def in_asia(t):
     return t.weekday() < 5 and ASIA[0] <= t.strftime("%H:%M") < ASIA[1]
@@ -822,6 +843,12 @@ def main():
         tag = f"{t:%Y-%m-%d}"
         if state.get("friday_reminder_sent") not in (tag, (t - timedelta(days=1)).strftime("%Y-%m-%d")):
             if send(friday_reminder(t, cfg)):
+                state["friday_reminder_sent"] = tag
+    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and close_reminder(t, cfg):
+        # last 30 min before the 00:30 close: one reminder per session, no analysis, no signal
+        tag = f"close:{(t - timedelta(hours=7)):%Y-%m-%d}"
+        if state.get("friday_reminder_sent") != tag:
+            if send(close_reminder(t, cfg)):
                 state["friday_reminder_sent"] = tag
     elif a.mode == "scheduled" and DG.forex_open(t, cfg) and in_asia(t):
         # Asia: log-only. Shadow setups are recorded and resolved; nothing is ever sent.
