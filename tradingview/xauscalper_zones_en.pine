@@ -43,7 +43,7 @@ float  tpBufK  = input.float(0.1, "TP before level: × ATR", step = 0.05, group 
 float  tpCapK  = input.float(3.0, "Max TP distance × ATR", step = 0.5, group = GS)
 float  rrMin   = input.float(1.5, "Minimum net R:R", step = 0.1, group = GS)
 float  rrMax   = input.float(8.0, "Max net R:R (above = reject)", step = 0.5, group = GS)
-float  feeT    = input.float(14000, "Fee per trade (toman, charged once)", step = 1000, group = GS)
+float  feeT    = input.float(14000, "Fee per trade (charged once)", step = 1000, group = GS)
 float  sprdUsd = input.float(0.25, "Market spread ($)", step = 0.05, group = GS)
 int    expBars = input.int(6, "Order expiry (bars)", minval = 1, maxval = 48, group = GS)
 int    coolBar = input.int(6, "Bars between same-side markers", minval = 1, group = GS)

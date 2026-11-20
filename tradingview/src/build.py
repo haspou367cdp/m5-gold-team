@@ -69,7 +69,7 @@ EN = {
  "I_SLBUFA": "SL beyond zone: minimum ($)", "I_SLBUFK": "SL beyond zone: × ATR", "I_SLMINA": "Minimum SL ($)",
  "I_SLMINK": "Minimum SL × ATR", "I_ROOM": "Room to next level ≥ × SL", "I_TPBUFA": "TP before level: minimum ($)",
  "I_TPBUFK": "TP before level: × ATR", "I_TPCAP": "Max TP distance × ATR", "I_RRMIN": "Minimum net R:R",
- "I_RRMAX": "Max net R:R (above = reject)", "I_FEE": "Fee per trade (toman, charged once)", "I_SPREAD": "Market spread ($)",
+ "I_RRMAX": "Max net R:R (above = reject)", "I_FEE": "Fee per trade (charged once)", "I_SPREAD": "Market spread ($)",
  "I_EXP": "Order expiry (bars)", "I_COOL": "Bars between same-side markers",
  "I_ADR": "ADR length (days)", "I_ADRMAX": "Max ADR used (%)", "I_VOLK": "Volatility expansion: ATR > × median",
  "I_MEDDAYS": "ATR median window (days)", "T_MED": "The median uses one M5 ATR sample per hour.",
