@@ -125,9 +125,13 @@ Deployed (2026-11-21 01:58 Tehran):
   first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
 - `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
   brief, plain ladder) are live from the next GitHub Actions run.
-- An older group guide and both indicator files were posted to the group on 2026-11-21 00:04 (messages 2979–2982);
-  they still say «Xauscalper» / «Xauscalper Map». Updated texts: `docs/group_guide_fa.md`, `tradingview/map_howto_fa.md`,
-  regenerated `tradingview/xauscalper_map*.pine`. Not reposted (needs the owner's go-ahead).
+- Group guide (owner t247u: edit in place): messages 2979/2980 (indicator fa/en, editMessageMedia → `ZARVA_Map.pine`,
+  `ZARVA_Map_en.pine`) and 2981/2982 (guide text, editMessageText from `docs/group_guide_fa.md`). One-off workflow on
+  branch `guide-edit` (`post/edit.py`): it waits for Telegram's getMe (the Bot API was hanging again from ~02:35 Tehran),
+  then edits once; after a timeout it never falls back to send+delete. A box watcher writes the result to
+  `/workspace/handoff/guide_edit_result.txt` and deletes the branch (and the workflow) when the run ends.
+  Caution: the first attempt (02:30 Tehran) timed out on editMessageMedia and on the fallback sendDocument; if Telegram
+  processed that late, an extra «ZARVA_Map.pine» document may appear in the group — check and delete it by hand.
 
 **Telegram outage (resolved 2026-11-21 ~02:00 Tehran, outside our code):** from ~2026-11-20 evening every authenticated
 Bot API call for this bot hung (from Supabase and GitHub runners) while a wrong token got 401 at once, so commands got no
@@ -144,7 +148,7 @@ Pending / owner questions:
    The owner's message said "close Friday 17:00 NY, break 17:00–18:00 NY", but the required winter result
    (00:30 close / 01:30 open Tehran) means close 16:00 NY and reopen 17:00 NY; that is what is implemented.
    The pg_cron/GitHub cron schedules are in UTC and already cover both seasons.
-2. Repost the updated guide/indicator to the group (owner decision; nothing is posted without approval).
+2. Confirm the group guide edit result (see above) once Telegram answers again.
 
 ## 9. Security rules
 - Never print, commit or log tokens. Secrets live in Supabase Vault and GitHub secrets only.
