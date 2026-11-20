@@ -32,7 +32,10 @@ CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NEWS_REFRESH_H = 3
 NEWS_MAX_AGE_H = 30          # older calendar => no signals (fail closed)
 PRESESSION = {"am": ("11:10", "12:05"), "pm": ("16:10", "17:05")}  # wide: GitHub cron can run late; sent once per day
-ASIA = ("03:30", "11:15")   # weekday Asia session (Tehran): scheduled runs only log shadow setups, never send anything
+ASIA = ("03:30", "11:15")   # weekday Asia session (Tehran)
+# Owner decision 2026-11-20 17:08 Tehran: live signals from the 07:00 DaryaGold open. The Asia window is no longer log-only;
+# it runs the same gates as the rest of the session. Set True to restore the old log-only behaviour.
+ASIA_LOG_ONLY = False
 # /help, /status, /balance, /loss, /win, /undo, /groupoff, /groupon are answered by the Supabase Edge Function (supabase/functions/tg-bot).
 
 # ---------------- state ----------------
@@ -113,7 +116,8 @@ def channel_chat(state=None):
     cid = str(raw).strip()
     return cid if cid and cid != str(CHAT) else ""
 
-def send_chat(chat, text):
+def send_chat(chat, text, markup=None):
+    """markup (inline keyboard) goes on the last part only."""
     if not chat:
         print("[no chat id] message not sent:\n" + text)
         return False
@@ -123,12 +127,13 @@ def send_chat(chat, text):
         cut = text.rfind("\n", 0, 3900) if len(text) > 3900 else len(text)
         cut = cut if cut > 0 else min(len(text), 3900)
         part, text = text[:cut], text[cut:].lstrip("\n")
-        r = tg("sendMessage", chat_id=chat, text=part, parse_mode="HTML", disable_web_page_preview="true")
+        km = {"reply_markup": json.dumps(markup, ensure_ascii=False)} if markup and not text else {}
+        r = tg("sendMessage", chat_id=chat, text=part, parse_mode="HTML", disable_web_page_preview="true", **km)
         good = bool(r and r.get("ok"))
         if os.environ.get("BOT_ECHO") == "1":
             print("----- sent text -----\n" + part + "\n---------------------")
         if not good:  # never lose a message over formatting
-            r = tg("sendMessage", chat_id=chat, text=html.unescape(re.sub(r"<[^>]+>", "", part)), disable_web_page_preview="true")
+            r = tg("sendMessage", chat_id=chat, text=html.unescape(re.sub(r"<[^>]+>", "", part)), disable_web_page_preview="true", **km)
             good = bool(r and r.get("ok"))
         print(f"telegram send: {'ok message_id=' + str(r['result']['message_id']) if good else 'FAILED ' + str((r or {}).get('description'))}")
         ok = ok and good
@@ -158,9 +163,10 @@ def public_card(kind, text):
         return "\n".join(lines)
     return text
 
-def send(text, *, also=None, also_text=None):
-    """Send to the owner. If also is set, also try that chat (also_text if given); a failure there never changes the owner result."""
-    ok = send_chat(CHAT, text)
+def send(text, *, also=None, also_text=None, markup=None):
+    """Send to the owner. If also is set, also try that chat (also_text if given); a failure there never changes the owner result.
+    markup (inline buttons) is for the owner only; the group copy never gets buttons."""
+    ok = send_chat(CHAT, text, markup)
     if also and str(also) != str(CHAT):
         try:
             body = text if also_text is None else also_text
@@ -170,11 +176,24 @@ def send(text, *, also=None, also_text=None):
             print(f"telegram group send failed: {type(e).__name__}")
     return ok
 
-def send_public(kind, text, state):
-    """Owner gets the full card; the group gets public_card() or nothing."""
+def send_public(kind, text, state, markup=None):
+    """Owner gets the full card (+ buttons); the group gets public_card() or nothing, never buttons."""
     pub = public_card(kind, text)
     cid = channel_chat(state) if pub is not None else ""
-    return send(text, also=cid or None, also_text=pub if cid and pub != text else None)
+    return send(text, also=cid or None, also_text=pub if cid and pub != text else None, markup=markup)
+
+def signal_keyboard(sig_id):
+    """Owner's buttons under a signal card. The Edge Function asks for a confirmation before recording anything."""
+    return {"inline_keyboard": [
+        [{"text": "✅ وارد شدم", "callback_data": f"a:e:{sig_id}"}, {"text": "🚫 وارد نشدم", "callback_data": f"a:n:{sig_id}"}],
+        [{"text": "🎯 حد سود", "callback_data": f"a:t:{sig_id}"}, {"text": "🛑 حد ضرر", "callback_data": f"a:s:{sig_id}"}],
+        [{"text": "✋ بستن دستی", "callback_data": f"a:m:{sig_id}"}]]}
+
+def next_signal_id(state, now):
+    """S-<trading day YYYYMMDD>-NNN, counted per DaryaGold trading day."""
+    day = DG.session_date(now, CFG or None).replace("-", "")
+    nums = [int(x["id"][-3:]) for x in state.get("signals_sent") or [] if str(x.get("id", "")).startswith(f"S-{day}-")]
+    return f"S-{day}-{max(nums, default=0) + 1:03d}"
 
 # ---------------- news calendar ----------------
 def prepare_news(state, force=False):
@@ -288,7 +307,8 @@ def risk_check(b, state, cfg, news_ok):
     last = (state.get("signals_sent") or [None])[-1]
     if last and last.get("at"):
         age = (now_teh() - datetime.strptime(last["at"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)).total_seconds() / 60
-        closed = any((r.get("at_full") or f"{d['date']} {r.get('at', '')}") >= last["at"] for r in d.get("records", []))
+        closed = any((r.get("at_full") or f"{d['date']} {r.get('at', '')}") >= last["at"] for r in d.get("records", [])) \
+            or (last.get("id") and last["id"] in (state.get("signals_done") or []))
         if 0 <= age < SIGNAL_LOCK_MIN and not closed:
             reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، `/loss` یا `/win` را بفرستید.")
     cap_loss = day_cap(state, cfg)
@@ -633,11 +653,9 @@ def presession_brief(b, state, name):
 def brief_msg(b, state):
     return market_summary(b, state, "📊 خلاصه‌ی بازار")
 
-def signal_msg(b, plan, sizing, state, cfg, sample=False):
-    """Clean signal card: prices in <code> for tap-to-copy."""
-    s = sizing["size"]
-    now = now_teh()
-    full = s.get("key") == "full_unit"
+def signal_expiry(b, cfg, now=None):
+    """Signal validity: 30 min, cut at the next news block and at the daily close."""
+    now = now or now_teh()
     exp = now + timedelta(minutes=30)
     nw_ = b.get("news_window") or {}
     if nw_.get("next_start"):
@@ -653,6 +671,14 @@ def signal_msg(b, plan, sizing, state, cfg, sample=False):
             exp = close   # signals stop at the daily close
     except Exception:
         pass
+    return exp
+
+def signal_msg(b, plan, sizing, state, cfg, sample=False, sig_id=None):
+    """Clean signal card: prices in <code> for tap-to-copy."""
+    s = sizing["size"]
+    now = now_teh()
+    full = s.get("key") == "full_unit"
+    exp = signal_expiry(b, cfg, now)
     g = sizing.get("gate") or {}
     icon, word = ("🟢", "خرید") if plan["side"] == "BUY" else ("🔴", "فروش")
     sub = ("نمونه · " if sample else "") + f"سفارش محدود · اعتبار تا {exp:%H:%M}"
@@ -664,7 +690,20 @@ def signal_msg(b, plan, sizing, state, cfg, sample=False):
     L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(rr):.1f}"]
     L += [f"⚠️ {w}" for w in g.get("warnings_fa") or []]
     L += friday_flag()
+    if sig_id:
+        L += [f"شناسه `{sig_id}`"]   # Latin, tap-to-copy; used by /entered /tp /sl /closed
     return "\n".join(L)
+
+def signal_record(b, plan, sizing, cfg, sig_id, now):
+    """Fields the Edge Function stores in public.signals (prices = DaryaGold prices exactly as on the card)."""
+    s = sizing["size"]
+    g = sizing.get("gate") or {}
+    rr = g.get("net_rr") if g.get("net_rr") is not None else s.get("net_rr")
+    return {"id": sig_id, "sent_at": now.isoformat(timespec="seconds"), "session_date": DG.session_date(now, cfg),
+            "side": plan["side"], "unit": "1U" if s.get("key") == "full_unit" else "0.5U",
+            "entry": float(p1(plan["entry"])), "sl": float(p1(plan["sl"])), "tp": float(p1(plan["tp"])),
+            "valid_until": signal_expiry(b, cfg, now).isoformat(timespec="seconds"),
+            "net_rr": round(float(rr), 2) if rr is not None else None, "risk_toman": int(round(float(s.get("risk_toman") or 0)))}
 
 def sample_signal(b, cfg, state):
     bid = float(b["price_bid"])
@@ -806,9 +845,11 @@ def main():
         if key in [x["key"] for x in state["signals_sent"]] and not on_request:
             print("signal already sent:", key)
             return False
-        ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg), state)
-        if ok and key not in [x["key"] for x in state["signals_sent"]]:
-            state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M")})
+        prev = next((x for x in state["signals_sent"] if x["key"] == key and x.get("id")), None)
+        rec = prev or signal_record(b, plan, sizing, cfg, next_signal_id(state, t), t)
+        ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg, sig_id=rec["id"]), state, markup=signal_keyboard(rec["id"]))
+        if ok and not prev and key not in [x["key"] for x in state["signals_sent"]]:
+            state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M"), **rec})
         return ok
 
     closed = weekend_closed(now_teh(), cfg)
@@ -852,7 +893,7 @@ def main():
         if state.get("friday_reminder_sent") != tag:
             if send(close_reminder(t, cfg)):
                 state["friday_reminder_sent"] = tag
-    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and in_asia(t):
+    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and ASIA_LOG_ONLY and in_asia(t):
         # Asia: log-only. Shadow setups are recorded and resolved; nothing is ever sent.
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)

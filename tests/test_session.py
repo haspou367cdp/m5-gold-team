@@ -59,3 +59,11 @@ def test_trading_day_key():
     assert DG.session_date(T(2026, 11, 21, 0, 20), CFG) == "2026-11-20"
     assert DG.session_date(T(2026, 11, 20, 7, 0), CFG) == "2026-11-20"
     assert DG.session_start(T(2026, 11, 20, 0, 10), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 07:00"
+
+
+def test_asia_window_is_live_since_owner_decision():
+    """Owner decision 2026-11-20 17:08 Tehran: signals from the 07:00 open; the 07:00-11:15 window is no longer log-only."""
+    import re, os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot", "bot.py"), encoding="utf-8").read()
+    assert re.search(r"(?m)^ASIA_LOG_ONLY = False\b", src)
+    assert "and ASIA_LOG_ONLY and in_asia(t)" in src

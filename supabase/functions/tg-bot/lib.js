@@ -105,6 +105,14 @@ export const HELP = `**🤖 راهنما**
 \`/offset\`  اختلاف قیمت دریاگلد
 \`/calibrate 3569.85\`  کالیبره با قیمت دریاگلد
 
+**ژورنال سیگنال**
+\`/entered 001\`  ورود به سیگنال
+\`/tp 001\`  بسته شد با حد سود
+\`/sl 001\`  بسته شد با حد ضرر
+\`/closed 001 3569.85\`  بستن دستی
+\`/journal\`  ژورنال معاملات
+\`/pnl\`  سود و ضرر خالص
+
 **گروه**
 \`/groupoff\`  قطع موقت ارسال به گروه
 \`/groupon\`  وصل دوباره ارسال به گروه
@@ -113,6 +121,7 @@ export const HELP = `**🤖 راهنما**
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
 export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["levels", "سطوح"], ["shadow", "سیگنال‌های ردشده"],
   ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["calibrate", "کالیبره با قیمت دریاگلد"],
+  ["entered", "ورود به سیگنال"], ["tp", "بسته شد با حد سود"], ["sl", "بسته شد با حد ضرر"], ["closed", "بستن دستی"], ["journal", "ژورنال معاملات"], ["pnl", "سود و ضرر خالص"],
   ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
@@ -146,7 +155,7 @@ export function statusMsg(s) {
     `🎯 آخرین سیگنال: ${sig ? sig.at.slice(-5) : "هنوز نه"}`,
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
     `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
-    "⏱ بررسی خودکار دوشنبه تا جمعه، ۱۱:۱۵ تا ۲۱:۳۰"].join("\n");
+    "⏱ بررسی خودکار دوشنبه تا جمعه، ۰۷:۰۰ تا ۰۰:۳۰"].join("\n");
 }
 export const dayCap = (s) => (Number(s.day.start_equity) || Number(s.equity_toman)) * 0.2;
 const signed = (v) => (v > 0 ? "+" : "") + toman(v);
@@ -301,7 +310,10 @@ export function handle(s, text, now = teh(), at = new Date()) {
     if (loss) { d.losses += 1; d.loss_toman += -t.net; } else { d.wins += 1; d.win_toman += t.net; }
     const net = d.loss_toman - d.win_toman;
     const stop = d.losses >= 3 || net >= dayCap(s);
-    return { reply: [loss ? "**📉 معامله ثبت شد**" : "**📈 معامله ثبت شد**",
+    const journal = { trade_id: tr.id, source: "trade_cmd", verification: "USER_CONFIRMED", side: t.side.toUpperCase(),
+      unit: t.units === 1 ? "1U" : "0.5U", entry: t.entry, exit: t.exit, closed_at: (at || new Date()).toISOString(), session_date: d.date,
+      gross_toman: t.gross, spread_toman: 0, fee_toman: t.fee, net_toman: t.net };
+    return { journal_row: journal, reply: [loss ? "**📉 معامله ثبت شد**" : "**📈 معامله ثبت شد**",
       `~~${t.side === "buy" ? "خرید" : "فروش"} · ${t.units === 1 ? "یک واحد" : "نیم واحد"}~~`, "",
       `ورود \`${t.entry}\` · خروج \`${t.exit}\``,
       `نتیجه‌ی خالص ${signed(t.net)} تومان`,
@@ -330,15 +342,18 @@ export function handle(s, text, now = teh(), at = new Date()) {
     }
   } catch (e) { return { reply: BAD }; }
   if (c === "/undo") {
+    let undo = null;
     const r = d.records.pop();
     if (!r) return { reply: "**↩️ چیزی برای حذف نیست**\n~~امروز سود یا ضرری ثبت نشده~~" };
     if (r.type === "loss") { d.losses = Math.max(0, d.losses - 1); d.loss_toman = Math.max(0, d.loss_toman - r.toman); }
     else { d.wins = Math.max(0, d.wins - 1); d.win_toman = Math.max(0, d.win_toman - r.toman); }
     if (r.trade) {
+      undo = { trade: r.trade, signal: r.signal || null };
+      if (r.signal) s.signals_done = (s.signals_done || []).filter((x) => x !== r.signal);
       const i = s.trades.findIndex((x) => x.id === r.trade);
       const tr = i >= 0 ? s.trades.splice(i, 1)[0] : null;
       s.equity_toman = Number(s.equity_toman) - Number(r.net);
-      return { reply: [`**↩️ آخرین معامله حذف شد**`,
+      return { undo, reply: [`**↩️ آخرین معامله حذف شد**`,
         `~~${tr ? (tr.side === "buy" ? "خرید" : "فروش") + " · " : ""}${signed(r.net)} تومان~~`, "",
         `موجودی ${toman(s.equity_toman)} تومان`, `امروز ${d.losses} ضرر · ${d.wins} سود`].join("\n") };
     }
@@ -369,12 +384,13 @@ export function publicReply(cmd, text) {
   if (cmd === "/shadow") return text.replace(/ · یک واحد [^\n]*تومان/g, "");
   return text;
 }
-export async function send(env, text, chatId = CHAT_ID) {
+export async function send(env, text, chatId = CHAT_ID, markup = null) {
   const html = render(text);
-  let r = await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", disable_web_page_preview: true });
+  const km = markup ? { reply_markup: markup } : {};
+  let r = await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", disable_web_page_preview: true, ...km });
   if (!r || !r.ok) {  // never lose a message over formatting
     const plain = html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-    r = await tg(env, "sendMessage", { chat_id: chatId, text: plain, disable_web_page_preview: true });
+    r = await tg(env, "sendMessage", { chat_id: chatId, text: plain, disable_web_page_preview: true, ...km });
   }
   return !!(r && r.ok);
 }

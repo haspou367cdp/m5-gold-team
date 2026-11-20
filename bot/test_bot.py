@@ -12,13 +12,14 @@ import level_view as LVIEW
 
 JOURNAL = f"{B.ROOT}/journal.csv"
 j_before = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
-SENT, SENT_TO, FAIL_HTML, FAIL_CHANNEL = [], [], [False], [False]
+SENT, SENT_TO, FAIL_HTML, FAIL_CHANNEL, MARKUP = [], [], [False], [False], []
 def fake_tg(method, **p):
     if method == "sendMessage":
         if str(p.get("chat_id")) != str(B.CHAT) and FAIL_CHANNEL[0]:
             return {"ok": False, "description": "Forbidden: bot is not a member"}
         if FAIL_HTML[0] and p.get("parse_mode") == "HTML":
             return {"ok": False, "description": "Bad Request: can't parse entities"}
+        MARKUP.append(json.loads(p["reply_markup"]) if p.get("reply_markup") else None)
         SENT.append(p["text"]); SENT_TO.append(str(p["chat_id"])); return {"ok": True, "result": {"message_id": len(SENT)}}
 B.tg = fake_tg
 CLOCK = [datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)]   # Wednesday
@@ -91,7 +92,7 @@ def check(name, cond):
 NEXT_ID = [1]
 def run(mode="scheduled", cmds=()):
     """cmds = commands queued by the Cloudflare Worker (pending_cmds in the pulled state)."""
-    SENT.clear(); SENT_TO.clear()
+    SENT.clear(); SENT_TO.clear(); MARKUP.clear()
     if cmds:
         s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
         for c in cmds:
@@ -145,7 +146,7 @@ st = state(); st["day"].update(losses=0, loss_toman=0, wins=0, win_toman=0, reco
 NEWS_OK[0] = True; BRIEF[0] = mk_brief()
 out = run("scheduled"); check("scheduled: signal sent once", len(out) == 1 and "فروش طلا" in out[0])
 sig = out[0] if out else ""
-check("single target (no TP2)", sig.count("<code>") == 3 and "هدف ۲" not in sig)
+check("single target (no TP2); 3 prices + the signal ID in <code>", sig.count("<code>") == 4 and "هدف ۲" not in sig)
 check("copy prices Latin '.' digits", "<code>3880.3</code>" in sig and "<code>3876.3</code>" in sig)
 check("rest of signal Persian digits", "۱٫۸" in sig and "1.8" not in sig.replace("<code>", "|"))
 check("every line RLM", all(l.startswith("\u200f") for l in sig.split("\n") if l.strip()))
@@ -362,20 +363,26 @@ check("daily close reminder at 00:00: once, mentions ۰۰:۳۰ and checking open
       len(r1) == 1 and "۰۰:۳۰" in r1[0] and "بررسی کن" in r1[0] and r2 == [] and CALLS[0] == 0)
 CLOCK[0] = datetime(2026, 11, 13, 0, 5, tzinfo=B.TEH); CALLS[0] = 0; r3 = run("scheduled")
 check("daily close reminder: next session gets its own reminder", len(r3) == 1 and "۰۰:۳۰" in r3[0])
-# Asia: log-only
+# Asia window: live since 2026-11-20 (owner decision). Same gates as the rest of the session.
 check("Asia window 03:30-11:15 weekdays only", B.in_asia(datetime(2026, 11, 16, 3, 30, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 16, 3, 29, tzinfo=B.TEH)) and
       not B.in_asia(datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH)) and B.in_asia(datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 14, 9, 0, tzinfo=B.TEH)))
+check("Asia log-only switched off", B.ASIA_LOG_ONLY is False)
 fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 9, 4, tzinfo=B.TEH); out = run("scheduled"); sh = state()["shadow"]
-check("Asia 09:04 valid SELL: nothing sent, logged as shadow (session=asia, gate asia), no signal lock",
-      out == [] and len(sh) == 1 and sh[0]["session"] == "asia" and sh[0]["gates"] == ["asia"] and sh[0]["side"] == "SELL" and state()["signals_sent"] == [])
+sig = state()["signals_sent"]
+check("09:04 valid SELL: signal sent live (no longer log-only), recorded with an ID, not shadow-logged",
+      len(out) == 1 and "فروش طلا" in out[0] and len(sig) == 1 and sig[0]["id"] == "S-20261116-001" and sh == [])
+fresh(); CLOCK[0] = datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH); out = run("scheduled")
+check("07:00 Monday open: valid setup is sent", len(out) == 1 and "فروش طلا" in out[0])
+fresh(); CLOCK[0] = datetime(2026, 11, 16, 6, 45, tzinfo=B.TEH); out = run("scheduled")
+check("06:45 (before the 07:00 open): nothing sent", out == [] and state()["signals_sent"] == [])
 fresh(); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["news"]}, plan=None, sizing=None, regime={"code": "news_abnormal"},
                              news_window={"inside": True, "action": "block", "tier": "B", "end": "2026-11-16 09:30"})
-CAND[0] = cand(); out = run("scheduled"); sh = state()["shadow"]
-check("Asia news-blocked setup: logged with session=asia, nothing sent", out == [] and len(sh) == 1 and sh[0]["gates"] == ["news"] and sh[0]["session"] == "asia")
+CLOCK[0] = datetime(2026, 11, 16, 9, 4, tzinfo=B.TEH); CAND[0] = cand(); out = run("scheduled"); sh = state()["shadow"]
+check("09:04 news-blocked setup: gate still applies, nothing sent, shadow-logged with gate news", out == [] and len(sh) == 1 and sh[0]["gates"] == ["news"])
 fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH); out = run("scheduled")
-check("Asia 11:00: no pre-session brief, no signal", out == [] and state()["presession_sent"] == {})
+check("11:00: signal sent, no pre-session brief yet", len(out) == 1 and "فروش طلا" in out[0] and state()["presession_sent"] == {})
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH); out = run("scheduled")
-check("11:15 (Asia over): signal + London brief as before", len(out) == 2 and any("فروش طلا" in x for x in out) and any("لندن" in x for x in out) and not state()["shadow"])
+check("11:15: signal + London brief as before", len(out) == 2 and any("فروش طلا" in x for x in out) and any("لندن" in x for x in out) and not state()["shadow"])
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 9, 0, tzinfo=B.TEH); out = run("command", ["/scan"])
 check("/scan on request in Asia still answers (only scheduled runs are silent)", len(out) == 1)
 # dg_offset from bot_state
@@ -385,7 +392,7 @@ check("dg_offset passed to brief.py (env) and load_config honours it", os.enviro
 fresh(dg_offset="bad"); B.CFG = cfg = DG.load_config(); os.environ.pop("DG_OFFSET_USD", None); cfg2 = B.apply_offset({"dg_offset": 9}, DG.load_config())
 check("invalid dg_offset ignored (default 0.3 stays)", cfg2["price_offset_usd"] == 0.3 and B.apply_offset({"dg_offset": "x"}, DG.load_config())["price_offset_usd"] == 0.3)
 fresh(dg_offset=0.4); CLOCK[0] = datetime(2026, 11, 16, 9, 30, tzinfo=B.TEH); run("scheduled")
-check("shadow entry records the offset in use (0.4)", state()["shadow"][-1]["offset"] == 0.4)
+check("09:30 live signal uses the offset in use (0.4): stored DaryaGold entry 3880.4", state()["signals_sent"][-1]["entry"] == 3880.4)
 os.environ.pop("DG_OFFSET_USD", None); B.CFG = cfg = DG.load_config()
 check("last_price stored for the /trade check", state()["last_price"] == {"bid": 3880.0, "at": "2026-11-16 09:30"})
 
@@ -425,7 +432,7 @@ tr2 = LVIEW.trend_of(lv2)
 check("mixed H4 swings => خنثی even with bearish EMA", tr2["H4"]["trend"] == "خنثی")
 check("format_block never prints قوی or a 0–100 score", "قوی" not in snap["block"] and "score" not in snap["block"] and " ۱۲ " not in snap["block"])
 # risk_check ignores the display snapshot
-s = B.load_state()
+s = B.load_state(); s["signals_sent"] = []   # no open-signal lock from the 09:30 live signal above
 ok1, *_ = B.risk_check(mk_brief(), s, cfg, True)
 b_no = mk_brief(); b_no.pop("levels", None)
 ok2, *_ = B.risk_check(b_no, s, cfg, True)
@@ -563,6 +570,15 @@ check("11:15 signal and London brief are both mirrored; signal risk and brief ba
       len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and "فروش طلا" in out[0] and "فروش طلا" in out[1] and
       "تومان" in out[0] and "تومان" not in out[1] and ("یک واحد" in out[1] or "نیم واحد" in out[1]) and
       "لندن" in out[2] and "موجودی" in out[2] and "لندن" in out[3] and "موجودی" not in out[3] and "سقف ضرر" not in out[3])
+sig = state()["signals_sent"][-1]
+check("Phase 3: signal ID on both copies; owner copy has the 5 buttons, group copy none",
+      sig["id"] == "S-20261116-001" and "S-20261116-001" in out[0] and "S-20261116-001" in out[1] and MARKUP[1] is None and
+      [b["callback_data"] for row in MARKUP[0]["inline_keyboard"] for b in row] == ["a:e:S-20261116-001", "a:n:S-20261116-001", "a:t:S-20261116-001", "a:s:S-20261116-001", "a:m:S-20261116-001"])
+check("Phase 3: signal record for the server table (DaryaGold prices as on the card, unit, expiry, trading day)",
+      sig["side"] == "SELL" and sig["entry"] == 3880.3 and sig["sl"] == 3881.9 and sig["tp"] == 3876.3 and sig["unit"] in ("1U", "0.5U") and
+      sig["session_date"] == "2026-11-16" and sig["valid_until"].startswith("2026-11-16T11:45") and sig["sent_at"].startswith("2026-11-16T11:15") and
+      isinstance(sig["risk_toman"], int) and sig["net_rr"] >= 1.5)
+check("Phase 3: group copy carries no toman/balance and no buttons", "تومان" not in out[1] and "موجودی" not in out[1] and MARKUP[1] is None)
 out = run("test")
 check("sample signal stays private", len(out) == 1 and SENT_TO == [OWNER] and "نمونه" in out[0])
 FAIL_CHANNEL[0] = True
@@ -623,6 +639,24 @@ st = state(); st["group_enabled"] = True; st["presession_sent"] = {}; st["signal
 out = run("scheduled")
 check("pre-session brief is mirrored again when group sending is on",
       len(out) == 2 and SENT_TO == [OWNER, GID] and "نیویورک" in out[1] and "موجودی" not in out[1])
+
+# ---- Phase 3: signal IDs and the open-signal lock
+st0 = {"signals_sent": [{"id": "S-20261116-001"}, {"id": "S-20261116-002"}, {"id": "S-20261115-007"}, {"key": "old"}]}
+check("next_signal_id counts per trading day (00:15 belongs to the previous day)",
+      B.next_signal_id(st0, datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH)) == "S-20261116-003" and
+      B.next_signal_id(st0, datetime(2026, 11, 17, 0, 15, tzinfo=B.TEH)) == "S-20261116-003" and
+      B.next_signal_id(st0, datetime(2026, 11, 17, 7, 0, tzinfo=B.TEH)) == "S-20261117-001")
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); out1 = run("scheduled")
+s1 = state()
+CLOCK[0] = datetime(2026, 11, 16, 14, 5, tzinfo=B.TEH); BRIEF[0] = mk_brief(entry=3870.0, sl=3871.6, tp=3866.0)
+ok_locked, *_ = B.risk_check(BRIEF[0], s1, cfg, True)
+s1["signals_done"] = [s1["signals_sent"][-1]["id"]]
+ok_free, *_ = B.risk_check(BRIEF[0], s1, cfg, True)
+check("open-signal lock: held after a signal, released once the journal closes it or marks it not taken",
+      len(out1) == 1 and ok_locked is False and ok_free is True)
+fresh(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); run("scheduled")
+st = state(); st["signals_done"] = [st["signals_sent"][-1]["id"]]; json.dump(st, open(B.STATE_JSON, "w")); out2 = run("command", ["/scan"])
+check("/scan repeat of the same setup reuses its ID (no second record)", len(state()["signals_sent"]) == 1 and "S-20261116-001" in out2[-1])
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

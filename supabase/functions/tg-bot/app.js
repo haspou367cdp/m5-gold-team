@@ -6,9 +6,10 @@
 // /calibrate: owner-entered DaryaGold price + live Dukascopy 1-minute bid/ask -> public.price_observations (service role only).
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
+import { JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
+import { sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
 
-export const BUILD = "2026-11-20-phase2-calibrate";
+export const BUILD = "2026-11-20-phase3-journal";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -97,12 +98,127 @@ export function makeApp(cfg) {
     return L.join("\n");
   }
 
+  // ---------------- Phase 3: signals + journal (tables are service-role only) ----------------
+  const rest = async (path, { method = "GET", body, prefer } = {}) => {
+    const r = await fetch(`${SB}/rest/v1/${path}`, { method, headers: { ...hdr, ...(prefer ? { prefer } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    if (!r.ok) throw new Error(`rest ${path.split("?")[0]} ${method} ${r.status}`);
+    const t = await r.text();
+    return t ? JSON.parse(t) : null;
+  };
+  const getSignal = async (id) => (await rest(`signals?id=eq.${encodeURIComponent(id)}&select=*`))[0] || null;
+  const latestOpen = async () => (await rest("signals?status=in.(sent,entered)&select=*&order=sent_at.desc&limit=1"))[0] || null;
+  const SIG_FIELDS = ["id", "sent_at", "session_date", "side", "unit", "entry", "sl", "tp", "valid_until", "net_rr", "risk_toman"];
+  async function storeSignals(list) {
+    const rows = (list || []).filter((x) => x && /^S-\d{8}-\d{3}$/.test(x.id || "") && ["BUY", "SELL"].includes(x.side) && ["1U", "0.5U"].includes(x.unit))
+      .map((x) => Object.fromEntries(SIG_FIELDS.map((k) => [k, x[k] ?? null])));
+    if (!rows.length) return 0;
+    await rest("signals?on_conflict=id", { method: "POST", body: rows, prefer: "resolution=ignore-duplicates,return=minimal" });
+    return rows.length;
+  }
+  const NOT_FOUND = "**⚠️ سیگنال پیدا نشد**\n~~شناسه را از پایین کارت سیگنال بردارید، مثل~~ `/tp 001`";
+  // Confirmed action: guarded status update, journal row, then the day record + equity (feeds the daily stop).
+  async function confirmAction(id, act, price) {
+    const sig = await getSignal(id);
+    if (!sig) return NOT_FOUND;
+    const nowMs = clock().getTime();
+    const res = applyAction(sig, act, price, nowMs);
+    if (res.error) return `**⚠️ ثبت نشد**\n~~${res.error}~~`;
+    const upd = await rest(`signals?id=eq.${encodeURIComponent(id)}&status=eq.${sig.status}`, { method: "PATCH",
+      body: { ...res.update, updated_at: new Date(nowMs).toISOString() }, prefer: "return=representation" });
+    if (!upd || !upd.length) return "**⚠️ قبلاً ثبت شده**\n~~وضعیت این سیگنال همین الان عوض شده بود~~";
+    const L = [doneText(sig, act, res)];
+    if (res.journal) {
+      await rest("journal?on_conflict=trade_id", { method: "POST", body: [res.journal], prefer: "resolution=ignore-duplicates,return=minimal" });
+      const now = teh(new Date(nowMs));
+      const day = await mutate(async (s) => {
+        const d = s.day, rec = res.record;
+        d.records.push({ type: rec.type, toman: rec.toman, at: now.hm, at_full: now.full, trade: id, signal: id, net: rec.net });
+        if (rec.type === "loss") { d.losses += 1; d.loss_toman += rec.toman; } else { d.wins += 1; d.win_toman += rec.toman; }
+        s.equity_toman = Number(s.equity_toman) + rec.net;
+        s.signals_done = [...(s.signals_done || []).filter((x) => x !== id), id].slice(-20);
+        const cap = (Number(d.start_equity) || Number(s.equity_toman)) * 0.2;
+        return { losses: d.losses, wins: d.wins, eq: s.equity_toman, stop: d.losses >= 3 || d.loss_toman - d.win_toman >= cap };
+      });
+      L.push(`موجودی جدید ${toman(day.eq)} تومان`, "", `امروز ${day.losses} ضرر · ${day.wins} سود`);
+      if (day.stop) L.push("", "⛔ توقف روزانه فعال شد؛ تا فردا سیگنالی فرستاده نمی‌شود");
+    } else if (act === "n") {
+      await mutate(async (s) => { s.signals_done = [...(s.signals_done || []).filter((x) => x !== id), id].slice(-20); return true; });
+    }
+    return L.join("\n");
+  }
+  async function askConfirm(env, act, id, price) {
+    const sig = id ? await getSignal(id) : await latestOpen();
+    if (!sig) return send(env, NOT_FOUND);
+    if (act === "m" && price == null)
+      return send(env, `**✋ بستن دستی** \`${sig.id}\`\n~~قیمت خروج را بفرستید:~~\n\`/closed ${sig.id.slice(-3)} 3569.85\``);
+    const text = previewText(sig, act, price, clock().getTime());
+    const ok = !text.startsWith("این سیگنال");
+    return send(env, ok ? text : `**⚠️ ثبت نشد**\n~~${text}~~`, CHAT_ID, ok ? confirmKeyboard(act, sig.id, price) : null);
+  }
+  async function onJournal(env, j) {
+    if (j.error) return send(env, BAD_JOURNAL);
+    if (j.view === "journal") return send(env, journalMsg(await rest("journal?select=*&order=closed_at.desc&limit=10")));
+    if (j.view === "pnl") return send(env, pnlMsg(await rest("journal?select=session_date,net_toman,r_multiple,under_60s&limit=10000"), teh(clock())));
+    return askConfirm(env, j.act, j.id, j.price);
+  }
+  async function onCallback(env, u) {
+    const cq = u.callback_query, msg = cq.message || {};
+    const owner = String((cq.from || {}).id || "") === CHAT_ID && String((msg.chat || {}).id || "") === CHAT_ID && (msg.chat || {}).type === "private";
+    const answer = (text) => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, ...(text ? { text } : {}) });
+    if (!owner) { await answer(); return new Response("ok"); }
+    const fresh = await mutate(async (s) => {
+      if ((s.seen_updates || []).includes(u.update_id)) return null;
+      s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
+      return true;
+    });
+    if (!fresh) return new Response("ok");
+    const c = parseCallback(cq.data);
+    const strip = () => tg(env, "editMessageReplyMarkup", { chat_id: msg.chat.id, message_id: msg.message_id, reply_markup: { inline_keyboard: [] } });
+    if (!c) { await answer(); return new Response("ok"); }
+    if (c.cancel) { await answer("لغو شد"); await strip(); return new Response("ok"); }
+    if (c.step === "a") { await answer(); await askConfirm(env, c.act, c.id, c.price); return new Response("ok"); }
+    await answer("ثبت شد");
+    await strip();   // a confirmation card works once
+    let out;
+    try { out = await confirmAction(c.id, c.act, c.price); }
+    catch (e) { console.error("confirm:", String(e && e.message || e)); out = "**⚠️ ثبت نشد**\n~~ذخیره ممکن نشد؛ چند دقیقه‌ی دیگر دوباره بزنید~~"; }
+    await send(env, out);
+    return new Response("ok");
+  }
+  async function onReport(req) {
+    const env = await secrets();
+    if (!env.WEBHOOK || (req.headers.get("x-report-key") || "") !== env.WEBHOOK) return new Response("forbidden", { status: 403 });
+    const b = await req.json().catch(() => ({}));
+    const kind = b.kind === "weekly" ? "weekly" : "daily";
+    const now = clock(), nowMs = now.getTime(), sd = sessionDate(teh(now));
+    const shift = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+    const to = kind === "weekly" ? shift(sd, -1) : sd, from = kind === "weekly" ? shift(to, -6) : sd;
+    const key = `${kind}:${to}`;
+    const first = await mutate(async (s) => {
+      if ((s.reports_sent || []).includes(key)) return null;
+      s.reports_sent = [...(s.reports_sent || []), key].slice(-30);
+      return true;
+    });
+    if (!first) return Response.json({ ok: true, skipped: "already sent", key });
+    await rest(`signals?status=eq.sent&valid_until=lt.${encodeURIComponent(now.toISOString())}`, { method: "PATCH",
+      body: { status: "expired", updated_at: now.toISOString() }, prefer: "return=minimal" });
+    const [signals, journal, row] = await Promise.all([
+      rest(`signals?select=*&session_date=gte.${from}&session_date=lte.${to}`),
+      rest(`journal?select=*&session_date=gte.${from}&session_date=lte.${to}`), loadRow()]);
+    const s = normalize(row.state);
+    const text = reportMsg(kind, { signals, journal, shadow: s.shadow, calibration: s.calibration }, from, to, nowMs, false);
+    const sent = await send(env, text);   // owner's private chat only
+    return Response.json({ ok: sent, key, signals: signals.length, trades: journal.length });
+  }
+
   async function onTelegram(req) {
     const env = await secrets();
     if (!env.TELEGRAM_BOT_TOKEN || (req.headers.get("x-telegram-bot-api-secret-token") || "") !== env.WEBHOOK)
       return new Response("forbidden", { status: 403 });
     const u = await req.json();
     if (u.channel_post || u.edited_channel_post) return new Response("ok");
+    if (u.callback_query) return await onCallback(env, u);
     const m = u.message || {};
     const chat = m.chat || {};
     const text = (m.text || "").trim();
@@ -112,6 +228,11 @@ export function makeApp(cfg) {
     const res = await mutate(async (s) => {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
       s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
+      const c0 = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+      if (JOURNAL_CMDS.includes(c0)) {
+        try { return { journal: parseJournalCmd(c0, text.split(/\s+/).slice(1), teh(clock())) }; }
+        catch { return { journal: { error: true } }; }
+      }
       const r = handle(s, text, teh(), clock());
       if (r.queue) {
         // a different command always gets its own run (a run already in progress may have pulled the state
@@ -126,6 +247,11 @@ export function makeApp(cfg) {
       return r;
     });
     if (!res) return new Response("ok");
+    if (res.journal) {   // private chat only; never mirrored
+      try { await onJournal(env, res.journal); }
+      catch (e) { console.error("journal:", String(e && e.message || e)); await send(env, "**⚠️ ثبت نشد**\n~~ژورنال در دسترس نیست؛ چند دقیقه‌ی دیگر دوباره بفرستید~~"); }
+      return new Response("ok");
+    }
     if (res.calibrate) {
       let msg;
       try { msg = await onCalibrate(res.calibrate); }
@@ -140,6 +266,14 @@ export function makeApp(cfg) {
       if (!d.ok) await mutate(async (s) => { s.last_dispatch = 0; s.last_dispatch_error = d.why; return true; });
     } else {
       await send(env, res.reply);
+      try {
+        if (res.journal_row) await rest("journal?on_conflict=trade_id", { method: "POST", body: [res.journal_row], prefer: "resolution=ignore-duplicates,return=minimal" });
+        if (res.undo) {
+          await rest(`journal?trade_id=eq.${encodeURIComponent(res.undo.trade)}`, { method: "DELETE", prefer: "return=minimal" });
+          if (res.undo.signal) await rest(`signals?id=eq.${encodeURIComponent(res.undo.signal)}&status=eq.closed`, { method: "PATCH", prefer: "return=minimal",
+            body: { status: "entered", closed_at: null, exit_price: null, exit_type: null, net_toman: null, r_multiple: null, under_60s: null, updated_at: new Date().toISOString() } });
+        }
+      } catch (e) { console.error("journal sync:", String(e && e.message || e)); }
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
       const pub = (MIRROR_CMDS.includes(cmd) && res.mirror) ? publicReply(cmd, res.reply) : null;
       if (pub) {
@@ -157,7 +291,7 @@ export function makeApp(cfg) {
     const env = await secrets();
     if (b.set_webhook) {
       const hook = `${origin}/tg`;
-      const r = await tg(env, "setWebhook", { url: hook, secret_token: env.WEBHOOK, allowed_updates: ["message"],
+      const r = await tg(env, "setWebhook", { url: hook, secret_token: env.WEBHOOK, allowed_updates: ["message", "callback_query"],
         drop_pending_updates: false, max_connections: 1 });
       out.webhook = !!r.ok;
       const info = (await tg(env, "getWebhookInfo", {})).result || {};
@@ -188,6 +322,7 @@ export function makeApp(cfg) {
     const origin = `${SB}/functions/v1/tg-bot`;
     try {
       if (p.endsWith("/tg") && req.method === "POST") return await onTelegram(req);
+      if (p.endsWith("/report") && req.method === "POST") return await onReport(req);
       if (p.endsWith("/state") || p.endsWith("/admin/setup")) {
         if (!(await verifyOidc(req, jwks))) return new Response("unauthorized", { status: 401 });
         if (p.endsWith("/admin/setup")) return await onSetup(req, origin);
@@ -196,7 +331,10 @@ export function makeApp(cfg) {
           return Response.json({ state: normalize(row.state), news_windows: row.news || null });
         }
         const b = await req.json();
-        return Response.json(await rpc("bot_merge", { p_patch: b.patch || {}, p_done: b.done_cmds || [], p_news: b.news_windows || null }));
+        const merged = await rpc("bot_merge", { p_patch: b.patch || {}, p_done: b.done_cmds || [], p_news: b.news_windows || null });
+        try { const n = await storeSignals((b.patch || {}).signals_sent); if (merged && n) merged.signals_stored = n; }
+        catch (e) { console.error("signals:", String(e && e.message || e)); if (merged) merged.signals_error = true; }
+        return Response.json(merged);
       }
       if (p.endsWith("/health")) {   // public, read-only: lets a deploy be checked without touching Telegram
         const closed = weekendClosed(clock());

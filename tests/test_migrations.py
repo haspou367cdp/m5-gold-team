@@ -18,3 +18,24 @@ def test_full_session_cron():
     assert "'*/15 8-20 * * 1-5'" in s and "'*/15 4-7 * * 1-5'" in s and "'30,45 3 * * 1-5'" in s
     for j in ("m5-brief-am", "m5-last", "m5-friday-close", "m5-daily-close"):
         assert f"cron.unschedule('{j}')" in s
+
+
+def test_signals_journal_server_role_only():
+    s = read("20261120200000_signals_journal.sql")
+    assert "alter table public.signals enable row level security" in s and "alter table public.journal enable row level security" in s
+    assert "revoke all on table public.signals, public.journal from public, anon, authenticated" in s
+    assert not re.search(r"(?m)^grant[^;]*\b(anon|authenticated)\b", s) and "create policy" not in s
+    assert "'^S-\\d{8}-\\d{3}$'" in s
+    for st in ("'sent'", "'entered'", "'closed'", "'expired'", "'not_taken'"):
+        assert st in s
+    # report cron: daily after the 00:30 close (21:15 UTC = 00:45 Tehran), weekly Saturday 10:00 Tehran
+    assert "'15 21 * * 1-5'" in s and "'30 6 * * 6'" in s and "bot_webhook_secret()" in s
+    assert "revoke all on function public.bot_report(text) from public, anon, authenticated" in s
+
+
+def test_journal_csv_import_real_trades_only():
+    s = read("20261120200000_signals_journal.sql")
+    rows = re.findall(r"\('2026-11-13-M\d-(?:SELL|BUY)'", s)
+    assert len(rows) == 4 and s.count("'USER_CONFIRMED'") >= 4 and "on conflict (trade_id) do nothing" in s
+    for net in ("342800", "742800", "181200", "687600"):
+        assert net in s

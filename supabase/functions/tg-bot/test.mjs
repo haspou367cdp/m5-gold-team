@@ -1,6 +1,7 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
+import * as JR from "./ledger.js";
 import { CAL, basisStats, basisStatus, parseCalibrate, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
 import { sessionDate, HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
 let fails = 0;
@@ -9,6 +10,7 @@ const SB = "https://x.supabase.co";
 const DB = { row: { state: { equity_toman: 2085600, signals_sent: [], presession_sent: { "2026-11-13-pm": true } }, news: { windows: [] }, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
 const SENT = [], DISPATCHED = [];
 const OBS = []; let OBS_FAIL = false, DUKA_DOWN = false; const DUKA = { A: [], B: [] };
+const TBL = { signals: [], journal: [] }, TBL_CALLS = []; let TBL_FAIL = false;
 let failHtml = false, failGroup = false, ghStatus = 204, raceOnce = false;
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 globalThis.fetch = async (url, init = {}) => {
@@ -42,7 +44,28 @@ globalThis.fetch = async (url, init = {}) => {
     if (url.endsWith("/setMyCommands")) { DB.menu = b.commands; return J({ ok: true }); }
     if (url.endsWith("/deleteMyCommands")) { (DB.menuDeleted = DB.menuDeleted || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
+    if (url.endsWith("/answerCallbackQuery")) { (DB.answers = DB.answers || []).push(b); return J({ ok: true }); }
+    if (url.endsWith("/editMessageReplyMarkup")) { (DB.edits = DB.edits || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
+  }
+  const tm = url.match(/\/rest\/v1\/(signals|journal)(\?.*)?$/);
+  if (tm) {   // tiny PostgREST: eq / in / gte / lte / lt filters, order, limit, on_conflict ignore, return=representation
+    if (TBL_FAIL) return new Response("x", { status: 500 });
+    TBL_CALLS.push({ t: tm[1], method: init.method || "GET", url });
+    const T = TBL[tm[1]], q = new URLSearchParams((tm[2] || "").slice(1)), pk = tm[1] === "signals" ? "id" : "trade_id";
+    const fl = [...q.entries()].filter(([k]) => !["select", "order", "limit", "on_conflict"].includes(k));
+    const ok = (r) => fl.every(([k, v]) => { const [op, ...rest] = v.split("."); const val = rest.join(".");
+      const x = r[k] == null ? null : String(r[k]);
+      if (op === "eq") return x === val; if (op === "in") return val.slice(1, -1).split(",").includes(x);
+      if (op === "gte") return x !== null && x >= val; if (op === "lte") return x !== null && x <= val; if (op === "lt") return x !== null && x < val; return false; });
+    const m = init.method || "GET";
+    if (m === "POST") { for (const r of JSON.parse(init.body)) if (!T.some((y) => y[pk] === r[pk])) T.push({ status: "sent", ...r }); return new Response(null, { status: 201 }); }
+    if (m === "PATCH") { const b = JSON.parse(init.body), hit = T.filter(ok); for (const r of hit) Object.assign(r, b); return String(init.headers.prefer || "").includes("representation") ? J(hit) : new Response(null, { status: 204 }); }
+    if (m === "DELETE") { for (const r of T.filter(ok)) T.splice(T.indexOf(r), 1); return new Response(null, { status: 204 }); }
+    let rows = T.filter(ok);
+    const ord = q.get("order"); if (ord) { const [k, d] = ord.split("."); rows = [...rows].sort((a, b) => (String(a[k]) < String(b[k]) ? -1 : 1) * (d === "desc" ? -1 : 1)); }
+    if (q.get("limit")) rows = rows.slice(0, Number(q.get("limit")));
+    return J(structuredClone(rows));
   }
   if (url.startsWith(SB + "/rest/v1/price_observations")) {
     if (OBS_FAIL) return new Response("x", { status: 500 });
@@ -96,7 +119,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 15 commands (incl. /levels, /offset, /calibrate, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 15 && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
+check("setup menu: 21 commands (incl. /levels, /offset, /calibrate, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 21 && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -131,7 +154,7 @@ await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/l
 check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
 DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
 await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
-r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("۱۱:۱۵ تا ۲۱:۳۰"));
+r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("۰۷:۰۰ تا ۰۰:۳۰"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
 check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);
@@ -428,4 +451,118 @@ OBS_FAIL = true; r = await tgSend("/calibrate 3569.85"); OBS_FAIL = false;
 check("database failure -> short error to the owner only", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("ثبت نشد"));
 await tgSend("/offset 0.5");
 check("/offset marks a manual offset", st().dg_offset === 0.5 && st().dg_offset_source === "manual");
+
+// ---------------- Phase 3: signals, journal, buttons, reports ----------------
+{
+  const p = JR.pnl("SELL", 3914.07, 3909.61, "1U");
+  check("pnl: SELL 1U 4.46 → gross 356,800, spread 20,000, fee once 14,000 → net 322,800", p.gross === 356800 && p.spread === 20000 && p.fee === 14000 && p.net === 322800);
+  const h = JR.pnl("BUY", 3894.11, 3898.99, "0.5U", false);
+  check("pnl: BUY 0.5U without spread = journal.csv M3 net 181,200", h.net === 181200);
+  check("riskToman = stop distance·rate + spread + fee", JR.riskToman({ entry: 3880.3, sl: 3881.9, unit: "1U" }) === 128000 + 20000 + 14000);
+  const now = { date: "2026-11-20", hm: "13:30" }, late = { date: "2026-11-21", hm: "00:10" };
+  check("resolveId: full, short, Persian digits, trading day after midnight",
+    JR.resolveId("S-20261120-001", now) === "S-20261120-001" && JR.resolveId("20261120-7", now) === "S-20261120-007" &&
+    JR.resolveId("۲", now) === "S-20261120-002" && JR.resolveId("3", late) === "S-20261120-003");
+  const pc = (c, a) => { try { return JR.parseJournalCmd(c, a, now); } catch { return "ERR"; } };
+  check("parseJournalCmd: /closed needs a price; /tp takes none; junk rejected",
+    pc("/closed", ["001"]) === "ERR" && pc("/closed", ["001", "3569.85"]).price === 3569.85 && pc("/closed", ["3569.85"]).id === null &&
+    pc("/tp", ["001", "3570"]) === "ERR" && pc("/tp", []).act === "t" && pc("/entered", ["2", "3880.1"]).price === 3880.1 && pc("/sl", ["abc"]) === "ERR" &&
+    pc("/journal", []).view === "journal");
+  check("parseCallback: only known actions and IDs", JR.parseCallback("a:e:S-20261120-001").act === "e" && JR.parseCallback("c:m:S-20261120-001:3569.85").price === 3569.85 &&
+    JR.parseCallback("x").cancel && JR.parseCallback("c:z:S-20261120-001") === null && JR.parseCallback("c:t:DROP") === null && JR.parseCallback("c:m:S-20261120-001:1") === null);
+}
+CLOCK = new Date("2026-11-20T10:00:00Z");   // Friday 13:30 Tehran
+DB.row.state.channel_id = GID; DB.row.state.equity_toman = 3000000; TBL.journal.length = 0; TBL.signals.length = 0;
+const SIG = (n, side = "SELL", extra = {}) => ({ key: `k${n}`, at: "2026-11-20 13:30", id: `S-20261120-00${n}`, sent_at: "2026-11-20T13:30:00+03:30",
+  session_date: "2026-11-20", side, unit: "1U", entry: 3880.3, sl: side === "SELL" ? 3881.9 : 3878.7, tp: side === "SELL" ? 3876.3 : 3884.3,
+  valid_until: "2026-11-20T14:00:00+03:30", net_rr: 1.6, risk_toman: 162000, ...extra });
+let sr = await (await gh("/state", "POST", { patch: { signals_sent: [SIG(1), SIG(2, "BUY"), { key: "legacy", at: "x" }, { ...SIG(9), id: "S-1; drop" }] }, done_cmds: [] })).json();
+check("/state stores new signals (server table), ignores legacy/bad IDs", sr.signals_stored === 2 && TBL.signals.length === 2 && TBL.signals[0].status === "sent");
+sr = await (await gh("/state", "POST", { patch: { signals_sent: [SIG(1), SIG(2, "BUY")] }, done_cmds: [] })).json();
+check("/state again: no duplicates", TBL.signals.length === 2);
+const cb = (data, from = 45639251, chat = 45639251, type = "private", mid = 77) => tgUpdate({ callback_query: { id: "q" + uid, data, from: { id: from },
+  message: { message_id: mid, chat: { id: chat, type } } } });
+DB.answers = []; DB.edits = [];
+r = await cb("a:e:S-20261120-001");
+check("button «وارد شدم» → confirmation card with ✅/❌, nothing recorded yet", r.out.length === 1 && r.chats[0] === "45639251" &&
+  SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:e:S-20261120-001" && TBL.signals[0].status === "sent" && DB.answers.length === 1);
+r = await cb("x");
+check("❌ cancel: buttons removed, nothing recorded", r.out.length === 0 && DB.edits.length === 1 && TBL.signals[0].status === "sent");
+r = await cb("c:e:S-20261120-001");
+check("✅ confirm entry → status entered with fill = card entry", TBL.signals[0].status === "entered" && TBL.signals[0].entry_fill === 3880.3 && r.out[0].includes("ورود ثبت شد"));
+r = await cb("c:e:S-20261120-001");
+check("second confirm of the same action → «already» error, no change", r.out[0].includes("ثبت نشد") && TBL.signals[0].status === "entered");
+r = await cb("c:t:S-20261120-001", 999);
+check("button from another user → ignored (answered only)", r.out.length === 0 && TBL.signals[0].status === "entered");
+r = await cb("c:t:S-20261120-001", 45639251, Number(GID), "supergroup");
+check("button in the group → ignored", r.out.length === 0 && TBL.signals[0].status === "entered");
+CLOCK = new Date(CLOCK.getTime() + 40000);   // 40 s later
+r = await tgSend("/tp 001");
+check("/tp 001 → preview with net P&L and R, confirm buttons, private only", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("حد سود") &&
+  r.out[0].includes("<code>3876.3</code>") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:t:S-20261120-001" && TBL.journal.length === 0);
+const eq0 = Number(st().equity_toman), w0 = st().day.wins, l0 = st().day.losses;
+r = await cb("c:t:S-20261120-001");
+const j1 = TBL.journal.find((x) => x.trade_id === "S-20261120-001");
+check("confirm TP → closed, journal row (net = 4.0·80k − 20k − 14k = 286,000), +R, held 40 s → under-60s flag", TBL.signals[0].status === "closed" &&
+  j1 && j1.net_toman === 286000 && j1.gross_toman === 320000 && j1.spread_toman === 20000 && j1.fee_toman === 14000 && j1.under_60s === true &&
+  j1.hold_seconds === 40 && j1.source === "signal" && j1.verification === "USER_CONFIRMED" && TBL.signals[0].r_multiple === Math.round(286000 / 162000 * 100) / 100 &&
+  r.out[0].includes("۶۰ ثانیه"));
+check("TP feeds the daily record and equity (daily stop input) and releases the signal lock", Number(st().equity_toman) === eq0 + 286000 &&
+  st().day.wins === w0 + 1 && st().day.records.at(-1).signal === "S-20261120-001" && st().signals_done.includes("S-20261120-001"));
+r = await cb("c:s:S-20261120-001");
+check("closing a closed signal again → refused, journal still one row", r.out[0].includes("ثبت نشد") && TBL.journal.length === 1);
+r = await tgSend("/undo");
+check("/undo of a signal close: equity back, journal row deleted, signal reopened (entered)", Number(st().equity_toman) === eq0 &&
+  TBL.journal.length === 0 && TBL.signals[0].status === "entered" && !st().signals_done.includes("S-20261120-001"));
+CLOCK = new Date(CLOCK.getTime() + 60000);
+r = await tgSend("/closed 001 3878.3");
+check("/closed 001 3878.3 → preview (manual), then confirm with the price", r.out[0].includes("بستن دستی") && SENT[0].reply_markup.inline_keyboard[0][0].callback_data === "c:m:S-20261120-001:3878.3");
+r = await cb("c:m:S-20261120-001:3878.3");
+const j2 = TBL.journal.find((x) => x.trade_id === "S-20261120-001");
+check("manual close 2.0 × 80k − 20k − 14k = 126,000; held 100 s → no flag", j2 && j2.net_toman === 126000 && j2.exit_type === "manual" && j2.under_60s === false);
+r = await cb("a:m:S-20261120-002");
+check("button «بستن دستی» asks for the price with the /closed format", r.out[0].includes("/closed 002"));
+r = await cb("c:e:S-20261120-002"); CLOCK = new Date(CLOCK.getTime() + 20000); r = await cb("c:s:S-20261120-002");
+const j3 = TBL.journal.find((x) => x.trade_id === "S-20261120-002");
+check("SL after 20 s: loss −1.6×80k −20k −14k = −162,000 = −1R; SL is exempt from the 60 s flag; loss counted", j3 && j3.net_toman === -162000 &&
+  Number(TBL.signals[1].r_multiple) === -1 && j3.under_60s === false && st().day.losses === l0 + 1 && r.out[0].includes("حد ضرر"));
+r = await tgSend("/trade sell 3914.07 3909.61 1");
+check("/trade also writes a journal row (trade_cmd, user-confirmed, spread 0)", TBL.journal.some((x) => x.source === "trade_cmd" && x.net_toman === 342800 && x.spread_toman === 0));
+r = await tgSend("/journal");
+check("/journal lists rows, private only, Latin prices", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("<code>3914.07</code>") && r.out[0].includes("ژورنال"));
+r = await tgSend("/pnl");
+check("/pnl: today / 7 days / all, net after costs", r.out.length === 1 && r.out[0].includes("امروز") && r.out[0].includes("۷ روز") && r.out[0].includes("همه"));
+r = await tgSend("/tp 9xx");
+check("/tp junk → format hint", r.out[0].includes("ثبت نشد") && r.out[0].includes("/closed 001"));
+r = await tgSend("/sl 005");
+check("/sl unknown ID → not found", r.out[0].includes("پیدا نشد"));
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, from: { id: 45639251 }, text: "/pnl" } });
+check("/pnl in the group is ignored", r.out.length === 0);
+// expiry + not taken
+await gh("/state", "POST", { patch: { signals_sent: [SIG(3, "SELL", { valid_until: "2026-11-20T13:31:00+03:30" }), SIG(4)] }, done_cmds: [] });
+r = await cb("c:n:S-20261120-004");
+check("«وارد نشدم» → not_taken, lock released", TBL.signals.find((x) => x.id === "S-20261120-004").status === "not_taken" && st().signals_done.includes("S-20261120-004"));
+check("effectiveStatus: sent past valid_until shows expired", JR.effectiveStatus(TBL.signals.find((x) => x.id === "S-20261120-003"), CLOCK.getTime()) === "expired");
+// reports (pg_cron → /report with the webhook secret)
+const rep = (kind, key = DB.vault.tg_webhook_secret) => { SENT.length = 0; return app(new Request(FN + "/report", { method: "POST", headers: { "x-report-key": key }, body: JSON.stringify({ kind }) }), jw); };
+let rr = await rep("daily", "wrong");
+check("/report with a wrong key → 403, nothing sent", rr.status === 403 && SENT.length === 0);
+CLOCK = new Date("2026-11-20T21:15:00Z");   // Saturday 00:45 Tehran → reports Friday's session
+rr = await (await rep("daily")).json();
+check("daily report after 00:30: Friday session, private chat only, counts + net + expired marked",
+  rr.ok && rr.key === "daily:2026-11-20" && SENT.length === 1 && String(SENT[0].chat_id) === "45639251" && SENT[0].text.includes("گزارش روز") &&
+  SENT[0].text.includes("تومان") && TBL.signals.find((x) => x.id === "S-20261120-003").status === "expired");
+rr = await (await rep("daily")).json();
+check("daily report is sent once per day", rr.skipped && SENT.length === 0);
+CLOCK = new Date("2026-11-21T06:30:00Z");   // Saturday 10:00 Tehran
+rr = await (await rep("weekly")).json();
+check("weekly report Saturday: Sat–Fri range ending Friday, private only", rr.key === "weekly:2026-11-20" && SENT.length === 1 && String(SENT[0].chat_id) === "45639251" && SENT[0].text.includes("گزارش هفته"));
+const gtxt = JR.reportMsg("daily", { signals: TBL.signals, journal: TBL.journal, shadow: [], calibration: null }, "2026-11-20", "2026-11-20", CLOCK.getTime(), true);
+check("group version of a report carries no toman/balance", !gtxt.includes("تومان") && !gtxt.includes("موجودی") && gtxt.includes("R"));
+const allTxt = [JR.BAD_JOURNAL, gtxt, SENT[0].text, JR.journalMsg(TBL.journal), JR.pnlMsg(TBL.journal)].join("\n");
+check("Phase 3 texts: Persian, «ضرر» not «زیان», never «قوی»", !allTxt.includes("زیان") && !/(^|[\s،.])قوی([\s،.]|$)/.test(allTxt));
+TBL_FAIL = true; r = await tgSend("/journal"); TBL_FAIL = false;
+check("journal database down → short error to the owner", r.out.length === 1 && r.out[0].includes("ثبت نشد"));
+o = await (await gh("/admin/setup", "POST", { set_webhook: true })).json();
+check("setup: webhook also receives button presses (callback_query)", DB.hook.allowed_updates.includes("callback_query") && DB.hook.allowed_updates.includes("message"));
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);
