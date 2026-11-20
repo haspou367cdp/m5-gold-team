@@ -113,20 +113,34 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
   the bot's `entryLimit`.
 
 ## 8. Deployed vs pending
-Deployed:
-- tg-bot **v25** (build `2026-11-21-assistant-v4-plain`), menus version `2026-11-20-t238u` applied.
-- `main` contains everything: assistant v25, plain Python wording (live from the next workflow run), the Xauscalper Map
-  indicator, this file. Branches `bot-assistant-v2` and `tv-decision-map` are merged.
-- Group guide `docs/group_guide_fa.md` and both indicator files posted to BAROBAX on 2026-11-21 (messages 2979–2982).
-Pending:
-1. Price-basis unification (bid+0.30 vs mid+0.02) — owner decision; unchanged on purpose.
-2. Indicator: port the Sun/Mon 00:00–00:30 entry-limit fix to the Pine template.
-3. Friday config: confirm Friday cutoff/close values in `tools/broker_daryagold.json` match DaryaGold (23:30 cutoff, 00:30 close).
+Deployed (2026-11-21 01:58 Tehran):
+- tg-bot **v26** (build `2026-11-21-assistant-v5-onebasis`): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
+  20 s `tg()` timeout. `MENU_VERSION` `2026-11-21-t246u` (menus + bot description/short description) is applied by the
+  first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
+- `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
+  brief, plain ladder) are live from the next GitHub Actions run.
+- An older group guide and both indicator files were posted to the group on 2026-11-21 00:04 (messages 2979–2982);
+  they still say «Xauscalper» / «Xauscalper Map». Updated texts: `docs/group_guide_fa.md`, `tradingview/map_howto_fa.md`,
+  regenerated `tradingview/xauscalper_map*.pine`. Not reposted (needs the owner's go-ahead).
+
+**Telegram outage (open, outside our code):** since ~2026-11-20 evening every authenticated Bot API call for this bot
+(getMe, getWebhookInfo, setWebhook, sendMessage) hangs from Supabase and from GitHub runners, while a wrong token gets 401
+at once. So commands get no reply. Checks: branch `name-probe` (push → read-only getMe + getWebhookInfo, 15 s timeouts;
+last run 2026-11-21 01:45 Tehran: all timed out). When getMe answers again: run
+`gh workflow run telegram-bot.yml --ref main -f mode=setup` (re-sets webhook, menus, descriptions), confirm
+`webhook_url_ok: true`, then send a command from the owner chat and look for `POST /tg 200` in the Edge Function logs.
+If it never recovers, the owner can check the bot in @BotFather (or revoke/regenerate the token and update the
+`TELEGRAM_BOT_TOKEN` GitHub secret, then run the setup workflow, which stores it in Vault).
+
+Pending / owner questions:
+1. Monday open: config, bot and indicator use **07:00** (owner 2026-11-20 «Mon–Fri 07:00–00:30»); an earlier note
+   (2026-11-14) said Monday 01:30. Confirm.
+2. Repost the updated guide/indicator to the group (owner decision; nothing is posted without approval).
 
 ## 9. Security rules
 - Never print, commit or log tokens. Secrets live in Supabase Vault and GitHub secrets only.
 - No paid services, no order execution, no DaryaGold login.
-- Nothing is posted to the BAROBAX group and no message is sent for the owner without explicit approval.
+- Nothing is posted to the group and no message is sent for the owner without explicit approval.
 - The group never gets toman amounts, balance or personal data.
 - Only the owner's chat may run owner commands; group commands are read-only.
 
