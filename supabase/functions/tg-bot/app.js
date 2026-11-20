@@ -9,7 +9,7 @@ import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed,
 import { matchSignal, tradeMatchCard, JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
 import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS } from "./lib.js";
 
-export const BUILD = "2026-11-20-phase4-group-cmds";
+export const BUILD = "2026-11-20-telegram-redesign";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
