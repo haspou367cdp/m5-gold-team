@@ -3,7 +3,7 @@ import json, os, urllib.request
 T = os.environ["TG"].strip()
 import time
 def call(m, d):
-    for i in range(5):
+    for i in range(8):
         try:
             r = urllib.request.Request(f"https://api.telegram.org/bot{T}/{m}", data=json.dumps(d).encode(), headers={"content-type": "application/json"})
             return json.load(urllib.request.urlopen(r, timeout=30))
