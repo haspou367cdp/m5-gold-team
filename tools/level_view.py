@@ -34,21 +34,22 @@ SET_B = frozenset({
     "Month high", "Month low", "Prev month high", "Prev month low",
 })
 
-KIND_FA = {
-    "PDH": "PDH", "PDL": "PDL",
-    "Week high": "سقف هفته", "Week low": "کف هفته",
+KIND_FA = {   # plain words for a beginner (same wording as the Edge Function's plainLabel)
+    "PDH": "سقف دیروز", "PDL": "کف دیروز",
+    "Week high": "سقف این هفته", "Week low": "کف این هفته",
     "Prev week high": "سقف هفته‌ی قبل", "Prev week low": "کف هفته‌ی قبل",
-    "Asia high": "سقف آسیا", "Asia low": "کف آسیا",
-    "London high": "سقف لندن", "London low": "کف لندن",
-    "NY high": "سقف نیویورک", "NY low": "کف نیویورک",
-    "Prev NY high": "سقف نیویورک دیروز", "Prev NY low": "کف نیویورک دیروز",
-    "H1 swing high": "سوئینگ H1", "H1 swing low": "سوئینگ H1",
-    "Round $100": "رُند", "Round $50": "رُند",
-    "London OR high": "OR لندن", "London OR low": "OR لندن",
-    "NY OR high": "OR نیویورک", "NY OR low": "OR نیویورک",
-    "VWAP": "VWAP",
-    "Equal high": "سقف برابر", "Equal low": "کف برابر",
-    "Month high": "سقف ماه", "Month low": "کف ماه",
+    "Asia high": "سقف صبح امروز", "Asia low": "کف صبح امروز",
+    "London high": "سقف ظهر امروز", "London low": "کف ظهر امروز",
+    "NY high": "سقف عصر", "NY low": "کف عصر",
+    "Prev NY high": "سقف عصر دیروز", "Prev NY low": "کف عصر دیروز",
+    "H1 swing high": "جایی که قیمت اخیراً از آن برگشته", "H1 swing low": "جایی که قیمت اخیراً از آن برگشته",
+    "H4 swing high": "جایی که قیمت در روزهای اخیر از آن برگشته", "H4 swing low": "جایی که قیمت در روزهای اخیر از آن برگشته",
+    "Round $100": "عدد رُند", "Round $50": "عدد رُند",
+    "London OR high": "سقف شروع ظهر", "London OR low": "کف شروع ظهر",
+    "NY OR high": "سقف شروع عصر", "NY OR low": "کف شروع عصر",
+    "VWAP": "میانگین قیمت امروز",
+    "Equal high": "دو سقف هم‌اندازه", "Equal low": "دو کف هم‌اندازه",
+    "Month high": "سقف این ماه", "Month low": "کف این ماه",
     "Prev month high": "سقف ماه قبل", "Prev month low": "کف ماه قبل",
 }
 # Stable label order when several sources coincide.
@@ -119,11 +120,13 @@ def label_fa(kinds, price_dg=None):
     for k in sorted(kinds, key=lambda x: _KIND_ORDER.index(x) if x in _KIND_ORDER else 99):
         lab = KIND_FA.get(k)
         if k in ("Round $100", "Round $50") and price_dg is not None:
-            lab = f"رُند {int(round(float(price_dg) / 50.0) * 50)}"
+            lab = f"عدد رُند {int(round(float(price_dg) / 50.0) * 50)}"
         if lab and lab not in seen:
             seen.add(lab)
             out.append(lab)
-    return " + ".join(out)
+    if len(out) > 2:
+        return "، ".join(out[:-1]) + " و " + out[-1]
+    return " و ".join(out)
 
 
 def display_score(item):
@@ -220,6 +223,34 @@ def verdict_line(h4, h1, m15, m5):
     if pull == ["M15", "M5"]:
         return f"جمع‌بندی: {higher}؛ M15 و M5 در اصلاح {opp}"
     return f"جمع‌بندی: {higher}؛ {pull[0]} در اصلاح {opp}"
+
+
+_TF_FA = {"M5": "۵ دقیقه‌ای", "M15": "۱۵ دقیقه‌ای", "H1": "۱ ساعته", "H4": "۴ ساعته"}
+
+
+def plain_trend_line(h4, h1, m15, m5):
+    """One plain sentence about direction (same wording as the Edge Function's trendSummary)."""
+    t = {"M15": m15, "M5": m5}
+    higher = _htf_bias(h4, h1)
+    if higher:
+        opp = "صعودی" if higher == "نزولی" else "نزولی"
+        act = "خرید" if higher == "صعودی" else "فروش"
+        pull = [tf for tf in ("M15", "M5") if t[tf] == opp]
+        same = [tf for tf in ("M15", "M5") if t[tf] == higher]
+        big = f"جهت بزرگ بازار {higher} است (قیمت در ساعت‌های اخیر بیشتر {'بالا' if higher == 'صعودی' else 'پایین'} رفته)"
+        if len(same) == 2:
+            return f"{big} و حرکت کوتاه‌مدت هم با آن هم‌جهت است."
+        if len(pull) == 2:
+            return f"{big}، ولی در کوتاه‌مدت قیمت کمی برعکس برگشته است. برای {act} بهتر است صبر کنید تا ۵ و ۱۵ دقیقه‌ای هم دوباره {higher} شوند."
+        if len(pull) == 1:
+            return f"{big}، ولی {_TF_FA[pull[0]]} فعلاً برعکس برگشته است. برای {act} بهتر است صبر کنید تا {_TF_FA[pull[0]]} هم دوباره {higher} شود."
+        if len(same) == 1:
+            other = "M5" if same[0] == "M15" else "M15"
+            return f"{big}؛ {_TF_FA[same[0]]} هم {higher} است و {_TF_FA[other]} فعلاً جهت مشخصی ندارد."
+        return f"{big}، ولی در کوتاه‌مدت قیمت فعلاً جهت مشخصی ندارد."
+    if h4 == "خنثی" and h1 == "خنثی":
+        return "بازار فعلاً جهت مشخصی ندارد و بیشتر در یک محدوده بالا و پایین می‌رود."
+    return f"روند ۴ ساعته {h4} و ۱ ساعته {h1} است و با هم نمی‌خوانند؛ پس جهت بزرگ بازار فعلاً روشن نیست."
 
 
 def trend_of(lv):
@@ -367,12 +398,12 @@ def short_view(lv, cfg):
 
 
 def context_line(snap):
-    """One short line under the verdict: M5 ATR, and room to the next level in the trend direction.
-    If that room is less than 2× ATR M5, append «جا کم است». If the trend is نامشخص, volatility only."""
+    """One plain line: how far price usually moves in 5 minutes, and the room to the next level in the
+    trend direction («جا کم است» when it is under twice that move). Unclear trend: the move only."""
     atr = snap.get("atr_m5")
     if atr is None:
         return ""
-    parts = [f"نوسان M5 حدود {_usd(atr)} دلار"]
+    line = f"قیمت معمولاً در هر ۵ دقیقه حدود {_usd(atr)} دلار بالا و پایین می‌رود"
     overall = (snap.get("trend") or {}).get("overall")
     if overall in ("صعودی", "نزولی"):
         short = snap.get("short") or {}
@@ -380,11 +411,10 @@ def context_line(snap):
         nxt = (short.get(side) or [None])[0]
         if nxt and nxt.get("distance") is not None:
             room = abs(float(nxt["distance"]))
-            bit = f"تا سطح بعدی {_usd(room)} دلار"
+            line += f"؛ در جهت روند تا سطح بعدی {_usd(room)} دلار جا هست"
             if room < 2 * float(atr):
-                bit += "؛ جا کم است"
-            parts.append(bit)
-    return " · ".join(parts)
+                line += " و این جا کم است"
+    return line + "."
 
 
 def _regime_fa(regime):
@@ -422,65 +452,42 @@ def _as_of_hm(snap):
 
 
 def format_block(snap):
-    """Shared body for every market card: price, source, as-of, regime, HTF, news, Friday,
-    four-frame trend, zone width, 2 above + 2 below. No importance labels, no M15 touch count,
-    no disclaimer."""
+    """Shared body for every market card, in plain Persian for a beginner: price and time, what a level
+    is, one trend sentence, news / Friday notes, 2 levels above + 2 below with the dollar distance and a
+    plain origin, and how far price usually moves in 5 minutes. No jargon (ATR, H1, OR, swing), no
+    importance labels, no disclaimer."""
     if not snap or snap.get("price_dg") is None:
         return "داده‌ی سطوح در دسترس نیست"
     lines = []
-    head = f"طلا  `{_px(snap['price_dg'])}`  ·  دریاگلد"
+    head = f"قیمت دریاگلد: `{_px(snap['price_dg'])}`"
     hm = _as_of_hm(snap)
     if hm:
-        head += f"  ·  {hm} به وقت تهران"
+        head += f"  ·  ساعت {hm} به وقت تهران"
     lines.append(head)
-    src = _source_short(snap.get("source"))
-    if src:
-        lines.append(f"منبع: {src}")
-    reg = _regime_fa(snap.get("regime"))
-    htf = (snap.get("trend") or {}).get("overall")
-    meta = []
-    if reg:
-        meta.append(f"رژیم: {reg}")
-    if htf:
-        meta.append(f"جهت: {htf}")
-    if meta:
-        lines.append("  ·  ".join(meta))
-    if snap.get("news_line"):
-        lines.append(snap["news_line"])
-    if snap.get("friday_line"):
-        lines.append(snap["friday_line"])
+    lines.append("~~سطح یعنی قیمتی که بازار قبلاً آنجا ایستاده یا برگشته است؛ نزدیک این قیمت‌ها احتمال توقف یا برگشت قیمت بیشتر است.~~")
     tr = snap.get("trend") or {}
-    lines.append("  ·  ".join(f"{tf} {(tr.get(tf) or {}).get('trend') or 'خنثی'}" for tf in TFS))
-    verdict = tr.get("verdict")
-    if verdict:
-        lines.append(verdict)
-    half = snap.get("zone_half") or snap.get("zone_width")
-    if half:
-        lines.append(f"پهنه سطح  ±{float(half):.1f} دلار")
-    ctx = snap.get("context") or context_line(snap)
-    if ctx:
-        lines.append(ctx)
+    if tr:
+        g = lambda tf: (tr.get(tf) or {}).get("trend") or "خنثی"
+        lines += ["", "روند: " + plain_trend_line(g("H4"), g("H1"), g("M15"), g("M5"))]
+    notes = [x for x in (snap.get("news_line"), snap.get("friday_line")) if x]
+    if notes:
+        lines += [""] + notes
     short = snap.get("short") or {}
-    atr = snap.get("atr_m5")
-    for title, rows in (("بالا", short.get("above") or []),
-                        ("پایین", short.get("below") or [])):
-        lines.append("")
-        lines.append(title)
+    for title, hint, rows, up in (("**⬆️ بالای قیمت**", "~~اگر قیمت بالا برود، ممکن است اینجا متوقف شود یا برگردد~~", short.get("above") or [], True),
+                                  ("**⬇️ زیر قیمت**", "~~اگر قیمت پایین بیاید، ممکن است اینجا متوقف شود یا برگردد~~", short.get("below") or [], False)):
+        lines += ["", title, hint]
         if not rows:
             lines.append("—")
             continue
         for r in rows:
-            d = float(r.get("distance") or 0)
-            sign = "−" if d < 0 else "+"
-            dist = f"{sign}{abs(d):.1f}$"
-            da = r.get("distance_atr")
-            if da is None and atr:
-                da = round(abs(d) / float(atr), 2)
-            atr_bit = f" ≈ {da:.1f} ATR" if da is not None else ""
-            lab = r.get("label_fa") or label_fa(r.get("kinds") or [], r.get("price_dg"))
-            lines.append(f"▸ `{_px(r['price_dg'])}`  {dist}{atr_bit}")
+            d = abs(float(r.get("distance") or 0))
+            lab = label_fa(r.get("kinds") or [], r.get("price_dg")) or r.get("label_fa")
+            lines.append(f"▸ `{_px(r['price_dg'])}`، {d:.1f} دلار {'بالاتر' if up else 'پایین‌تر'}")
             if lab:
-                lines.append(f"  {lab}")
+                lines.append(f"   {lab}")
+    ctx = context_line(snap)
+    if ctx:
+        lines += ["", f"~~{ctx}~~"]
     return "\n".join(lines)
 
 

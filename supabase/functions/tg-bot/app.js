@@ -9,7 +9,7 @@ import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed,
 import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
 import * as A from "./assist.js";
 
-export const BUILD = "2026-11-21-assistant-v3";
+export const BUILD = "2026-11-21-assistant-v4-plain";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -137,9 +137,9 @@ export function makeApp(cfg) {
     return new Response("ok");
   }
   // ---------------- assistant: /setup /trend /e (owner t226u-t232u) ----------------
-  const BAD_E = "**⚠️ ورود را بنویسید**\n~~جهت اختیاری است و قیمت با نقطه، مثل:~~\n\n`/e sell 3531.80`\n`/e 3531.80`";
-  const NO_DIR = "**⚠️ جهت را بنویسید**\n~~روند فعلاً روشن نیست، مثل:~~ `/e sell 3531.80`";
-  const NO_FEED = "**⚠️ قیمت زنده در دسترس نیست**\n~~ستاپ بدون قیمت لحظه‌ای چیده نمی‌شود؛ چند دقیقه‌ی دیگر دوباره بفرستید~~";
+  const BAD_E = "**⚠️ قیمت ورود را بنویسید**\n~~نوشتن جهت (sell یعنی فروش، buy یعنی خرید) اختیاری است؛ قیمت را با نقطه بنویسید، مثل:~~\n\n`/e sell 3531.80`\n`/e 3531.80`";
+  const NO_DIR = "**⚠️ جهت را بنویسید**\n~~جهت بازار الان روشن نیست، پس بنویسید خرید (buy) یا فروش (sell)، مثل:~~ `/e sell 3531.80`";
+  const NO_FEED = "**⚠️ قیمت زنده در دسترس نیست**\n~~بدون قیمت لحظه‌ای ستاپ داده نمی‌شود؛ چند دقیقه‌ی دیگر دوباره بفرستید~~";
   async function marketNow(nowMs, opts) {
     try { return await A.fetchMarket(nowMs, opts); } catch (e) { console.error("feed:", String(e && e.message || e)); return null; }
   }
@@ -176,7 +176,7 @@ export function makeApp(cfg) {
     const levels = A.snapLevels(snap);
     if (!levels.length) return "**⚠️ داده‌ی سطوح در دسترس نیست**\n~~بعد از بررسی خودکار بعدی دوباره بفرستید~~";
     const age = A.snapAgeMin(snap, nowMs);
-    const snapNote = age !== null && age > 30 ? `سطوح مربوط به ساعت ${String(snap.computed_at_tehran).slice(11, 16)} است` : null;
+    const snapNote = age !== null && age > 30 ? `سطح‌ها مربوط به ساعت ${String(snap.computed_at_tehran).slice(11, 16)} است` : null;
     const m5 = mkt ? A.withLive(mkt.native.M5, mkt.m1B, A.TF_MS.M5).closed : [];
     const atr5 = m5.length > 20 ? A.atrSeries(m5).at(-1) : (Number(snap.atr_m5) || 8);
     const adrUsed = Number(snap.adr_used_pct);
@@ -188,7 +188,7 @@ export function makeApp(cfg) {
     }
     // /setup
     if (!q || !live) return NO_FEED;
-    if (q.ageS > 600) return "**⚠️ داده‌ی قیمت عقب است**\n~~آخرین قیمت بیش از ۱۰ دقیقه پیش است؛ ستاپ چیده نمی‌شود~~";
+    if (q.ageS > 600) return "**⚠️ داده‌ی قیمت عقب است**\n~~آخرین قیمت مال بیش از ۱۰ دقیقه پیش است، پس ستاپ داده نمی‌شود~~";
     const ctx = { levels, quote: q, atr5, trend, adrUsed: Number.isFinite(adrUsed) ? adrUsed : NaN, nowMs, news: row.news };
     const v = A.validity(ctx);
     const ns = A.noSetupMsg(v, nowMs);

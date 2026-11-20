@@ -1,6 +1,7 @@
 // Shared bot logic for the Supabase Edge Function (Deno) - pure functions, no I/O except tg()/dispatch().
 // Telegram formatting is a port of bot/bot.py (Persian digits, RLM, card style, Latin tap-to-copy prices).
 // Signal-only research tool. Never places trades.
+import { plainLabel, trendSummary } from "./assist.js";
 
 export const CHAT_ID = "45639251";
 const REPO = "haspou367cdp/m5-gold-team";
@@ -198,14 +199,40 @@ export function levelsFresh(snap, at = new Date(), limit = FRESH_MIN) {
 }
 export function levelsMsg(snap, at = new Date()) {
   const n = teh(at);
-  const lines = ["**سطوح**", `~~${faDate(at)} · ${n.hm} به وقت تهران~~`, ""];
-  if (snap && !levelsFresh(snap, at)) {
-    const age = levelsAgeMin(snap, at);
-    if (age != null && age >= 0) {
-      lines.push(`به‌روزشده ${Math.round(age)} دقیقه پیش`, "");
+  const lines = ["**📏 سطوح مهم قیمت**", `~~${faDate(at)} · ${n.hm} به وقت تهران~~`, ""];
+  const short = (snap && snap.short) || null;
+  const rows = short ? [...(short.above || []), ...(short.below || [])] : [];
+  if (!rows.length) {   // old snapshot without the structured fields: the stored block as it is
+    if (snap && !levelsFresh(snap, at)) {
+      const age = levelsAgeMin(snap, at);
+      if (age != null && age >= 0) lines.push(`به‌روزشده ${Math.round(age)} دقیقه پیش`, "");
     }
+    lines.push(snap && snap.block ? snap.block : "داده‌ی سطوح در دسترس نیست");
+    return lines.join("\n");
   }
-  lines.push(snap && snap.block ? snap.block : "داده‌ی سطوح در دسترس نیست");
+  const P = Number(snap.price_dg);
+  if (Number.isFinite(P)) lines.push(`قیمت دریاگلد: \`${P.toFixed(1)}\``);
+  if (!levelsFresh(snap, at)) {
+    const age = levelsAgeMin(snap, at);
+    if (age != null && age >= 0) lines.push(`~~این عددها مربوط به ${Math.round(age)} دقیقه پیش است.~~`);
+  }
+  lines.push("~~سطح یعنی قیمتی که بازار قبلاً آنجا ایستاده یا برگشته است؛ نزدیک این قیمت‌ها احتمال توقف یا برگشت قیمت بیشتر است.~~");
+  const tr = snap.trend || {};
+  if (tr.H4 || tr.H1) {
+    const t = Object.fromEntries(["M5", "M15", "H1", "H4"].map((tf) => [tf, (tr[tf] || {}).trend || "خنثی"]));
+    lines.push("", `روند: ${trendSummary(t).line}`);
+  }
+  const row = (r, up) => {
+    const d = Math.abs(Number(r.distance ?? (Number(r.price_dg) - P)));
+    const lab = plainLabel({ kinds: r.kinds || [], price: Number(r.price_dg), label: r.label_fa || "" });
+    return [`▸ \`${Number(r.price_dg).toFixed(1)}\`، ${String(Math.round(d * 10) / 10)} دلار ${up ? "بالاتر" : "پایین‌تر"}`, ...(lab ? [`   ${lab}`] : [])];
+  };
+  lines.push("", "**⬆️ بالای قیمت**", "~~اگر قیمت بالا برود، ممکن است اینجا متوقف شود یا برگردد~~");
+  lines.push(...((short.above || []).length ? short.above.flatMap((r) => row(r, true)) : ["—"]));
+  lines.push("", "**⬇️ زیر قیمت**", "~~اگر قیمت پایین بیاید، ممکن است اینجا متوقف شود یا برگردد~~");
+  lines.push(...((short.below || []).length ? short.below.flatMap((r) => row(r, false)) : ["—"]));
+  const atr = Number(snap.atr_m5);
+  if (atr > 0) lines.push("", `~~قیمت معمولاً در هر ۵ دقیقه حدود ${String(Math.round(atr * 10) / 10)} دلار بالا و پایین می‌رود.~~`);
   return lines.join("\n");
 }
 

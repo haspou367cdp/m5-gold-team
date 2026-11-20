@@ -20,7 +20,33 @@ export const MAX_SL_USD = 9;          // beyond this a 1-unit stop-out (80% of 1
 export const TF_MS = { M5: 3e5, M15: 9e5, H1: 3.6e6, H4: 1.44e7 };
 const LOOK_MS = { H4: 20 * 864e5, H1: 8 * 864e5, M15: 2 * 864e5, M5: 864e5 };   // = tools/levels.py swings lookback
 export const TFS = ["M5", "M15", "H1", "H4"];
-export const TF_FA = { M5: "۵ دقیقه", M15: "۱۵ دقیقه", H1: "۱ ساعت", H4: "۴ ساعت" };
+export const TF_FA = { M5: "۵ دقیقه‌ای", M15: "۱۵ دقیقه‌ای", H1: "۱ ساعته", H4: "۴ ساعته" };
+// Plain-language words (owner t240u-t243u: every message must be clear to a complete beginner)
+const ARROW = { "صعودی": "⬆️", "نزولی": "⬇️", "خنثی": "➖", "نامشخص": "❔" };
+const GO = { "صعودی": "رو به بالا می‌رود", "نزولی": "رو به پایین می‌رود", "خنثی": "جهت مشخصی ندارد" };
+const NOT_GO = { "صعودی": "دیگر رو به بالا نمی‌رود", "نزولی": "دیگر رو به پایین نمی‌رود", "خنثی": "دیگر بی‌جهت نیست" };
+const usd = (x) => String(Math.round(Math.abs(Number(x)) * 10) / 10);   // dollar amounts in prose (digits become Persian)
+// Where a level comes from, in words a beginner understands (kinds = English names from tools/levels.py)
+const KIND_PLAIN = {
+  PDH: "سقف دیروز", PDL: "کف دیروز", "Week high": "سقف این هفته", "Week low": "کف این هفته",
+  "Prev week high": "سقف هفته‌ی قبل", "Prev week low": "کف هفته‌ی قبل",
+  "Asia high": "سقف صبح امروز", "Asia low": "کف صبح امروز",
+  "London high": "سقف ظهر امروز", "London low": "کف ظهر امروز",
+  "NY high": "سقف عصر", "NY low": "کف عصر", "Prev NY high": "سقف عصر دیروز", "Prev NY low": "کف عصر دیروز",
+  "London OR high": "سقف شروع ظهر", "London OR low": "کف شروع ظهر", "NY OR high": "سقف شروع عصر", "NY OR low": "کف شروع عصر",
+  "H1 swing high": "جایی که قیمت اخیراً از آن برگشته", "H1 swing low": "جایی که قیمت اخیراً از آن برگشته",
+  "Equal high": "دو سقف هم‌اندازه", "Equal low": "دو کف هم‌اندازه", VWAP: "میانگین قیمت امروز",
+  "Month high": "سقف این ماه", "Month low": "کف این ماه", "Prev month high": "سقف ماه قبل", "Prev month low": "کف ماه قبل",
+};
+export function plainLabel(L) {
+  const out = [];
+  for (const k of (L && L.kinds) || []) {
+    const t = /^Round/.test(k) ? `عدد رُند ${Math.round(Number(L.price) / 50) * 50}` : KIND_PLAIN[k];
+    if (t && !out.includes(t)) out.push(t);
+  }
+  if (!out.length && L && L.label) return String(L.label);
+  return out.length > 2 ? out.slice(0, -1).join("، ") + " و " + out.at(-1) : out.join(" و ");
+}
 const UP = "صعودی", DOWN = "نزولی", FLAT = "خنثی", UNKNOWN = "نامشخص";
 
 export const r2 = (x) => Math.round(x * 100) / 100;
@@ -155,24 +181,26 @@ export function trendSummary(t) {
   else if (h4 === FLAT && h1 === FLAT) overall = FLAT;
   let line;
   if (higher) {
-    const opp = higher === UP ? DOWN : UP, act = higher === UP ? "بخرید" : "بفروشید";
+    const opp = higher === UP ? DOWN : UP, act = higher === UP ? "خرید" : "فروش";
     const pull = ["M15", "M5"].filter((tf) => t[tf] === opp), same = ["M15", "M5"].filter((tf) => t[tf] === higher);
-    if (same.length === 2) line = `${higher} است و ۱۵ دقیقه و ۵ دقیقه هم با آن هم‌جهت‌اند.`;
-    else if (pull.length === 2) line = `${higher} است، ولی تایم‌فریم‌های پایین‌تر در اصلاح‌اند. اگر می‌خواهید در جهت روند اصلی ${act}، صبر کنید تا ۵ و ۱۵ دقیقه دوباره ${higher} شوند.`;
-    else if (pull.length === 1) line = `${higher} است، ولی ${TF_FA[pull[0]]} در اصلاح است. اگر می‌خواهید در جهت روند اصلی ${act}، صبر کنید تا ${TF_FA[pull[0]]} دوباره ${higher} شود.`;
-    else if (same.length === 1) line = `${higher} است؛ ${TF_FA[same[0]]} هم‌جهت است و ${TF_FA[same[0] === "M15" ? "M5" : "M15"]} فعلاً خنثی است.`;
-    else line = `${higher} است؛ تایم‌فریم‌های پایین‌تر فعلاً خنثی‌اند.`;
-  } else if (overall === FLAT) line = "خنثی است؛ ۴ ساعت و ۱ ساعت جهت روشنی ندارند.";
-  else line = `نامشخص است؛ ۴ ساعت ${h4} و ۱ ساعت ${h1} است.`;
+    const big = `جهت بزرگ بازار ${higher} است (قیمت در ساعت‌های اخیر بیشتر ${higher === UP ? "بالا" : "پایین"} رفته)`;
+    if (same.length === 2) line = `${big} و حرکت کوتاه‌مدت هم با آن هم‌جهت است.`;
+    else if (pull.length === 2) line = `${big}، ولی در کوتاه‌مدت قیمت کمی برعکس برگشته است. برای ${act} بهتر است صبر کنید تا ۵ و ۱۵ دقیقه‌ای هم دوباره ${higher} شوند.`;
+    else if (pull.length === 1) line = `${big}، ولی ${TF_FA[pull[0]]} فعلاً برعکس برگشته است. برای ${act} بهتر است صبر کنید تا ${TF_FA[pull[0]]} هم دوباره ${higher} شود.`;
+    else if (same.length === 1) line = `${big}؛ ${TF_FA[same[0]]} هم ${higher} است و ${TF_FA[same[0] === "M15" ? "M5" : "M15"]} فعلاً جهت مشخصی ندارد.`;
+    else line = `${big}، ولی در کوتاه‌مدت قیمت فعلاً جهت مشخصی ندارد.`;
+  } else if (overall === FLAT) line = "بازار فعلاً جهت مشخصی ندارد و بیشتر در یک محدوده بالا و پایین می‌رود.";
+  else line = `روند ۴ ساعته ${h4} و ۱ ساعته ${h1} است و با هم نمی‌خوانند؛ پس جهت بزرگ بازار فعلاً روشن نیست.`;
   return { overall, higher, line };
 }
 export function trendMsg(t, { quote = null, dataAt = null, at, stale = false } = {}) {
   const sm = trendSummary(t);
-  const L = ["**📊 روند طلا**", `~~${hmOf(at)} به وقت تهران` + (quote ? ` · دریاگلد \`${px(quote.dg)}\`` : "") + "~~", ""];
-  for (const tf of TFS) L.push(`${TF_FA[tf]}: ${t[tf] || FLAT}`);
-  L.push("", `**روند کلی:** ${sm.line}`);
-  if (stale) L.push("", `~~داده‌ی زنده در دسترس نبود؛ این روند مربوط به ${dataAt ? hmOf(dataAt) : "آخرین بررسی"} است~~`);
-  else if (dataAt) L.push("", `~~آخرین داده ${hmOf(dataAt)} به وقت تهران~~`);
+  const L = ["**📊 روند طلا**", `~~${hmOf(at)} به وقت تهران` + (quote ? ` · قیمت دریاگلد \`${px(quote.dg)}\`` : "") + "~~", "",
+    sm.line, "", "**جزئیات** ~~(⬆️ صعودی · ⬇️ نزولی · ➖ بدون جهت)~~"];
+  for (const tf of ["H4", "H1", "M15", "M5"]) L.push(`${ARROW[t[tf] || FLAT]} ${TF_FA[tf]}: ${t[tf] || FLAT}`);
+  L.push("~~۴ ساعته و ۱ ساعته جهت بزرگ بازار را نشان می‌دهند؛ ۱۵ و ۵ دقیقه‌ای حرکت کوتاه‌مدت را.~~");
+  if (stale) L.push("", `~~قیمت زنده در دسترس نبود؛ این روند مربوط به ساعت ${dataAt ? hmOf(dataAt) : "آخرین بررسی"} است~~`);
+  else if (dataAt) L.push(`~~آخرین قیمت: ${hmOf(dataAt)} به وقت تهران~~`);
   return L.join("\n");
 }
 
@@ -253,16 +281,16 @@ function targets(levels, dir, from, skip, atr5) {
 
 // ---------------- credibility score (0-100) ----------------
 export const WEIGHTS = { trend: 25, fill: 15, level: 15, room: 10, rr: 15, adr: 8, session: 7, hunt: 5 };
-const POS = { trend: "هم‌جهت روند", fill: "قیمت نزدیک بازه‌ی ورود است", level: "سطح معتبر و کم‌مصرف", room: "جای کافی تا هدف",
-  rr: "نسبت سود به ضرر خوب", adr: "دامنه‌ی روزانه هنوز جا دارد", session: "ساعت پرتحرک و دور از خبر", hunt: "حد ضرر دور از محل شکار" };
-const NEG = { trend: "خلاف روند", fill: "تا بازه‌ی ورود فاصله زیاد است", level: "سطح ضعیف یا پرمصرف", room: "جای کم تا هدف",
-  rr: "نسبت سود به ضرر ضعیف", adr: "دامنه‌ی روزانه بیشتر مصرف شده", session: "نزدیک خبر یا ساعت کم‌تحرک", hunt: "حد ضرر نزدیک محل شکار حد ضررها" };
+const POS = { trend: "هم‌جهت با روند بزرگ بازار است", fill: "قیمت به بازه‌ی ورود نزدیک است", level: "این سطح هنوز کم امتحان شده", room: "تا سطح بعدی جای کافی برای سود هست",
+  rr: "سود احتمالی نسبت به ضرر خوب است", adr: "قیمت امروز هنوز جای حرکت دارد", session: "ساعت پرتحرک و دور از خبر است", hunt: "حد ضرر جای شلوغی نیست" };
+const NEG = { trend: "خلاف روند بزرگ بازار است", fill: "قیمت هنوز از بازه‌ی ورود دور است", level: "این سطح چند بار امتحان شده و ممکن است دیگر نگه ندارد", room: "تا سطح بعدی جای کمی برای سود هست",
+  rr: "سود احتمالی نسبت به ضرر کم است", adr: "قیمت امروز بیشتر از معمول حرکت کرده", session: "نزدیک خبر یا در ساعت کم‌تحرک است", hunt: "حد ضرر نزدیک جایی است که حد ضرر خیلی‌ها هست" };
 export function scoreSetup(f) {
   const total = Math.round(Object.entries(WEIGHTS).reduce((a, [k, w]) => a + w * clamp(f[k] ?? 0.5), 0));
   const rank = Object.keys(WEIGHTS).map((k) => [k, WEIGHTS[k] * clamp(f[k] ?? 0.5), clamp(f[k] ?? 0.5)]);
   const pos = rank.filter((x) => x[2] >= 0.7).sort((a, b) => b[1] - a[1]).slice(0, 2).map((x) => POS[x[0]]);
   const neg = rank.filter((x) => x[2] <= 0.35).sort((a, b) => WEIGHTS[b[0]] * (1 - b[2]) - WEIGHTS[a[0]] * (1 - a[2])).slice(0, 1).map((x) => NEG[x[0]]);
-  const reason = pos.length ? pos.join("، ") + (neg.length ? `؛ ولی ${neg[0]}` : "") : (neg.length ? neg[0] : "عامل برجسته‌ای ندارد");
+  const reason = pos.length ? pos.join("، ") + (neg.length ? `؛ ولی ${neg[0]}` : "") : (neg.length ? neg[0] : "نکته‌ی مثبت یا منفی برجسته‌ای ندارد");
   return { score: total, reason };
 }
 function trendFactor(t, dir) {
@@ -333,12 +361,12 @@ function candidate(ctx, L, dir) {
   const dist = dir < 0 ? Math.max(0, lo - chartP) : Math.max(0, chartP - hi);
   const inside = dir < 0 ? chartP >= lo : chartP <= hi;
   let reject = null;
-  if (dir < 0 ? P + SPREAD >= sl : P <= sl) reject = "قیمت از سطح عبور کرده است";
-  else if (risk > MAX_SL_USD) reject = "حد ضرر لازم بیش از ۹ دلار است";
-  else if (dist > 4 * atr5) reject = "فاصله تا بازه‌ی ورود زیاد است";
-  else if ((t1.tp - mid) * dir <= 0 || room < Math.max(1, 0.5 * Math.abs(sl - mid))) reject = "تا سطح بعدی جا کم است";
+  if (dir < 0 ? P + SPREAD >= sl : P <= sl) reject = "قیمت از سطح رد شده است";
+  else if (risk > MAX_SL_USD) reject = "حد ضرر باید بیش از ۹ دلار دور باشد که زیاد است";
+  else if (dist > 4 * atr5) reject = "قیمت از سطح مناسب خیلی دور است";
+  else if ((t1.tp - mid) * dir <= 0 || room < Math.max(1, 0.5 * Math.abs(sl - mid))) reject = "تا سطح بعدی جای کافی برای سود نیست";
   const rr = (Math.abs(t1.tp - mid) * RATE[1] - FEE) / (Math.abs(sl - mid) * RATE[1] + FEE);
-  if (!reject && rr < 0.6) reject = "نسبت سود به ضرر ضعیف است";
+  if (!reject && rr < 0.6) reject = "سود احتمالی نسبت به ضرر کم است";
   const roundNearSL = R5(sl - 1, sl + 1).length > 0;
   const obvious = L.kinds.some((k) => /high|low|PDH|PDL/i.test(k));
   const f = {
@@ -350,8 +378,8 @@ function candidate(ctx, L, dir) {
   };
   const sc = scoreSetup(f);
   const half = (L.touches >= 2 || L.strength === "strong") ? "better" : "near";
-  const halfFa = dir < 0 ? (half === "better" ? "بالا" : "پایین") : (half === "better" ? "پایین" : "بالا");
-  const halfWhy = inside ? "قیمت همین الان داخل بازه است" : half === "better" ? "قیمت بهتری دارد و سطح معتبر است" : "زودتر پر می‌شود";
+  const halfFa = dir < 0 ? (half === "better" ? "بالای" : "پایین") : (half === "better" ? "پایین" : "بالای");
+  const halfWhy = inside ? "قیمت همین الان در این بازه است" : half === "better" ? "قیمت بهتری دارد" : "زودتر پر می‌شود";
   return { side: dir > 0 ? "BUY" : "SELL", dir, lo, hi, best, worst, sl, tp1: t1.tp, tp2: t2.tp, tp1Level: t1.level, tp2Level: t2.level,
     level: L, rr: r2(rr), dist: r2(dist), inside, factors: Object.fromEntries(Object.entries(f).map(([k, v]) => [k, r2(v)])),
     score: sc.score, reason: sc.reason, half, halfFa, halfWhy, invalid: sl, reject };
@@ -369,7 +397,7 @@ export function buildSetups(ctx) {
   for (const k of ["SELL", "BUY"]) {
     out[k].sort((a, b) => b.score - a.score);
     out[k] = out[k].slice(0, 2);
-    if (!out[k].length && !out.why[k]) out.why[k] = k === "SELL" ? "سطحی بالای قیمت در دسترس نیست" : "سطحی زیر قیمت در دسترس نیست";
+    if (!out[k].length && !out.why[k]) out.why[k] = k === "SELL" ? "سطح مناسبی بالای قیمت نیست" : "سطح مناسبی زیر قیمت نیست";
   }
   return out;
 }
@@ -381,39 +409,41 @@ function moneyLines(c, price, group) {
   const a5 = netToman(c.dir, c.best, price, 0.5), b5 = netToman(c.dir, c.worst, price, 0.5);
   return [`   یک واحد ${tomanFa(a)} تا ${tomanFa(b)} · نیم واحد ${tomanFa(a5)} تا ${tomanFa(b5)}`];
 }
-function setupBlock(c, i, untilMs, group) {
-  const warn = c.score < 40 ? " ⚠" : "";
-  const lv = c.level, t1 = c.tp1Level, t2 = c.tp2Level;
-  const L = [`**${ICON[c.side]} ${SIDE_FA[c.side]} ${i}** · اعتبار سیگنال ${c.score} از 100${warn}`,
-    `ورود \`${px(c.lo)}\` تا \`${px(c.hi)}\` · نیمه‌ی ${c.halfFa} بهتر است؛ ${c.halfWhy}`,
-    `🛑 حد ضرر \`${px(c.sl)}\``, ...moneyLines(c, c.sl, group),
-    `🎯 حد سود ۱ \`${px(c.tp1)}\``, ...moneyLines(c, c.tp1, group),
-    `🎯 حد سود ۲ \`${px(c.tp2)}\``, ...moneyLines(c, c.tp2, group),
-    `~~سطح \`${p1(lv.price)}\` (${lv.label || "سطح"})` + (t1 ? ` · حد سود ۱ پیش از \`${p1(t1.price)}\`` : "") + (t2 ? ` · حد سود ۲ پیش از \`${p1(t2.price)}\`` : "") + "~~",
-    `~~معتبر تا ${hmOf(untilMs)}؛ اگر پیش از ورود قیمت به \`${px(c.invalid)}\` برسد، باطل است~~`,
-    `دلیل: ${c.reason}`];
-  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ این ستاپ پرخطر است");
+function setupBlock(c, i, untilMs, group, P) {
+  const lv = c.level, word = SIDE_FA[c.side];
+  const where = c.inside ? `قیمت همین الان در بازه‌ی \`${px(c.lo)}\` تا \`${px(c.hi)}\` است؛ می‌توانید ${word} بگذارید`
+    : `اگر قیمت ${c.dir < 0 ? "بالا" : "پایین"} بیاید و به \`${px(c.lo)}\` تا \`${px(c.hi)}\` برسد، آنجا ${word} بگذارید`;
+  const L = [`**${ICON[c.side]} ${word} ${i}** · اعتبار ${c.score} از ۱۰۰${c.score < 40 ? " ⚠" : ""}`,
+    c.inside ? `${where}.` : `${where} (${c.halfFa} بازه ${c.halfWhy}).`,
+    `~~این بازه کنار سطح \`${p1(lv.price)}\` است${plainLabel(lv) ? ` (${plainLabel(lv)})` : ""}؛ قیمت نزدیک سطح‌ها ممکن است برگردد.~~`,
+    `🛑 حد ضرر \`${px(c.sl)}\`: اگر قیمت به اینجا برسد، معامله با ضرر بسته می‌شود.`, ...moneyLines(c, c.sl, group),
+    `🎯 حد سود ۱ \`${px(c.tp1)}\`: هدف نزدیک‌تر.`, ...moneyLines(c, c.tp1, group),
+    `🎯 حد سود ۲ \`${px(c.tp2)}\`: هدف دورتر؛ سود بیشتر، ولی دیرتر یا کمتر می‌رسد.`, ...moneyLines(c, c.tp2, group),
+    `⏳ تا ${hmOf(untilMs)} معتبر است. اگر پیش از ورود، قیمت به \`${px(c.invalid)}\` برسد، این ستاپ را کنار بگذارید.`,
+    `چرا اعتبار ${c.score}: ${c.reason}.`];
+  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ این ستاپ پرخطر است.");
   return L.join("\n");
 }
 const WHY_UNTIL = { time: "", news: " (پیش از خبر)", friday: " (پایان ورود جمعه)", close: " (بسته‌شدن دریاگلد)" };
 export function setupMsg(res, ctx, v, { group = false, snapNote = null } = {}) {
-  const t = ctx.trend;
-  const head = ["**🎯 ستاپ‌ها**", `~~${hmOf(ctx.nowMs)} به وقت تهران · دریاگلد \`${px(ctx.quote.dg)}\` · معتبر تا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""}~~`,
-    `~~روند: ۴ ساعت ${t.H4} · ۱ ساعت ${t.H1} · ۱۵ دقیقه ${t.M15} · ۵ دقیقه ${t.M5}~~`];
+  const sm = trendSummary(ctx.trend);
+  const head = ["**🎯 ستاپ‌ها**", `~~${hmOf(ctx.nowMs)} به وقت تهران · قیمت دریاگلد \`${px(ctx.quote.dg)}\` · معتبر تا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""}~~`,
+    "~~ستاپ یعنی یک نقشه‌ی آماده: کجا وارد شوید، کجا با ضرر خارج شوید و کجا سود بگیرید. اعتبار از ۰ تا ۱۰۰ است؛ هرچه بیشتر، بهتر.~~",
+    "", `روند: ${sm.line}`];
   if (snapNote) head.push(`~~${snapNote}~~`);
   const L = [head.join("\n")];
-  if (!group && (res.SELL.length || res.BUY.length)) L.push("~~مبلغ‌ها به تومان و با کسر کارمزد؛ اولی برای بهترین و دومی برای بدترین نقطه‌ی بازه~~");
+  if (!group && (res.SELL.length || res.BUY.length)) L.push("~~مبلغ‌ها به تومان و بعد از کسر کارمزد است؛ عدد اول برای بهترین و عدد دوم برای بدترین نقطه‌ی بازه‌ی ورود.~~");
   for (const k of ["SELL", "BUY"]) {
-    if (res[k].length) res[k].forEach((c, i) => L.push(setupBlock(c, i + 1, v.untilMs, group)));
-    else L.push(`${ICON[k]} فعلاً ستاپ معقولی برای ${SIDE_FA[k]} نیست؛ ${res.why[k]}.`);
+    if (res[k].length) res[k].forEach((c, i) => L.push(setupBlock(c, i + 1, v.untilMs, group, ctx.quote.dg)));
+    else L.push(`${ICON[k]} فعلاً ${SIDE_FA[k]} منطقی نیست، چون ${res.why[k]}.`);
   }
-  if (res.SELL.length || res.BUY.length) L.push("~~حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد، پس هنگام ورود یکی را انتخاب کنید~~");
+  if (res.SELL.length || res.BUY.length) L.push("~~حد سود ۱ و ۲ دو انتخاب‌اند. دریاگلد بستن بخشی ندارد، پس هنگام ورود فقط یکی را بگذارید.~~");
   return L.join("\n\n");
 }
 export function noSetupMsg(v, nowMs) {
-  if (v.closed === "friday") return "**🎯 ستاپ‌ها**\n~~ورود جدید از ساعت 23:30 جمعه بسته است؛ ستاپی چیده نمی‌شود~~";
-  if (v.news) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nپنجره‌ی خبر تا ${hmOf(v.news.endMs)} ادامه دارد؛ تا آن موقع ستاپی چیده نمی‌شود.`;
-  if (v.short) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nتا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""} کمتر از ۱۰ دقیقه مانده؛ ستاپ تازه چیده نمی‌شود.`;
+  if (v.closed === "friday") return "**🎯 ستاپ‌ها**\nجمعه از ساعت 23:30 ورود جدید بسته است، پس ستاپی داده نمی‌شود.\n~~دریاگلد ساعت 00:30 بسته می‌شود؛ معامله‌های باز را تا آن موقع ببندید.~~";
+  if (v.news) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nالان زمان یک خبر مهم آمریکاست و قیمت ممکن است تند و غیرقابل‌پیش‌بینی حرکت کند؛ تا ${hmOf(v.news.endMs)} ستاپی داده نمی‌شود.`;
+  if (v.short) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nتا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""} کمتر از ۱۰ دقیقه مانده و برای ستاپ تازه وقت کافی نیست.`;
   return null;
 }
 
@@ -432,8 +462,8 @@ export function parseEntry(args) {
 }
 export function directionFrom(t) {
   const sm = trendSummary(t);
-  if (sm.higher) return { dir: sm.higher === UP ? 1 : -1, why: `روند کلی ${sm.higher}` };
-  for (const tf of ["H1", "M15"]) if (t[tf] === UP || t[tf] === DOWN) return { dir: t[tf] === UP ? 1 : -1, why: `روند ${TF_FA[tf]} ${t[tf]}` };
+  if (sm.higher) return { dir: sm.higher === UP ? 1 : -1, why: `جهت بزرگ بازار ${sm.higher} است` };
+  for (const tf of ["H1", "M15"]) if (t[tf] === UP || t[tf] === DOWN) return { dir: t[tf] === UP ? 1 : -1, why: `روند ${TF_FA[tf]} ${t[tf]} است` };
   return null;
 }
 export function planEntry(ctx, dir, E) {
@@ -453,34 +483,63 @@ export function planEntry(ctx, dir, E) {
 }
 export function entryMsg(p, { quote, nowMs, dirWhy = null }) {
   const m = (price) => `   یک واحد ${tomanFa(netToman(p.dir, p.entry, price, 1))} · نیم واحد ${tomanFa(netToman(p.dir, p.entry, price, 0.5))}`;
-  const L = [`**📐 ${p.dir > 0 ? "خرید" : "فروش"} از \`${px(p.entry)}\`**`,
-    `~~${dirWhy ? `جهت از ${dirWhy} · ` : ""}${hmOf(nowMs)} به وقت تهران` + (quote ? ` · دریاگلد الان \`${px(quote.dg)}\`` : "") + "~~", "",
-    `🛑 حد ضرر \`${px(p.sl)}\``, m(p.sl), `🎯 حد سود ۱ \`${px(p.tp1)}\``, m(p.tp1), `🎯 حد سود ۲ \`${px(p.tp2)}\``, m(p.tp2), ""];
+  const word = p.dir > 0 ? "خرید" : "فروش";
+  const L = [`**📐 ${word} از \`${px(p.entry)}\`**`,
+    `~~${hmOf(nowMs)} به وقت تهران` + (quote ? ` · قیمت دریاگلد الان \`${px(quote.dg)}\`` : "") + "~~"];
+  if (dirWhy) L.push(`جهت را ننوشتید؛ ${word} در نظر گرفته شد، چون ${dirWhy}.`);
+  L.push("", `🛑 حد ضرر \`${px(p.sl)}\`: اگر قیمت به اینجا برسد، با ضرر خارج شوید.`, m(p.sl),
+    `🎯 حد سود ۱ \`${px(p.tp1)}\`: هدف نزدیک‌تر.`, m(p.tp1),
+    `🎯 حد سود ۲ \`${px(p.tp2)}\`: هدف دورتر؛ سود بیشتر، ولی دیرتر یا کمتر می‌رسد.`, m(p.tp2), "");
   const why = [];
-  why.push(p.slLevel ? `حد ضرر ${p.dir < 0 ? "بالای" : "زیر"} سطح \`${p1(p.slLevel.price)}\`` : "حد ضرر بر پایه‌ی نوسان است، چون تا ۹ دلار سطحی نبود");
-  if (p.tp1Level) why.push(`حد سود ۱ پیش از \`${p1(p.tp1Level.price)}\``);
-  if (p.tp2Level) why.push(`حد سود ۲ پیش از \`${p1(p.tp2Level.price)}\``);
-  L.push(`~~${why.join("؛ ")}~~`, "~~مبلغ‌ها به تومان و با کسر کارمزد · حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد~~");
+  why.push(p.slLevel ? `حد ضرر کمی ${p.dir < 0 ? "بالای" : "زیر"} سطح \`${p1(p.slLevel.price)}\` است تا اگر قیمت فقط به سطح سر زد، معامله بسته نشود.`
+    : "در فاصله‌ی ۹ دلاری سطحی نبود؛ حد ضرر بر اساس اندازه‌ی معمول حرکت قیمت گذاشته شده.");
+  if (p.tp1Level) why.push(`حد سود ۱ کمی قبل از سطح \`${p1(p.tp1Level.price)}\` است، چون قیمت ممکن است آنجا برگردد.`);
+  L.push(...why.map((w) => `~~${w}~~`), "~~مبلغ‌ها به تومان و بعد از کسر کارمزد است. دریاگلد بستن بخشی ندارد، پس فقط یکی از دو حد سود را بگذارید.~~");
   if (quote && Math.abs(p.entry - quote.dg) > 30) L.push("", "⚠ قیمت ورود بیش از ۳۰ دلار با قیمت فعلی فاصله دارد؛ عدد را دوباره بررسی کنید.");
   return L.join("\n");
 }
 
 // ---------------- alerts (/tick) ----------------
-// Level touch: once per level per trading day; bars are DaryaGold-converted 1-minute bars since the last check.
+// Level touch (owner t240u/t241u): only when price comes within TOUCH_USD of the level price itself (not the zone edge);
+// once per level per trading day. The text says how far price went, how close it came, and where it is now.
+export const TOUCH_USD = 1;
 export function levelAlerts(levels, bars, { day, sent = {}, snapAtMs = 0 }) {
   const out = [];
   for (const L of levels) {
     if (L.glued) continue;
     const key = `lvl:${day}:${p1(L.price)}`;
     if (sent[key]) continue;
-    const hit = bars.filter((b) => b[0] >= snapAtMs && b[2] >= L.lo && b[3] <= L.hi);
-    if (!hit.length) continue;
-    const prev = bars[bars.indexOf(hit[0]) - 1], last = bars[bars.length - 1];
-    const fromBelow = prev ? prev[4] < L.lo : hit[0][1] < L.price;
-    const through = fromBelow ? last[4] > L.hi : last[4] < L.lo;
-    const kind = fromBelow ? "مقاومت" : "حمایت";
-    const head = through ? `از سطح \`${p1(L.price)}\` ${fromBelow ? "بالاتر" : "پایین‌تر"} رفت` : `به محدوده‌ی سطح \`${p1(L.price)}\` رسید`;
-    out.push({ key, text: `**📍 قیمت ${head}**\n~~${kind}${L.label ? " · " + L.label : ""} · ${hmOf(last[0] + 60000)} به وقت تهران~~\n\nدریاگلد \`${px(last[4])}\`` });
+    const i0 = bars.findIndex((b) => b[0] >= snapAtMs && b[3] <= L.price + TOUCH_USD && b[2] >= L.price - TOUCH_USD);
+    if (i0 < 0) continue;
+    const prev = bars[i0 - 1], after = bars.slice(i0), last = bars[bars.length - 1], now = last[4];
+    const fromAbove = prev ? prev[4] > L.price : bars[i0][1] >= L.price;    // coming down onto a support, or up into a resistance
+    const ext = fromAbove ? Math.min(...after.map((b) => b[3])) : Math.max(...after.map((b) => b[2]));
+    const lvl = `\`${p1(L.price)}\``, kind = fromAbove ? "حمایت" : "مقاومت";
+    const gap = (ext - L.price) * (fromAbove ? 1 : -1);   // > 0: stopped before the level; < 0: went past it
+    const reach = `قیمت تا \`${px(ext)}\` ${fromAbove ? "پایین" : "بالا"} ${fromAbove ? "آمد" : "رفت"}` +
+      (gap > 0.05 ? ` (${usd(gap)} دلار مانده به سطح)` : gap < -0.05 ? ` (${usd(gap)} دلار هم از سطح ${fromAbove ? "پایین‌تر" : "بالاتر"} رفت)` : " (درست روی سطح)");
+    const past = (now - L.price) * (fromAbove ? -1 : 1);   // > 0: now on the other side
+    let head, meaning, watch;
+    if (past > TOUCH_USD) {
+      head = `📍 قیمت از سطح ${kind} ${lvl} رد شد`;
+      meaning = `الان قیمت \`${px(now)}\` است، یعنی ${usd(past)} دلار ${fromAbove ? "زیر" : "بالای"} سطح؛ سطح فعلاً نگه نداشته است.`;
+      watch = `اگر قیمت ${fromAbove ? "زیر" : "بالای"} ${lvl} بماند، حرکت ممکن است ادامه پیدا کند؛ گاهی هم قیمت برمی‌گردد و سطح را دوباره امتحان می‌کند.`;
+    } else if (Math.abs(now - L.price) <= TOUCH_USD) {
+      head = `📍 قیمت به سطح ${kind} ${lvl} رسیده است`;
+      meaning = `الان قیمت \`${px(now)}\` است، یعنی درست کنار سطح.`;
+      watch = `اگر از اینجا ${fromAbove ? "بالا" : "پایین"} برگردد، سطح نگه داشته؛ اگر از آن رد شود و ${fromAbove ? "زیرش" : "بالایش"} بماند، حرکت ممکن است ادامه پیدا کند.`;
+    } else if (gap < -TOUCH_USD) {
+      head = `📍 قیمت کمی از سطح ${kind} ${lvl} ${fromAbove ? "پایین‌تر" : "بالاتر"} رفت، ولی برگشت`;
+      meaning = `الان قیمت \`${px(now)}\` است، یعنی دوباره ${fromAbove ? "بالای" : "زیر"} سطح (${usd(Math.abs(now - L.price))} دلار ${fromAbove ? "بالاتر" : "پایین‌تر"})؛ سطح هنوز تا حدی کار می‌کند.`;
+      watch = `اگر قیمت دوباره ${fromAbove ? "زیر" : "بالای"} ${lvl} برود و آنجا بماند، احتمال ادامه‌ی حرکت ${fromAbove ? "رو به پایین" : "رو به بالا"} بیشتر می‌شود.`;
+    } else {
+      head = `📍 قیمت به سطح ${kind} ${lvl} نزدیک شد و برگشت`;
+      meaning = `الان قیمت \`${px(now)}\` است، یعنی ${usd(now - ext)} دلار از نزدیک‌ترین نقطه ${fromAbove ? "بالا" : "پایین"} آمده؛ سطح فعلاً نگه داشته است.`;
+      watch = `اگر قیمت دوباره به ${lvl} برگشت و از آن رد شد، احتمال ادامه‌ی حرکت ${fromAbove ? "رو به پایین" : "رو به بالا"} بیشتر می‌شود.`;
+    }
+    const origin = plainLabel(L);
+    out.push({ key, text: [`**${head}**`, `~~${hmOf(last[0] + 60000)} به وقت تهران~~`, "", `${reach}.`, meaning, "", `👀 ${watch}`,
+      ...(origin ? [`~~این سطح: ${origin}.~~`] : [])].join("\n") });
   }
   return out.slice(0, 2);
 }
@@ -488,7 +547,9 @@ export function trendAlerts(prev, now, summary, atMs) {
   const out = [];
   for (const tf of ["M15", "H1"]) {
     if (!prev || !prev[tf] || prev[tf] === now[tf]) continue;
-    out.push(`**🔄 تغییر روند ${TF_FA[tf]}**\n~~از ${prev[tf]} به ${now[tf]} · ${hmOf(atMs)} به وقت تهران~~\n\nروند کلی: ${summary.line}`);
+    const span = tf === "M15" ? "در کوتاه‌مدت" : "در یکی دو ساعت اخیر";
+    out.push(`**🔄 روند ${TF_FA[tf]} عوض شد: از ${prev[tf]} به ${now[tf]}**\n~~${hmOf(atMs)} به وقت تهران~~\n\n` +
+      `یعنی ${span} قیمت ${NOT_GO[prev[tf]] || "جهتش عوض شده"} و حالا ${GO[now[tf]] || "جهت روشنی ندارد"}.\n\nتصویر کلی: ${summary.line}`);
   }
   return out;
 }
@@ -503,9 +564,11 @@ export function volState(m5closed, nowMs) {
   return { state, atr: r2(last), pct: Math.round(pct), big };
 }
 export function volAlert(v, atMs) {
-  if (v.state === "high") return `**🌪 بازار خیلی پرنوسان است**\n~~نوسان ۵ دقیقه حدود ${Math.round(v.atr * 10) / 10} دلار` +
-    (v.big ? "؛ یک کندل ۵ دقیقه‌ای بیش از ۲٫۵ برابر میانگین" : `؛ بیشتر از ${v.pct}٪ از ۲۴ ساعت گذشته`) + ` · ${hmOf(atMs)} به وقت تهران~~\n\nحد ضرر را دورتر بگذارید و حجم کمتری در نظر بگیرید.`;
-  if (v.state === "low") return `**😴 بازار خیلی کم‌تحرک است**\n~~نوسان ۵ دقیقه حدود ${Math.round(v.atr * 10) / 10} دلار؛ کمتر از ۹۰٪ از ۲۴ ساعت گذشته · ${hmOf(atMs)} به وقت تهران~~\n\nحرکت‌ها کوتاه‌اند؛ هدف‌های نزدیک‌تر واقع‌بینانه‌ترند.`;
+  const a = usd(v.atr), at = `~~${hmOf(atMs)} به وقت تهران~~`;
+  if (v.state === "high") return `**🌪 بازار الان خیلی پرنوسان است**\n${at}\n\n` +
+    (v.big ? "در ۵ دقیقه‌ی اخیر قیمت ناگهان خیلی بیشتر از معمول جابه‌جا شد. " : "") +
+    `قیمت الان در هر ۵ دقیقه حدود ${a} دلار بالا و پایین می‌رود که از بیشتر ساعت‌های ۲۴ ساعت گذشته بیشتر است.\n\n👀 اگر معامله می‌کنید، حد ضرر را دورتر و حجم را کمتر بگذارید و عجولانه وارد نشوید.`;
+  if (v.state === "low") return `**😴 بازار الان خیلی آرام است**\n${at}\n\nقیمت در هر ۵ دقیقه فقط حدود ${a} دلار حرکت می‌کند که از بیشتر ساعت‌های ۲۴ ساعت گذشته کمتر است.\n\n👀 حرکت‌ها کوتاه‌اند؛ هدف‌های نزدیک‌تر واقع‌بینانه‌ترند و ممکن است سفارش‌ها دیر پر شوند.`;
   return null;
 }
 const NEWS_FA = [[/non-?farm|nfp/i, "اشتغال غیرکشاورزی آمریکا (NFP)"], [/core cpi/i, "تورم هسته‌ی مصرف‌کننده‌ی آمریکا (Core CPI)"],
@@ -525,7 +588,7 @@ export function newsAlerts(news, nowMs, sent = {}, leadMin = 12) {
     const names = [...new Set(ws.map((w) => newsFa(w.label)))];
     const a = Math.min(...ws.map((w) => w.startMs)), z = Math.max(...ws.map((w) => w.endMs));
     return { keys: ws.map((w) => `news:${w.label}|${w.eventMs}`),
-      text: `**📰 خبر مهم تا ${mins} دقیقه‌ی دیگر**\n~~ساعت ${hmOf(t)} به وقت تهران~~\n\n${names.join("\n")}\n\nپنجره‌ی پرهیز \`${hmOf(a)}\` تا \`${hmOf(z)}\`؛ در این بازه ستاپی چیده نمی‌شود.` };
+      text: `**📰 خبر مهم آمریکا تا ${mins} دقیقه‌ی دیگر**\n~~ساعت ${hmOf(t)} به وقت تهران~~\n\n${names.join("\n")}\n\nموقع این خبرها قیمت طلا می‌تواند در چند ثانیه چند دلار بالا یا پایین برود.\n👀 از ${hmOf(a)} تا ${hmOf(z)} ستاپی داده نمی‌شود؛ بهتر است در این بازه وارد معامله نشوید.` };
   });
 }
 

@@ -156,9 +156,10 @@ def test_format_block_drops_importance_and_touch_count():
     block = LV.format_block(snap)
     assert "خیلی مهم" not in block and "مهم" not in block
     assert "تماس M15" not in block and "قوی" not in block and "زیان" not in block
-    assert "2.1 ATR" in block and "OR نیویورک" in block
+    # plain wording for beginners: dollar distance and plain origin, no ATR / OR / regime / zone jargon
+    assert "3.7 دلار پایین‌تر" in block and "کف شروع عصر" in block
     assert "دریاگلد" in block and "18:30 به وقت تهران" in block
-    assert "گسترش نوسان" in block and "پهنه سطح" in block and "±2.2" in block
+    assert not any(x in block for x in ("ATR", "OR ", "رژیم", "پهنه", "M5", "H1", "H4"))
     assert "ورود" not in block and "حد ضرر" not in block and "هدف" not in block
 
 
@@ -171,7 +172,7 @@ def test_merge_overlapping_zones_keeps_tags():
     out = LV.merge_zones([a, b], price_bid=3576.0)
     assert len(out) == 1
     assert set(out[0]["kinds"]) == {"Round $100", "London high"}
-    assert "رُند" in out[0]["label_fa"] and "سقف لندن" in out[0]["label_fa"]
+    assert "عدد رُند 3600" in out[0]["label_fa"] and "سقف ظهر امروز" in out[0]["label_fa"]
 
 
 def test_zone_half_floor_is_one_dollar():

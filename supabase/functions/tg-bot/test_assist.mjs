@@ -3,7 +3,7 @@
 // usage: node supabase/functions/tg-bot/test_assist.mjs
 import { makeApp } from "./app.js";
 import * as A from "./assist.js";
-import { render, HELP, COMMANDS } from "./lib.js";
+import { render, HELP, COMMANDS, levelsMsg } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co", GID = "-1001958445009", OWNER = "45639251";
@@ -93,14 +93,14 @@ check("emaLast = pandas ewm(adjust=False)", Math.abs(A.emaLast([1, 2, 3], 2) - (
 const fr = A.fractals([[0, 0, 1, 0, 0], [1, 0, 2, 0, 0], [2, 0, 3, -1, 0], [3, 0, 9, -2, 0], [4, 0, 3, -1, 0], [5, 0, 2, 0, 0], [6, 0, 1, 0, 0]], 3, 0);
 check("fractals: 3-bar swing high confirmed only with 3 bars each side", fr.highs.length === 1 && fr.highs[0][1] === 9 && fr.lows.length === 1 && fr.lows[0][1] === -2);
 const down = { M5: "نزولی", M15: "نزولی", H1: "نزولی", H4: "نزولی" };
-check("trend summary: aligned", A.trendSummary(down).line === "نزولی است و ۱۵ دقیقه و ۵ دقیقه هم با آن هم‌جهت‌اند." && A.trendSummary(down).overall === "نزولی");
+check("trend summary: aligned", A.trendSummary(down).line === "جهت بزرگ بازار نزولی است (قیمت در ساعت‌های اخیر بیشتر پایین رفته) و حرکت کوتاه‌مدت هم با آن هم‌جهت است." && A.trendSummary(down).overall === "نزولی");
 check("trend summary: lower TFs correcting (t228u wording)", A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "صعودی", H4: "صعودی" }).line ===
-  "صعودی است، ولی تایم‌فریم‌های پایین‌تر در اصلاح‌اند. اگر می‌خواهید در جهت روند اصلی بخرید، صبر کنید تا ۵ و ۱۵ دقیقه دوباره صعودی شوند.");
-check("trend summary: one TF correcting", A.trendSummary({ M5: "صعودی", M15: "نزولی", H1: "نزولی", H4: "نزولی" }).line.includes("ولی ۵ دقیقه در اصلاح است"));
+  "جهت بزرگ بازار صعودی است (قیمت در ساعت‌های اخیر بیشتر بالا رفته)، ولی در کوتاه‌مدت قیمت کمی برعکس برگشته است. برای خرید بهتر است صبر کنید تا ۵ و ۱۵ دقیقه‌ای هم دوباره صعودی شوند.");
+check("trend summary: one TF correcting", A.trendSummary({ M5: "صعودی", M15: "نزولی", H1: "نزولی", H4: "نزولی" }).line.includes("ولی ۵ دقیقه‌ای فعلاً برعکس برگشته است"));
 check("trend summary: H4≠H1 → نامشخص; both flat → خنثی", A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "نزولی" }).overall === "نامشخص" &&
   A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "خنثی" }).overall === "خنثی");
 const tm = A.trendMsg(down, { quote: { dg: 3530.12 }, dataAt: CLOCK.getTime(), at: CLOCK.getTime() });
-check("/trend card: M5, M15, H1, H4 lines, overall line, last-data time, Latin price", ["۵ دقیقه: نزولی", "۱۵ دقیقه: نزولی", "۱ ساعت: نزولی", "۴ ساعت: نزولی", "**روند کلی:**", "آخرین داده"].every((x) => tm.includes(x)) && tm.includes("`3530.12`"));
+check("/trend card: plain summary first, then M5, M15, H1, H4 lines, last-data time, Latin price", ["جهت بزرگ بازار نزولی است", "۵ دقیقه‌ای: نزولی", "۱۵ دقیقه‌ای: نزولی", "۱ ساعته: نزولی", "۴ ساعته: نزولی", "**جزئیات**", "آخرین قیمت"].every((x) => tm.includes(x)) && tm.includes("`3530.12`"));
 check("money: fee once per trade, 1U = 80k/$ and 0.5U = 40k/$", A.netToman(-1, 3540, 3530, 1) === 786000 && A.netToman(-1, 3540, 3530, 0.5) === 386000 && A.netToman(1, 3540, 3539, 1) === -94000);
 check("tomanFa: short signed amounts", A.tomanFa(-248400) === "−248 هزار" && A.tomanFa(1480000) === "+1.48 میلیون");
 const onHalf = (x) => Math.abs(x * 2 - Math.round(x * 2)) < 0.05;
@@ -130,10 +130,10 @@ check("setup valid 45 min by default", v.untilMs - ms("2026-11-18T15:00:00Z") ==
 v = A.validity(baseCtx({ news: newsAt("2026-11-18T18:55", "2026-11-18T19:30") }));
 check("next major news cuts the validity at its window start", A.hmOf(v.untilMs) === "18:55" && v.why === "news");
 v = A.validity(baseCtx({ news: newsAt("2026-11-18T18:20", "2026-11-18T19:00") }));
-check("inside a news window: no setup, says until when", v.news && A.noSetupMsg(v, ms("2026-11-18T15:00:00Z")).includes("پنجره‌ی خبر تا 19:00"));
+check("inside a news window: no setup, says until when", v.news && A.noSetupMsg(v, ms("2026-11-18T15:00:00Z")).includes("زمان یک خبر مهم آمریکاست") && A.noSetupMsg(v, ms("2026-11-18T15:00:00Z")).includes("تا 19:00 ستاپی داده نمی‌شود"));
 v = A.validity(baseCtx({ news: newsAt("2026-11-18T18:20", "2026-11-18T19:00", "C") }));
 check("tier C news does not block setups", !v.news);
-check("Friday after 23:30: setup says entries are closed", A.noSetupMsg(A.validity(baseCtx({ nowMs: ms("2026-11-20T20:05:00Z") })), 0).includes("از ساعت 23:30 جمعه بسته است"));
+check("Friday after 23:30: setup says entries are closed", A.noSetupMsg(A.validity(baseCtx({ nowMs: ms("2026-11-20T20:05:00Z") })), 0).includes("جمعه از ساعت 23:30 ورود جدید بسته است"));
 
 // setups
 const res = A.buildSetups(baseCtx());
@@ -150,11 +150,11 @@ const vv = A.validity(baseCtx());
 const msgO = A.setupMsg(res, baseCtx(), vv), msgG = A.setupMsg(res, baseCtx(), vv, { group: true });
 ALL.push(msgO, msgG);
 check("owner setup card: entry range, SL, TP1, TP2, credibility, expiry, invalidation, best/worst toman for 1U and 0.5U",
-  ["اعتبار سیگنال", "ورود `", "حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "معتبر تا", "باطل است", "یک واحد", "نیم واحد", "بهترین", "دو انتخاب‌اند", "نیمه‌ی"].every((x) => msgO.includes(x)));
-check("group setup card: same prices, no toman/balance", !/تومان|هزار|میلیون|موجودی/.test(msgG) && msgG.includes("اعتبار سیگنال") && msgG.includes(`\`${A.px(res.SELL[0].sl)}\``));
+  ["ستاپ یعنی یک نقشه‌ی آماده", "اعتبار ", "از ۱۰۰", " برسد، آنجا ", "حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "معتبر است", "این ستاپ را کنار بگذارید", "یک واحد", "نیم واحد", "بهترین", "دو انتخاب‌اند", "چرا اعتبار"].every((x) => msgO.includes(x)));
+check("group setup card: same prices, no toman/balance", !/تومان|هزار|میلیون|موجودی/.test(msgG) && msgG.includes("از ۱۰۰") && msgG.includes(`\`${A.px(res.SELL[0].sl)}\``));
 const weak = { ...res.BUY[0], score: 31 };
 const msgW = A.setupMsg({ SELL: [], BUY: [weak], why: { SELL: "تا سطح بعدی جا کم است", BUY: null } }, baseCtx(), vv);
-check("score under 40 is flagged ⚠; empty side says clearly why", msgW.includes("31 از 100 ⚠") && msgW.includes("فعلاً ستاپ معقولی برای فروش نیست؛ تا سطح بعدی جا کم است."));
+check("score under 40 is flagged ⚠; empty side says clearly why", msgW.includes("31 از ۱۰۰ ⚠") && msgW.includes("فعلاً فروش منطقی نیست، چون تا سطح بعدی جا کم است."));
 const r0 = A.buildSetups(baseCtx({ levels: [] }));
 check("no levels → both sides say no sensible setup", !r0.SELL.length && !r0.BUY.length && r0.why.SELL && r0.why.BUY);
 // /e
@@ -162,7 +162,7 @@ const pe = A.planEntry({ levels: lv, atr5: 4 }, -1, 3535.5);
 check("/e sell inside a resistance zone: SL behind that zone, TP1 before the next support", pe.sl > 3537.7 && pe.sl - 3535.5 <= 9 && pe.tp1 < 3530 && pe.tp2 < pe.tp1 && pe.slLevel && pe.tp1Level);
 const em = A.entryMsg(pe, { quote: { dg: 3530 }, nowMs: ms("2026-11-18T15:00:00Z"), dirWhy: "روند کلی نزولی" });
 ALL.push(em);
-check("/e card: SL/TP1/TP2 with 1U and 0.5U net toman; alternatives note", ["حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "یک واحد", "نیم واحد", "دو انتخاب‌اند"].every((x) => em.includes(x)) &&
+check("/e card: SL/TP1/TP2 with 1U and 0.5U net toman; alternatives note", ["حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "یک واحد", "نیم واحد", "فقط یکی از دو حد سود"].every((x) => em.includes(x)) &&
   em.includes(A.tomanFa(A.netToman(-1, 3535.5, pe.sl, 1))));
 const pf = A.planEntry({ levels: [], atr5: 4 }, 1, 3530);
 check("/e without a level nearby: volatility SL, still ≥ $1", pf.sl < 3529 && pf.tp1 > 3530 && !pf.slLevel);
@@ -170,11 +170,15 @@ check("direction from trend; none when nothing is clear", A.directionFrom(down).
 
 // alerts (pure)
 const t0 = ms("2026-11-18T15:00:00Z");
-const la = A.levelAlerts(lv, [[t0 - 120000, 3532, 3533, 3531.5, 3533], [t0 - 60000, 3533, 3535.0, 3532.9, 3534.9]], { day: "2026-11-18", sent: {} });
-check("level touch alert: once, with level price and kind", la.length === 1 && la[0].text.includes("به محدوده‌ی سطح `3536.2` رسید") && la[0].text.includes("مقاومت"));
+check("level touch: price $1.2 short of the level (inside its zone) → no alert", A.levelAlerts(lv, [[t0 - 120000, 3532, 3533, 3531.5, 3533], [t0 - 60000, 3533, 3535.0, 3532.9, 3534.9]], { day: "2026-11-18", sent: {} }).length === 0);
+const la = A.levelAlerts(lv, [[t0 - 180000, 3532, 3533, 3531.5, 3533], [t0 - 120000, 3533, 3535.6, 3532.9, 3535.4], [t0 - 60000, 3535.4, 3535.5, 3532.8, 3533.0]], { day: "2026-11-18", sent: {} });
+check("level touch alert within $1: says how high price went, the gap, where it is now (bounced)", la.length === 1 && la[0].text.includes("سطح مقاومت `3536.2` نزدیک شد و برگشت") &&
+  la[0].text.includes("قیمت تا `3535.60` بالا رفت") && la[0].text.includes("دلار مانده به سطح") && la[0].text.includes("الان قیمت `3533.00` است") && la[0].text.includes("👀"));
+const lx = A.levelAlerts(lv, [[t0 - 120000, 3533, 3535.6, 3532.9, 3535.4], [t0 - 60000, 3535.4, 3538.9, 3535.3, 3538.6]], { day: "2026-11-18", sent: {} });
+check("level crossed: says it broke through and where price is now", lx.length === 1 && lx[0].text.includes("از سطح مقاومت `3536.2` رد شد") && lx[0].text.includes("بالای سطح"));
 check("level touch not repeated the same day", A.levelAlerts(lv, [[t0 - 60000, 3533, 3535.0, 3532.9, 3534.9]], { day: "2026-11-18", sent: { [la[0].key]: 1 } }).length === 0);
 const ta = A.trendAlerts({ M15: "خنثی", H1: "نزولی" }, { M15: "نزولی", H1: "نزولی" }, A.trendSummary(down), t0);
-check("trend change alert only for the TF that changed; none on first run", ta.length === 1 && ta[0].includes("تغییر روند ۱۵ دقیقه") && ta[0].includes("از خنثی به نزولی") &&
+check("trend change alert only for the TF that changed; none on first run", ta.length === 1 && ta[0].includes("روند ۱۵ دقیقه‌ای عوض شد: از خنثی به نزولی") && ta[0].includes("حالا رو به پایین می‌رود") &&
   A.trendAlerts(undefined, { M15: "نزولی", H1: "نزولی" }, A.trendSummary(down), t0).length === 0);
 const nw = { windows: [{ start: "2026-11-18T18:40", end: "2026-11-18T19:15", tier: "A", label: "US Core CPI m/m", event_time_tehran: "2026-11-18T18:40" },
   { start: "2026-11-18T18:40", end: "2026-11-18T19:15", tier: "A", label: "US CPI y/y", event_time_tehran: "2026-11-18T18:40" },
@@ -206,7 +210,7 @@ CLOCK = U("2026-11-18T15:00:00Z");
 let out = await owner("/trend");
 ALL.push(...out.map((x) => x.text));
 check("owner /trend: live trend card, private, Persian digits outside code, Latin price in code", out.length === 1 && String(out[0].chat_id) === OWNER &&
-  plain(out[0].text).includes("روند کلی:") && /<code>\d{4}\.\d{2}<\/code>/.test(out[0].text) && out[0].text.includes("۱۵ دقیقه"));
+  plain(out[0].text).includes("جهت بزرگ بازار") && /<code>\d{4}\.\d{2}<\/code>/.test(out[0].text) && out[0].text.includes("۱۵ دقیقه"));
 out = await owner("/setup");
 ALL.push(...out.map((x) => x.text));
 check("owner /setup: setup card in private chat and every shown setup logged silently (origin owner)", out.length === 1 && String(out[0].chat_id) === OWNER &&
@@ -220,12 +224,12 @@ out = await owner("/e sell 3535.50");
 ALL.push(...out.map((x) => x.text));
 check("owner /e sell: SL/TP card with toman", out.length === 1 && out[0].text.includes("فروش از") && out[0].text.includes("یک واحد"));
 out = await owner("/e 3530.10");
-check("owner /e without side: direction from the trend is named", out.length === 1 && /جهت از روند (کلی|۱ ساعت|۱۵ دقیقه) (نزولی|صعودی)/.test(plain(out[0].text)));
+check("owner /e without side: direction from the trend is named", out.length === 1 && /جهت را ننوشتید؛ (فروش|خرید) در نظر گرفته شد، چون/.test(plain(out[0].text)));
 out = await owner("/e hold");
 check("/e bad input: usage", out.length === 1 && out[0].text.includes("/e sell 3531.80"));
-check("/e card: SL side named correctly (sell = بالای سطح, never «پشت سطح»)", !plain(ALL.at(-1)).includes("پشت سطح") && (/حد ضرر بالای سطح/.test(plain(ALL.at(-1))) || /بر پایه‌ی نوسان/.test(plain(ALL.at(-1)))));
+check("/e card: SL side named correctly (sell = بالای سطح, never «پشت سطح»)", !plain(ALL.at(-1)).includes("پشت سطح") && (/حد ضرر کمی بالای سطح/.test(plain(ALL.at(-1))) || /اندازه‌ی معمول حرکت قیمت/.test(plain(ALL.at(-1)))));
 { const pb = A.entryMsg(A.planEntry({ levels: A.snapLevels(LEVELS(3530)), atr5: 3 }, 1, 3524.9), { quote: null, nowMs: CLOCK.getTime() });
-  check("/e buy card: SL «زیر سطح» or volatility, never «پشت سطح»", !plain(pb).includes("پشت سطح") && (/حد ضرر زیر سطح/.test(plain(pb)) || /بر پایه‌ی نوسان/.test(plain(pb)))); ALL.push(pb); }
+  check("/e buy card: SL «زیر سطح» or volatility, never «پشت سطح»", !plain(pb).includes("پشت سطح") && (/حد ضرر کمی زیر سطح/.test(plain(pb)) || /اندازه‌ی معمول حرکت قیمت/.test(plain(pb)))); ALL.push(pb); }
 for (const c of ["/trade sell 3900 3890 1", "/journal", "/pnl", "/entered 001", "/shadow", "/undo", "/loss 1000", "/win 1000", "/tp 001", "/sl 001", "/closed 001 3900"]) {
   out = await owner(c);
   check(`${c.split(" ")[0]}: removed (unknown-command hint, nothing recorded)`, out.length === 1 && out[0].text.includes("دستور ناشناخته") && !out[0].text.includes("خاموش"));
@@ -257,7 +261,7 @@ FEED_DOWN = true; CLOCK = U("2026-11-18T15:04:00Z");
 out = await owner("/setup");
 check("feed down: /setup refuses without a live price", out.length === 1 && out[0].text.includes("قیمت زنده در دسترس نیست"));
 out = await owner("/trend");
-check("feed down: /trend falls back to the stored snapshot and says so", out.length === 1 && plain(out[0].text).includes("داده‌ی زنده در دسترس نبود") && plain(out[0].text).includes("۱۸:۲۵"));
+check("feed down: /trend falls back to the stored snapshot and says so", out.length === 1 && plain(out[0].text).includes("قیمت زنده در دسترس نبود") && plain(out[0].text).includes("۱۸:۲۵"));
 CLOCK = U("2026-11-18T15:06:00Z");
 out = await group("/setup");
 check("feed down: nothing posted to the group", out.length === 0);
@@ -267,7 +271,7 @@ CLOCK = U("2026-11-21T10:00:00Z");
 out = await owner("/setup");
 check("Saturday /setup: closed line", out.length === 1 && out[0].text.includes("بازار بسته است"));
 out = await owner("/trend");
-check("Saturday /trend: last data + closed line", out.length === 1 && out[0].text.includes("روند کلی") && out[0].text.includes("بازار بسته است"));
+check("Saturday /trend: last data + closed line", out.length === 1 && out[0].text.includes("جهت بزرگ بازار") && out[0].text.includes("بازار بسته است"));
 // offset live
 out = await owner("/offset live 0.05");
 check("/offset live sets the DaryaGold mid offset", DB.row.state.dg_mid_offset === 0.05 && out[0].text.includes("میانه"));
@@ -298,7 +302,7 @@ check("tick: same level not alerted again that day", tk.out.filter((x) => x.text
 DB.row.state.assist.trend = { M15: "صعودی", H1: "نزولی" };
 CLOCK = U("2026-11-18T15:26:00Z");
 tk = await tick();
-check("tick: M15 change alert once", tk.out.filter((x) => x.text.includes("تغییر روند ۱۵ دقیقه")).length === 1);
+check("tick: M15 change alert once", tk.out.filter((x) => x.text.includes("روند ۱۵ دقیقه‌ای عوض شد")).length === 1);
 CLOCK = U("2026-11-18T15:28:00Z");
 tk = await tick();
 check("tick: no repeat while the trend is unchanged", tk.out.filter((x) => x.text.includes("تغییر روند")).length === 0);
@@ -324,7 +328,10 @@ check("no alert or assistant reply ever went to the group except member-requeste
 ALL.push(HELP, ...COMMANDS.map((c) => c.description), ...SENT.map((x) => x.text));
 check("wording: never «زیان», «قوی», «داریاگلد», or disclaimer lines", ALL.every(rules));
 check("menu: no digits in descriptions; /setup /e /trend present", COMMANDS.every((c) => !/\d/.test(c.description)) && ["setup", "e", "trend"].every((k) => COMMANDS.some((c) => c.command === k)));
-check("ZWNJ: half-spaces in common words (نیمه‌ی، هم‌جهت، کم‌تحرک)", msgO.includes("نیمه‌ی") && A.trendSummary(down).line.includes("هم‌جهت") && A.volAlert({ state: "low", atr: 1, pct: 5 }, t0).includes("کم‌تحرک"));
+check("ZWNJ: half-spaces in common words (دقیقه‌ای، هم‌جهت، نقشه‌ی)", tm.includes("دقیقه‌ای") && msgO.includes("نقشه‌ی") && A.trendSummary(down).line.includes("هم‌جهت") && msgO.includes("هم‌جهت"));
+{ const lm = levelsMsg(LEVELS(3530), CLOCK); ALL.push(lm);
+  check("/levels plain card: price, what a level is, above/below with $ distance, no ATR/H1/OR jargon", ["سطوح مهم قیمت", "سطح یعنی", "**⬆️ بالای قیمت**", "**⬇️ زیر قیمت**", "دلار بالاتر", "دلار پایین‌تر"].every((x) => lm.includes(x)) &&
+    !/ATR|H1|H4|OR |سوئینگ|رژیم|پهنه/.test(lm)); }
 check("render keeps copyable prices Latin", render("ورود `3535.10`").includes("<code>3535.10</code>"));
 console.log(`\n${fails} failed`);
 process.exit(fails ? 1 : 0);

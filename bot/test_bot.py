@@ -167,7 +167,7 @@ BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 11, 15, 0, tzinfo=B.TEH)
 check("scheduled NO TRADE is silent", run("scheduled") == [])
 out = run("command", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "فعلاً ستاپی نیست" in out[0])
-out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "طلا" in out[0])
+out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "قیمت دریاگلد" in out[0])
 
 # ---- (f) pre-session briefs once per day
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); a = run("scheduled")
@@ -184,7 +184,7 @@ check("Saturday: scheduled run silent", run("scheduled") == [])
 r = B.render("**x** <script> & `1.5` 2.5"); check("HTML escaped", "&lt;script&gt;" in r and "&amp;" in r and "<code>1.5</code>" in r and "۲٫۵" in r)
 CLOCK[0] = datetime(2026, 11, 12, 12, 0, tzinfo=B.TEH)
 FAIL_HTML[0] = True; out = run("command", ["/brief"]); FAIL_HTML[0] = False
-check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "طلا" in out[0])
+check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "قیمت دریاگلد" in out[0])
 SENT.clear(); SENT_TO.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
 check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) <= 4096 for x in SENT) and all(x.split("\n")[-1].startswith("\u200fخط") for x in SENT))
 
@@ -199,23 +199,23 @@ BRIEF[0] = mk_brief(entry=3887.545, sl=3889.2, tp=3882.0, atr_m5=1.6,
 out = run("command", ["/brief"]); br = out[0] if out else ""
 check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "فروش طلا" not in br)
 check("/brief: shared levels block with Latin tap-to-copy prices", "<code>3895.3</code>" in br and "<code>3880.5</code>" in br and "۳۸۸۸٫۴" not in br)
-check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "H4 نزولی" in br and "H1 خنثی" in br and "جمع‌بندی: نامشخص" in br)
+check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "روند ۴ ساعته نزولی و ۱ ساعته خنثی است" in br and "روشن نیست" in br)
 check("/brief: no day-candle hilo and no glued-level skip line", "سقف روز" not in br and "مقاومت نزدیک" not in br and "حمایت نزدیک" not in br)
 check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
 check("/brief: balance line (no daily loss cap: the journal is gone)", "موجودی ۲٫۹۵ میلیون تومان" in br and "سقف ضرر" not in br)
 check("/brief: no 'strong'/قوی, no زیان", not any(w in br for w in ["قوی", "strong", "زیان"]))
-check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز + سوئینگ H4" in br and "سوئینگ H1" in br)
+check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز و جایی که قیمت در روزهای اخیر از آن برگشته" in br and "جایی که قیمت اخیراً از آن برگشته" in br)
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"},
                     levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 18:50:00"))
 out = run("command", ["/scan"]); sc = out[0] if out else ""
-check("/scan no trade: title + one reason + the same levels block", "فعلاً ستاپی نیست" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "طلا" in sc and
-      BRIEF[0]["levels"]["block"].split("\n")[0].startswith("طلا") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
+check("/scan no trade: title + one reason + the same levels block", "فعلاً ستاپی نیست" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "قیمت دریاگلد" in sc and
+      BRIEF[0]["levels"]["block"].split("\n")[0].startswith("قیمت دریاگلد") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
 check("/scan and /brief share nearest prices", "<code>3895.3</code>" in sc and "<code>3870.3</code>" in sc)
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]},
                     levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 16:15:00"))
 out = run("scheduled"); pre = out[0] if out else ""
-check("pre-session brief uses the same levels block as /levels", len(out) == 1 and "نیویورک" in pre and "<code>3895.3</code>" in pre and "H4 نزولی" in pre and "سقف روز" not in pre)
+check("pre-session brief uses the same levels block as /levels", len(out) == 1 and "نیویورک" in pre and "<code>3895.3</code>" in pre and "۴ ساعته نزولی" in pre and "سقف روز" not in pre)
 
 # identical block across /brief /scan /levels /pre-session
 CLOCK[0] = datetime(2026, 11, 11, 18, 50, tzinfo=B.TEH)
@@ -229,7 +229,7 @@ st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
 pre2 = run("scheduled")[0]
 def has_block(card, s=snap):
-    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "H4 نزولی", "H1 خنثی", "جمع‌بندی: نامشخص", "سقف دیروز + سوئینگ H4"))
+    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "روند ۴ ساعته نزولی و ۱ ساعته خنثی است", "سقف دیروز و جایی که قیمت در روزهای اخیر از آن برگشته"))
 check("same levels+trend in /brief, /scan, /levels and the pre-session brief",
       has_block(br2) and has_block(sc2) and has_block(lv2) and has_block(pre2))
 check("/levels card title and no حساب footer", "سطوح" in lv2 and "موجودی" not in lv2)
@@ -347,7 +347,7 @@ snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("Saturday /levels with a stored snapshot: served with age, no analysis",
-      len(out) == 1 and CALLS[0] == 0 and "به‌روزشده" in out[0] and "<code>3895.3</code>" in out[0] and "H4 نزولی" in out[0] and "بازار بسته است" not in out[0])
+      len(out) == 1 and CALLS[0] == 0 and "دقیقه پیش است" in out[0] and "<code>3895.3</code>" in out[0] and "۴ ساعته نزولی" in out[0] and "بازار بسته است" not in out[0])
 
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
@@ -472,17 +472,17 @@ snap_fix = LVIEW.snapshot(lv_fix, cfg, now=datetime(2026, 11, 14, 6, 50, tzinfo=
 block_fix = snap_fix["block"]
 check("last-close card drops importance labels and M15 touch counts",
       "خیلی مهم" not in block_fix and "مهم" not in block_fix and "معمولی" not in block_fix and "تماس M15" not in block_fix)
-check("last-close card shows ATR distance, zone width and DaryaGold as-of",
-      "ATR" in block_fix and "پهنه سطح" in block_fix and "دریاگلد" in block_fix)
+check("last-close card: plain dollar distances, DaryaGold price, no ATR/zone jargon",
+      "دلار بالاتر" in block_fix and "دلار پایین‌تر" in block_fix and "قیمت دریاگلد" in block_fix and "ATR" not in block_fix and "پهنه" not in block_fix)
 # trend + context on that same snapshot
-check("last-close block has M15 and M5 trend plus جمع‌بندی",
-      "M15 " in snap_fix["block"] and "M5 " in snap_fix["block"] and snap_fix["block"].startswith("طلا") and "جمع‌بندی:" in snap_fix["block"])
+check("last-close block: one plain trend sentence, no M15/M5/H1 codes",
+      snap_fix["block"].startswith("قیمت دریاگلد") and "روند: " in snap_fix["block"] and not any(x in snap_fix["block"] for x in ("M15", "M5 ", "H1", "H4", "جمع‌بندی")))
 check("last-close context line: ATR and tight room",
-      "نوسان M5 حدود 4 دلار" in snap_fix["block"] and "تا سطح بعدی" in snap_fix["block"] and "جا کم است" in snap_fix["block"])
+      "در هر ۵ دقیقه حدود 4 دلار" in snap_fix["block"] and "تا سطح بعدی" in snap_fix["block"] and "جا کم است" in snap_fix["block"])
 # نامشخص → volatility only
 tr_ns = dict(snap_fix["trend"]); tr_ns["overall"] = "نامشخص"; tr_ns["verdict"] = "جمع‌بندی: نامشخص"
 ctx_only = LVIEW.context_line({**snap_fix, "trend": tr_ns})
-check("نامشخص context is volatility only", ctx_only == "نوسان M5 حدود 4 دلار" and "تا سطح بعدی" not in ctx_only)
+check("نامشخص context is volatility only", ctx_only == "قیمت معمولاً در هر ۵ دقیقه حدود 4 دلار بالا و پایین می‌رود." and "تا سطح بعدی" not in ctx_only)
 # pullback wording
 check("pullback verdict names the lower frame",
       LVIEW.verdict_line("نزولی", "نزولی", "خنثی", "صعودی") == "جمع‌بندی: نزولی؛ M5 در اصلاح صعودی" and
@@ -549,7 +549,7 @@ snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["channel_id"] = GID; st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("/levels is mirrored to the group, same text",
-      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "به‌روزشده" in out[0] and CALLS[0] == 0)
+      len(out) == 2 and SENT_TO == [OWNER, GID] and out[0] == out[1] and "دقیقه پیش است" in out[0] and CALLS[0] == 0)
 CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
 check("/scan and /brief closed lines are mirrored",
       len(out) == 4 and SENT_TO == [OWNER, GID, OWNER, GID] and out[0] == out[1] and out[2] == out[3] and

@@ -575,9 +575,9 @@ def friday_flag():
     except Exception:
         return []
     if start - timedelta(minutes=90) <= t < start:
-        return [f"🏳️ از {start:%H:%M} ورود بسته است؛ سفارش‌های محدود لغو می‌شوند"]
+        return [f"🏳️ امروز جمعه است؛ از ساعت {start:%H:%M} ورود جدید بسته می‌شود و سفارش‌های پرنشده لغو می‌شوند."]
     if start <= t < close:
-        return [f"🏳️ ورود بسته است؛ سفارش‌های محدود لغو شده‌اند · معامله‌های باز را تا {close:%H:%M} ببندید"]
+        return [f"🏳️ ورود جدید تا شنبه بسته است؛ معامله‌های باز را تا ساعت {close:%H:%M} ببندید."]
     return []
 
 NY = ZoneInfo("America/New_York")
@@ -634,9 +634,9 @@ def enrich_snap(b, state):
         snap["friday_line"] = flags[0]
     nw = (b or {}).get("news_window") or snap.get("news_window") or {}
     if nw.get("inside") and nw.get("end"):
-        snap["news_line"] = f"خبر: پنجره‌ی جاری تا {str(nw.get('end'))[-5:]}"
+        snap["news_line"] = f"📰 الان زمان یک خبر مهم است و قیمت ممکن است تند حرکت کند؛ تا {str(nw.get('end'))[-5:]} ستاپی داده نمی‌شود."
     elif nw.get("next_start"):
-        snap["news_line"] = f"خبر بعدی: {str(nw.get('next_start'))[-5:]}–{str(nw.get('next_end') or '')[-5:]}"
+        snap["news_line"] = f"📰 خبر مهم بعدی: از {str(nw.get('next_start'))[-5:]} تا {str(nw.get('next_end') or '')[-5:]}؛ در این بازه ستاپی داده نمی‌شود."
     if (b or {}).get("source") and not snap.get("source"):
         snap["source"] = b["source"]
     if (b or {}).get("regime") and not snap.get("regime"):
@@ -644,7 +644,7 @@ def enrich_snap(b, state):
     snap["block"] = LVIEW.format_block(snap)
     return snap
 
-def levels_card(b, state, title="سطوح"):
+def levels_card(b, state, title="📏 سطوح مهم قیمت"):
     """Dedicated /levels message: the shared block, plus the age of the stored snapshot."""
     t = now_teh()
     L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M} به وقت تهران~~", ""]
@@ -652,7 +652,7 @@ def levels_card(b, state, title="سطوح"):
     if snap and not LVIEW.is_fresh(snap, t):
         age = LVIEW.age_minutes(snap, t)
         if age is not None and age >= 0:
-            L += [f"به‌روزشده {int(round(age))} دقیقه پیش", ""]
+            L += [f"~~این عددها مربوط به {int(round(age))} دقیقه پیش است.~~", ""]
     L.append((snap or {}).get("block") or levels_block(b, state))
     return "\n".join(L)
 
@@ -681,14 +681,14 @@ def market_summary(b, state, title):
     # The shared block already names the next (or current) window; list the rest if any remain after it.
     L.append("")
     if len(wins) > 1:
-        L.append("🔔 خبرهای باقی‌مانده‌ی امروز")
+        L.append("🔔 ساعت‌های خبری باقی‌مانده‌ی امروز (در این ساعت‌ها ستاپی داده نمی‌شود)")
         L += [f" {a} تا {z}" for a, z in wins]
     elif not wins:
-        L.append("🔔 امروز خبر مهم دیگری ثبت نشده")
+        L.append("🔔 امروز خبر مهم دیگری در تقویم نیست.")
     L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} تومان"]
     return "\n".join(L)
 
-PRESESSION_TITLE = {"morning": "🌅 خلاصه‌ی صبح؛ دریاگلد باز شد", "am": "☀️ لندن باز می‌شود", "pm": "🌆 نیویورک باز می‌شود"}
+PRESESSION_TITLE = {"morning": "🌅 خلاصه‌ی صبح؛ دریاگلد باز شد", "am": "☀️ بازار لندن باز می‌شود؛ معمولاً قیمت پرتحرک‌تر می‌شود", "pm": "🌆 بازار نیویورک باز می‌شود؛ معمولاً پرتحرک‌ترین ساعت‌های روز"}
 
 def presession_brief(b, state, name):
     return market_summary(b, state, PRESESSION_TITLE.get(name, "📊 خلاصه‌ی بازار"))
