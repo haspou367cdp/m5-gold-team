@@ -368,8 +368,8 @@ f_struct(int k) => not (k == 19 or k == 22 or k == 23 or k == 30 or k == 31 or k
 f_month(int k) => k >= 26 and k <= 29
 f_kname(int k) =>
     switch k
-        1 => "PDH"
-        2 => "PDL"
+        1 => "{{K1}}"
+        2 => "{{K2}}"
         3 => "{{K3}}"
         4 => "{{K4}}"
         5 => "{{K5}}"
@@ -386,7 +386,7 @@ f_kname(int k) =>
         16 => "{{K15}}"
         17 => "{{K17}}"
         18 => "{{K17}}"
-        19 => "VWAP"
+        19 => "{{K19}}"
         20 => "{{K20}}"
         21 => "{{K21}}"
         22 => "{{K22}}"
@@ -458,7 +458,7 @@ f_tags(string ks, float pdg) =>
             string nm = (k == 22 or k == 23) ? f_kname(k) + " " + str.tostring(math.round(pdg / 50.0) * 50) : f_kname(k)
             if not seen.includes(nm)
                 seen.push(nm)
-                out := out == "" ? nm : out + " + " + nm
+                out := out == "" ? nm : out + "{{K_JOIN}}" + nm
     out
 
 f_add(array<float> cp, array<int> ck, float p, int k) =>
@@ -1136,9 +1136,9 @@ if barstate.islast
                 string h2 = not na(sFill.get(k)) ? "{{T_ACTIVE}}" : dist <= 0 ? "{{T_INRANGE}} · " + {{LEFT_EXPR}} : {{LEFT_EXPR}} + " · " + {{DIST_EXPR}}
                 string h3 = f_px2(eA) + " – " + f_px2(eB)
                 dLbls.push(label.new(xE, (eA + eB) / 2, h1 + "\n" + h2 + "\n" + h3, style = label.style_label_left, color = color.new(sc, 20), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sSL.get(k), "SL " + f_px2(sSL.get(k)) + "\n" + f_money2(f_pnl((sSL.get(k) - ent) * dir), f_pnl((sSL.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cDn, 0), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sTP1.get(k), "TP1 " + f_px2(sTP1.get(k)) + "\n" + f_money2(f_pnl((sTP1.get(k) - ent) * dir), f_pnl((sTP1.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 25), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sTP2.get(k), "TP2 " + f_px2(sTP2.get(k)) + "\n" + f_money2(f_pnl((sTP2.get(k) - ent) * dir), f_pnl((sTP2.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 45), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sSL.get(k), "{{T_SLL}} " + f_px2(sSL.get(k)) + "\n" + f_money2(f_pnl((sSL.get(k) - ent) * dir), f_pnl((sSL.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cDn, 0), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP1.get(k), "{{T_TP1L}} " + f_px2(sTP1.get(k)) + "\n" + f_money2(f_pnl((sTP1.get(k) - ent) * dir), f_pnl((sTP1.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 25), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP2.get(k), "{{T_TP2L}} " + f_px2(sTP2.get(k)) + "\n" + f_money2(f_pnl((sTP2.get(k) - ent) * dir), f_pnl((sTP2.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 45), textcolor = color.white, size = f_size()))
     // trend strip: 5 15 1H 4H, overall word, lower-timeframe state, market light, room to the next level
     table.clear(strip, 0, 0, 3, 5)
     bool sens = newsC or soonC or friCut

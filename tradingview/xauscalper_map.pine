@@ -1,7 +1,7 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // Xauscalper Map · XAUUSD — نقشه‌ی تصمیم برای اسکالپ طلا در دریاگلد، همراه بات Xauscalper
 // دو سطح بالا و دو سطح پایین (همان سطح‌های بات)، نوار روند ۵ و ۱۵ دقیقه و ۱ و ۴ ساعت، فضای معامله و چراغ وضعیت بازار.
-// ستاپ فقط وقتی معتبر باشد کشیده می‌شود: بازه‌ی ورود، SL، TP1 و TP2 با سود و ضرر تومانی بعد از کارمزد، و عدد اعتبار.
+// ستاپ فقط وقتی معتبر باشد کشیده می‌شود: بازه‌ی ورود، حد ضرر، حد سود ۱ و ۲ با سود و ضرر تومانی بعد از کارمزد، و عدد اعتبار از ۰ تا ۱۰۰.
 // Generated from tradingview/map/template.pine by tradingview/map/build.py (fa). Formulas: docs/decision_map_spec.md
 //@version=6
 indicator("Xauscalper Map · XAUUSD", shorttitle = "XSM", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
@@ -368,33 +368,33 @@ f_struct(int k) => not (k == 19 or k == 22 or k == 23 or k == 30 or k == 31 or k
 f_month(int k) => k >= 26 and k <= 29
 f_kname(int k) =>
     switch k
-        1 => "PDH"
-        2 => "PDL"
-        3 => "سقف هفته"
-        4 => "کف هفته"
+        1 => "سقف دیروز"
+        2 => "کف دیروز"
+        3 => "سقف این هفته"
+        4 => "کف این هفته"
         5 => "سقف هفته‌ی قبل"
         6 => "کف هفته‌ی قبل"
-        7 => "سقف آسیا"
-        8 => "کف آسیا"
-        9 => "سقف لندن"
-        10 => "کف لندن"
-        11 => "سقف نیویورک"
-        12 => "کف نیویورک"
-        13 => "سقف نیویورک دیروز"
-        14 => "کف نیویورک دیروز"
-        15 => "OR لندن"
-        16 => "OR لندن"
-        17 => "OR نیویورک"
-        18 => "OR نیویورک"
-        19 => "VWAP"
-        20 => "سقف برابر"
-        21 => "کف برابر"
-        22 => "رُند"
-        23 => "رُند"
-        24 => "سوئینگ H1"
-        25 => "سوئینگ H1"
-        26 => "سقف ماه"
-        27 => "کف ماه"
+        7 => "سقف صبح امروز"
+        8 => "کف صبح امروز"
+        9 => "سقف ظهر امروز"
+        10 => "کف ظهر امروز"
+        11 => "سقف عصر"
+        12 => "کف عصر"
+        13 => "سقف عصر دیروز"
+        14 => "کف عصر دیروز"
+        15 => "شروع ظهر"
+        16 => "شروع ظهر"
+        17 => "شروع عصر"
+        18 => "شروع عصر"
+        19 => "میانگین قیمت امروز"
+        20 => "دو سقف هم‌اندازه"
+        21 => "دو کف هم‌اندازه"
+        22 => "عدد رُند"
+        23 => "عدد رُند"
+        24 => "برگشت اخیر قیمت"
+        25 => "برگشت اخیر قیمت"
+        26 => "سقف این ماه"
+        27 => "کف این ماه"
         28 => "سقف ماه قبل"
         29 => "کف ماه قبل"
         => ""
@@ -458,7 +458,7 @@ f_tags(string ks, float pdg) =>
             string nm = (k == 22 or k == 23) ? f_kname(k) + " " + str.tostring(math.round(pdg / 50.0) * 50) : f_kname(k)
             if not seen.includes(nm)
                 seen.push(nm)
-                out := out == "" ? nm : out + " + " + nm
+                out := out == "" ? nm : out + "، " + nm
     out
 
 f_add(array<float> cp, array<int> ck, float p, int k) =>
@@ -731,8 +731,8 @@ int  hb    = tr240 == tr60 and tr240 != 0 ? tr240 : 0
 bool pull15 = hb != 0 and tr15 == -hb
 bool pull5  = hb != 0 and tr5 == -hb
 bool bothFlat = tr240 == 0 and tr60 == 0
-string overTx = hb == 1 ? "صعودی" : hb == -1 ? "نزولی" : bothFlat ? "خنثی" : "نامشخص"
-string subTx  = hb == 0 ? (bothFlat ? "۴ و ۱ ساعت جهت روشنی ندارند" : "۱ و ۴ ساعت هم‌جهت نیستند") : (tr15 == hb and tr5 == hb) ? "همه هم‌جهت" : pull15 and pull5 ? "۱۵ و ۵ دقیقه در اصلاح" : pull15 ? "۱۵ دقیقه در اصلاح" : pull5 ? "۵ دقیقه در اصلاح" : tr15 == hb ? "۱۵ دقیقه هم‌جهت، ۵ دقیقه خنثی" : tr5 == hb ? "۵ دقیقه هم‌جهت، ۱۵ دقیقه خنثی" : "تایم‌های پایین خنثی"
+string overTx = hb == 1 ? "صعودی (رو به بالا)" : hb == -1 ? "نزولی (رو به پایین)" : bothFlat ? "بدون جهت" : "جهت روشن نیست"
+string subTx  = hb == 0 ? (bothFlat ? "قیمت در یک محدوده بالا و پایین می‌رود" : "۱ و ۴ ساعته با هم نمی‌خوانند") : (tr15 == hb and tr5 == hb) ? "کوتاه‌مدت هم همین جهت است" : pull15 and pull5 ? "کوتاه‌مدت فعلاً برعکس برگشته" : pull15 ? "۱۵ دقیقه فعلاً برعکس برگشته" : pull5 ? "۵ دقیقه فعلاً برعکس برگشته" : tr15 == hb ? "۱۵ دقیقه هم همین جهت است، ۵ دقیقه بی‌جهت" : tr5 == hb ? "۵ دقیقه هم همین جهت است، ۱۵ دقیقه بی‌جهت" : "کوتاه‌مدت فعلاً بی‌جهت"
 
 // closed-bar M5 ATR history (assist.volState: percentile of the last 288 values; one bar ≥ 2.5 × ATR)
 var array<float> atrH = array.new<float>()
@@ -1133,12 +1133,12 @@ if barstate.islast
                 float wst = dir == 1 ? eB : eA
                 int cr = sCr.get(k)
                 string h1 = (cr < warnCr ? "⚠ " : "") + (dir == 1 ? "▲ خرید" : "▼ فروش") + " · اعتبار " + f_fa(str.tostring(cr))
-                string h2 = not na(sFill.get(k)) ? "وارد بازه شد؛ حد ضرر را بگذار" : dist <= 0 ? "قیمت در بازه‌ی ورود · " + f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" : f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" + " · " + f_fa(str.tostring(dist, "0.0")) + " دلار تا ورود"
+                string h2 = not na(sFill.get(k)) ? "قیمت وارد بازه شد؛ حد ضرر را بگذارید" : dist <= 0 ? "قیمت داخل بازه‌ی ورود است · " + f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" : f_fa(str.tostring(math.max(0, left))) + " دقیقه مانده" + " · " + f_fa(str.tostring(dist, "0.0")) + " دلار تا ورود"
                 string h3 = f_px2(eA) + " – " + f_px2(eB)
                 dLbls.push(label.new(xE, (eA + eB) / 2, h1 + "\n" + h2 + "\n" + h3, style = label.style_label_left, color = color.new(sc, 20), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sSL.get(k), "SL " + f_px2(sSL.get(k)) + "\n" + f_money2(f_pnl((sSL.get(k) - ent) * dir), f_pnl((sSL.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cDn, 0), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sTP1.get(k), "TP1 " + f_px2(sTP1.get(k)) + "\n" + f_money2(f_pnl((sTP1.get(k) - ent) * dir), f_pnl((sTP1.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 25), textcolor = color.white, size = f_size()))
-                dLbls.push(label.new(xE, sTP2.get(k), "TP2 " + f_px2(sTP2.get(k)) + "\n" + f_money2(f_pnl((sTP2.get(k) - ent) * dir), f_pnl((sTP2.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 45), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sSL.get(k), "حد ضرر " + f_px2(sSL.get(k)) + "\n" + f_money2(f_pnl((sSL.get(k) - ent) * dir), f_pnl((sSL.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cDn, 0), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP1.get(k), "حد سود ۱ " + f_px2(sTP1.get(k)) + "\n" + f_money2(f_pnl((sTP1.get(k) - ent) * dir), f_pnl((sTP1.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 25), textcolor = color.white, size = f_size()))
+                dLbls.push(label.new(xE, sTP2.get(k), "حد سود ۲ " + f_px2(sTP2.get(k)) + "\n" + f_money2(f_pnl((sTP2.get(k) - ent) * dir), f_pnl((sTP2.get(k) - wst) * dir)), style = label.style_label_left, color = color.new(cUp, 45), textcolor = color.white, size = f_size()))
     // trend strip: 5 15 1H 4H, overall word, lower-timeframe state, market light, room to the next level
     table.clear(strip, 0, 0, 3, 5)
     bool sens = newsC or soonC or friCut
@@ -1152,7 +1152,7 @@ if barstate.islast
     table.merge_cells(strip, 0, 1, 3, 1)
     table.cell(strip, 0, 2, subTx, text_color = fg, bgcolor = bg, text_size = size.small)
     table.merge_cells(strip, 0, 2, 3, 2)
-    string lTx = light == 9 ? "دریاگلد بسته است" : light == 8 ? "ورود تازه ممنوع" : light == 4 ? "خبر نزدیک" : light == 5 ? "پایان کار نزدیک" : light == 1 ? "پرنوسان" : light == 2 ? "کم‌تحرک" : "مناسب"
+    string lTx = light == 9 ? "دریاگلد بسته است" : light == 8 ? "ورود جدید بسته است" : light == 4 ? "خبر مهم نزدیک است" : light == 5 ? "بسته‌شدن دریاگلد نزدیک است" : light == 1 ? "بازار خیلی پرنوسان است" : light == 2 ? "بازار خیلی آرام است" : "شرایط عادی"
     color lC = light == 0 ? cUp : light == 9 ? cFlat : light == 2 ? cFlat : cOra
     table.cell(strip, 0, 3, "● " + lTx, text_color = sens ? color.black : lC, bgcolor = bg, text_size = f_size())
     table.merge_cells(strip, 0, 3, 3, 3)
@@ -1162,10 +1162,10 @@ if barstate.islast
     string rTx = "↑" + (na(upR) ? "—" : str.tostring(upR, "0.0")) + "  ↓" + (na(dnR) ? "—" : str.tostring(dnR, "0.0"))
     table.cell(strip, 0, 4, rTx, text_color = fg, bgcolor = bg, text_size = size.small)
     table.merge_cells(strip, 0, 4, 2, 4)
-    string fitTx = na(roomT) ? "—" : roomT >= tgtLo ? "جا دارد" : "جا کم است"
-    table.cell(strip, 3, 4, fitTx, text_color = sens ? color.black : na(roomT) ? cFlat : roomT >= tgtLo ? cUp : cOra, bgcolor = bg, text_size = size.small, tooltip = "فاصله تا سطح بعدی در جهت روند کلی، در مقایسه با تارگت معمول شما.")
+    string fitTx = na(roomT) ? "—" : roomT >= tgtLo ? "جا برای سود هست" : "جا برای سود کم است"
+    table.cell(strip, 3, 4, fitTx, text_color = sens ? color.black : na(roomT) ? cFlat : roomT >= tgtLo ? cUp : cOra, bgcolor = bg, text_size = size.small, tooltip = "فاصله تا سطح بعدی در جهت روند بزرگ، در مقایسه با تارگت معمول شما.")
     int tfs = timeframe.in_seconds()
     if tfs > 300 or (not phone and not na(adrUsed))
-        string wTx = tfs > 300 ? "⚠ تایم‌فریم چارت ۵ دقیقه یا کمتر باشد" : "مصرف دامنه‌ی روز " + f_fa(str.tostring(adrUsed, "0")) + "٪"
+        string wTx = tfs > 300 ? "⚠ چارت را روی ۵ دقیقه یا کمتر بگذارید" : "مصرف حرکت معمول روزانه " + f_fa(str.tostring(adrUsed, "0")) + "٪"
         table.cell(strip, 0, 5, wTx, text_color = tfs > 300 ? cOra : fg, bgcolor = bg, text_size = size.small)
         table.merge_cells(strip, 0, 5, 3, 5)

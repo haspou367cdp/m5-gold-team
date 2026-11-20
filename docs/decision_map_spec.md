@@ -109,3 +109,16 @@ Strength and touches are identical (strong 2, weak 1, strong 5, medium 3). The �
 - The current month's H/L comes from the chart when the history reaches the month start, otherwise from the monthly series (TradingView month ≈ New York month).
 - With about 5000 bars (free plan, about 18 trading days on M5), the EMA50 on H4 is close but not identical, and 20-day H4 swings near the start may be missing.
 - Touches use M15 bars rebuilt on the chart, the same as the bot's touch definition, but only for credibility.
+
+## Labels (2026-11-20, owner t242u)
+Persian labels were rewritten in plain words for beginners; formulas are unchanged (the generated
+xauscalper_map.pine differs from 90625ad only in string literals and the header comment).
+- Level sources use the bot's plain names (KIND_FA / plainLabel): «سقف دیروز», «کف صبح امروز» (Asia),
+  «سقف ظهر امروز» (London), «کف عصر» (NY), «شروع ظهر/عصر» (opening range), «برگشت اخیر قیمت» (H1 swing),
+  «عدد رُند N», «میانگین قیمت امروز» (VWAP); joined with «، ».
+- Trend strip: «صعودی (رو به بالا)», «نزولی (رو به پایین)», «بدون جهت», «جهت روشن نیست»; the lower-frame row says
+  «کوتاه‌مدت هم همین جهت است» / «… فعلاً برعکس برگشته» instead of «در اصلاح».
+- Market light: «شرایط عادی», «بازار خیلی پرنوسان است», «بازار خیلی آرام است», «خبر مهم نزدیک است»,
+  «بسته‌شدن دریاگلد نزدیک است», «ورود جدید بسته است». Room: «جا برای سود هست / کم است».
+- Setup labels: «حد ضرر», «حد سود ۱», «حد سود ۲» instead of SL/TP1/TP2. The English build is unchanged.
+
