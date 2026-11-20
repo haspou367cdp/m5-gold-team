@@ -23,22 +23,30 @@ export function teh(d = new Date()) {
 }
 
 // ---------------- DaryaGold hours (owner 2026-11-20; tools/broker_daryagold.json session) ----------------
-// Mon-Fri 07:00 to 00:30 (next day) Tehran; Saturday and Sunday closed. Tehran is UTC+3:30 with no DST.
-const OPEN_MIN = 7 * 60, CLOSE_MIN = 30;
+// Market (owner 2026-11-14 / 2026-11-21): opens Monday 01:30 Tehran (Sunday 17:00 New York); every session runs 01:30 to
+// 00:30 next day (daily break 00:30-01:30), the last one closes Saturday 00:30; Friday no new setups from 23:30.
+// The bot's automatic alerts and briefs run only 07:00-00:30 (ALERT_FROM_MIN). Tehran is UTC+3:30 with no DST.
+export const OPEN_MIN = 90, CLOSE_MIN = 30, ALERT_FROM_MIN = 7 * 60;
 export function forexOpen(d = new Date()) {   // name kept for app.js; means "DaryaGold open"
   const { hm, dow } = teh(d);
   const min = Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
-  if (min >= OPEN_MIN) return dow >= 1 && dow <= 5;          // session opened today (Mon-Fri)
+  if (min >= OPEN_MIN) return dow >= 1 && dow <= 5;          // session opened today at 01:30 (Mon-Fri)
   if (min < CLOSE_MIN) return dow >= 2 && dow <= 6;          // tail of yesterday's session (Tue-Sat 00:00-00:30)
   return false;
 }
-// trading-day key: the date the session opened (00:00-00:30 and the closed night belong to the previous day)
+// automatic alerts/briefs window: market open and 07:00-00:30 Tehran (commands work whenever the market is open)
+export function alertWindow(d = new Date()) {
+  const { hm } = teh(d);
+  const min = Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+  return forexOpen(d) && (min >= ALERT_FROM_MIN || min < CLOSE_MIN);
+}
+// trading-day key: the date the session opened at 01:30 (00:00-00:30 and the 00:30-01:30 break belong to the previous day)
 export function sessionDate(now = teh()) {
-  if (now.hm >= "07:00") return now.date;
+  if (now.hm >= "01:30") return now.date;
   const d = new Date(Date.parse(now.date + "T00:00:00Z") - 86400000);
   return d.toISOString().slice(0, 10);
 }
-// any closure (nightly 00:30-07:00 and the weekend): /brief and /setup get the closed line
+// any closure (daily break 00:30-01:30 and the weekend): /brief and /setup get the closed line
 export const weekendClosed = (d = new Date()) => !forexOpen(d);
 export function reopenAt(d = new Date()) {
   let t = new Date(Math.ceil(d.getTime() / 300000) * 300000);
@@ -146,7 +154,7 @@ export function normalize(s, now = teh()) {
   s.presession_sent = s.presession_sent || {};
   s.signals_sent = (s.signals_sent || []).slice(-20);
   s.pending_cmds = s.pending_cmds || [];
-  const tday = sessionDate(now);   // daily stop runs on the DaryaGold trading day (07:00-00:30 Tehran)
+  const tday = sessionDate(now);   // daily stop runs on the DaryaGold trading day (01:30-00:30 Tehran)
   if (!s.day || s.day.date !== tday)
     s.day = { date: tday, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
   s.day.records = s.day.records || [];
@@ -166,7 +174,8 @@ export function statusMsg(s) {
     "🎯 سیگنال خودکار: خاموش · ستاپ با `/setup`",
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
     `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
-    "⏱ بررسی خودکار دوشنبه تا جمعه، `07:00` تا `00:30`"].join("\n");
+    "🕐 بازار: دوشنبه تا جمعه از `01:30` تا `00:30` شب بعد",
+    "⏱ هشدار و خلاصه‌ی خودکار: `07:00` تا `00:30`"].join("\n");
 }
 const digits = (t) => String(t).replace(/[۰-۹٠-٩٫]/g, (c) => String(DIGIN[c]));
 export const offsetOf = (s) => midOffsetOf(s);

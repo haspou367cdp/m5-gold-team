@@ -5,7 +5,10 @@ Owner: pouhasaa (Asia/Tehran). All dates below are Tehran dates.
 
 ## 1. Goal
 A Persian Telegram assistant for scalping XAUUSD on **DaryaGold** (an Iranian counterparty platform: prices in USD,
-P&L and fees in toman, no partial close, Mon–Fri 07:00–00:30 Tehran, no new entries Friday after 23:30).
+P&L and fees in toman, no partial close; market opens **Monday 01:30 Tehran** (Sunday 17:00 New York), each session
+01:30 → 00:30 next day (daily break 00:30–01:30), last close Saturday 00:30; no new setups Friday after 23:30).
+Commands (`/setup` `/trend` `/levels` `/e` `/brief`) work whenever the market is open; the bot's automatic alerts and
+briefs run only **07:00–00:30** (`session.alerts_from`, JS `alertWindow`, Python `DG.alert_window`).
 It gives levels, trend, ready-made setups and plain-language alerts on request. It **never places orders**, never
 logs in to DaryaGold, and since 2026-11-20 it sends **no automatic trade signals** (research showed no edge, see §6).
 A TradingView indicator (ZARVA Map, formerly Xauscalper Map) shows the same levels, trend and setups on the phone chart.
@@ -19,7 +22,7 @@ Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@Xauscalperibot)
 | 2026-11-13 | Repo started: research toolkit (`tools/`), `brief.py`, levels, bias, news windows; first Telegram bot (GitHub Actions + Supabase). Fee 14,000 toman once per trade; 1 unit = 80,000 toman/$, 0.5 unit = 40,000. |
 | 2026-11-13 | v2 engines (trend continuation, liquidity sweep) **failed** out-of-sample (−0.35R / −0.45R). Levels are locations only, never "strong". |
 | 2026-11-14 | Shared levels snapshot; group mirroring to BAROBAX (minus personal money); /groupoff, /groupon; weekend closed line; Friday reminder. |
-| 2026-11-20 | Phase 1–3: DaryaGold model, deterministic risk gate, 07:00–00:30 hours, signal IDs, journal tables, /calibrate. |
+| 2026-11-20 | Phase 1–3: DaryaGold model, deterministic risk gate, 07:00–00:30 hours (corrected 2026-11-21: market 01:30–00:30, alerts from 07:00), signal IDs, journal tables, /calibrate. |
 | 2026-11-20 | Phase 4 backtest of the live engines under the DaryaGold cost model: negative expectancy IS and OOS (§6). |
 | 2026-11-20 | **Assistant redesign** (owner t226u–t232u): automatic signals and the journal switched off; new `/setup`, `/trend`, `/e` from a live DaryaGold price; alerts tick every 2 min (level touch, trend change, volatility, news). Deployed as tg-bot v23; `main` = 737b446. |
 | 2026-11-20 | **Command cleanup** (owner t238u): journal/trade commands deleted, scoped Telegram menus, Persian copy pass, `/e` SL side wording, Sun/Mon 00:00–00:30 entry-limit fix. tg-bot v24 (commit 2f3420a). |
@@ -134,8 +137,10 @@ If it never recovers: check the bot in @BotFather, or regenerate the token, upda
 secret and run the setup workflow (it stores the token in Vault).
 
 Pending / owner questions:
-1. Monday open: config, bot and indicator use **07:00** (owner 2026-11-20 «Mon–Fri 07:00–00:30»); an earlier note
-   (2026-11-14) said Monday 01:30. Confirm.
+1. Hours settled (owner 2026-11-21): market open Mon 01:30, sessions 01:30–00:30, Friday cutoff 23:30, alerts/briefs
+   from 07:00. Implemented in build `2026-11-21-assistant-v5.2-hours`. Note: the 01:30 open is fixed in Tehran time; if
+   DaryaGold follows New York summer time (EDT), the open/close would move one hour earlier in Tehran — change
+   `session.open`/`close` in `tools/broker_daryagold.json`, `OPEN_MIN`/`CLOSE_MIN` in `lib.js`, `entryLimit` and the Pine inputs.
 2. Repost the updated guide/indicator to the group (owner decision; nothing is posted without approval).
 
 ## 9. Security rules

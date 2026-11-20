@@ -39,7 +39,7 @@ def evaluate(now, side, entry, sl, tp, unit="1U", order_type="MARKET", spread_us
     EP.assert_manual_only()
     no_trade, reject, warn, m = [], [], [], {}
 
-    # 1. session (07:00-00:30 Tehran Mon-Fri, Friday cutoff)
+    # 1. session (01:30-00:30 Tehran, Mon 01:30 to Sat 00:30, Friday cutoff 23:30)
     if session is None:
         try:
             import broker_daryagold as DG

@@ -34,7 +34,7 @@ float  tgtLo   = input.float(5.0, "{{I_TGT}}", step = 0.5, group = GS)
 int    holdMin = input.int(60, "{{I_HOLD}}", minval = 5, maxval = 480, group = GS)
 
 const string GT = "{{G_TIME}}"
-int    openHM  = input.int(700, "{{I_OPEN}}", minval = 0, maxval = 2359, group = GT)
+int    openHM  = input.int(130, "{{I_OPEN}}", minval = 0, maxval = 2359, group = GT)
 int    closeHM = input.int(30, "{{I_CLOSE}}", minval = 0, maxval = 459, group = GT)
 int    friHM   = input.int(2330, "{{I_FRI}}", minval = 0, maxval = 2359, group = GT)
 int    soonMin = input.int(30, "{{I_SOON}}", minval = 0, maxval = 120, group = GT)
@@ -1009,7 +1009,7 @@ if inEval and not na(atrC)
     bool canNew = not na(until) and not newsC and until - tEval >= 10 * MIN
     if canNew and nZ > 0
         int mT = hour(tEval, TZT) * 60 + minute(tEval, TZT)
-        float sessF = mT >= 420 and mT < 630 ? 0.6 : (mT >= 1380 or mT < 30) ? 0.5 : 1.0
+        float sessF = mT >= 90 and mT < 630 ? 0.6 : (mT >= 1380 or mT < 30) ? 0.5 : 1.0
         if not na(nx) and nx + nPre * MIN - tEval < 60 * MIN
             sessF := math.min(sessF, 0.4)
         array<int>   cD = array.new<int>()

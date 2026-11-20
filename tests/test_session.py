@@ -7,12 +7,16 @@ CFG = DG.load_config()
 T = lambda *a: datetime(*a, tzinfo=TEH)
 
 
-def test_hours_monday_to_friday_0700_to_0030():
-    assert not DG.market_open(T(2026, 11, 16, 6, 59), CFG)      # Monday before open
+def test_hours_monday_0130_sessions_to_0030():
+    assert not DG.market_open(T(2026, 11, 16, 1, 29), CFG)      # Monday before the 01:30 open
+    assert DG.market_open(T(2026, 11, 16, 1, 30), CFG)
+    assert DG.market_open(T(2026, 11, 16, 6, 59), CFG)
     assert DG.market_open(T(2026, 11, 16, 7, 0), CFG)
     assert DG.market_open(T(2026, 11, 17, 0, 29), CFG)          # Monday session tail
     assert not DG.market_open(T(2026, 11, 17, 0, 30), CFG)
-    assert not DG.market_open(T(2026, 11, 17, 3, 0), CFG)
+    assert not DG.market_open(T(2026, 11, 17, 1, 29), CFG)      # daily break 00:30-01:30
+    assert DG.market_open(T(2026, 11, 17, 1, 30), CFG)
+    assert DG.market_open(T(2026, 11, 17, 3, 0), CFG)
     assert DG.market_open(T(2026, 11, 21, 0, 29), CFG)          # Friday session tail (Saturday 00:29)
     assert not DG.market_open(T(2026, 11, 21, 7, 0), CFG)       # Saturday
     assert not DG.market_open(T(2026, 11, 22, 12, 0), CFG)      # Sunday
@@ -23,14 +27,14 @@ def test_entry_block_and_close_times():
     w = DG.session_entry_block(T(2026, 11, 18, 14, 0), CFG)
     assert not w["blocked"] and w["close_tehran"] == "2026-11-19 00:30"
     n = DG.session_entry_block(T(2026, 11, 19, 1, 0), CFG)
-    assert n["blocked"] and n["reopen_tehran"] == "2026-11-19 07:00" and "بازگشایی" in n["reason_fa"]
+    assert n["blocked"] and n["reopen_tehran"] == "2026-11-19 01:30" and "بازگشایی" in n["reason_fa"]
     f = DG.session_entry_block(T(2026, 11, 20, 23, 30), CFG)
     assert f["blocked"] and f["friday_window"] and f["close_tehran"] == "2026-11-21 00:30"
     assert f["block_start_tehran"] == "2026-11-20 23:30"
     assert not DG.session_entry_block(T(2026, 11, 20, 23, 29), CFG)["blocked"]
     assert not DG.session_entry_block(T(2026, 11, 20, 22, 30), CFG)["blocked"]
     sat = DG.session_entry_block(T(2026, 11, 21, 12, 0), CFG)
-    assert sat["blocked"] and sat["reopen_tehran"] == "2026-11-23 07:00"
+    assert sat["blocked"] and sat["reopen_tehran"] == "2026-11-23 01:30"
 
 
 def test_close_reminder_never_closes():
@@ -44,7 +48,15 @@ def test_close_reminder_never_closes():
 
 def test_no_old_forex_schedule_left():
     line = DG.session_entry_block(T(2026, 11, 18, 14, 0), CFG)["hours_line_fa"]
-    assert "۰۷:۰۰" in line and "۰۰:۳۰" in line and "۰۱:۳۰" not in line and "نیویورک" not in line
+    assert "۰۱:۳۰" in line and "۰۰:۳۰" in line and "۰۷:۰۰" not in line and "نیویورک" not in line
+
+
+def test_alert_window_from_0700():
+    assert not DG.alert_window(T(2026, 11, 16, 3, 0), CFG) and DG.market_open(T(2026, 11, 16, 3, 0), CFG)
+    assert DG.alert_window(T(2026, 11, 16, 7, 0), CFG) and DG.alert_window(T(2026, 11, 17, 0, 29), CFG)
+    assert not DG.alert_window(T(2026, 11, 17, 0, 30), CFG) and not DG.alert_window(T(2026, 11, 21, 12, 0), CFG)
+    assert DG.session_end(T(2026, 11, 18, 14, 0), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 00:30"
+    assert DG.session_end(T(2026, 11, 19, 0, 10), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 00:30"
 
 
 def test_calibration_label(monkeypatch):
@@ -60,7 +72,8 @@ def test_calibration_label(monkeypatch):
 def test_trading_day_key():
     assert DG.session_date(T(2026, 11, 21, 0, 20), CFG) == "2026-11-20"
     assert DG.session_date(T(2026, 11, 20, 7, 0), CFG) == "2026-11-20"
-    assert DG.session_start(T(2026, 11, 20, 0, 10), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 07:00"
+    assert DG.session_start(T(2026, 11, 20, 0, 10), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 01:30"
+    assert DG.session_date(T(2026, 11, 20, 1, 29), CFG) == "2026-11-19" and DG.session_date(T(2026, 11, 20, 1, 30), CFG) == "2026-11-20"
 
 
 def test_asia_window_is_live_since_owner_decision():
@@ -77,6 +90,6 @@ def test_persian_user_guide():
     s = open(p, encoding="utf-8").read()
     for cmd in ("/entered", "/tp", "/sl", "/closed", "/journal", "/pnl", "/calibrate", "/trade", "/scan", "/groupoff"):
         assert cmd in s
-    for must in ("۰۷:۰۰ تا ۰۰:۳۰", "14,000", "0.25", "80,000", "40,000", "1,000,000", "500,000", "۶۰ ثانیه", "گزارش", "محدودیت"):
+    for must in ("۰۱:۳۰ تا ۰۰:۳۰", "۰۷:۰۰ تا ۰۰:۳۰", "14,000", "0.25", "80,000", "40,000", "1,000,000", "500,000", "۶۰ ثانیه", "گزارش", "محدودیت"):
         assert must in s
     assert "زیان" not in s and not re.search(r"(^|[\s،.])قوی([\s،.]|$)", s)

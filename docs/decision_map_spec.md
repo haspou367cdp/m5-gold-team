@@ -58,7 +58,7 @@ The TradingView indicator `tradingview/xauscalper_map*.pine` (built from `tradin
 - **Toman** = `Δ$ × 80,000 × units − 14,000`. The indicator shows both the best and the worst edge, like the bot.
 
 ## 4. Validity (assist.validity / entryLimit)
-- No setups when DaryaGold is closed (07:00–00:30 Tehran, Mon–Fri), after Friday 23:30, or inside a major news window.
+- No setups when DaryaGold is closed (open Mon 01:30 Tehran; sessions 01:30–00:30 next day, break 00:30–01:30; closed Sat 00:30 → Mon 01:30), after Friday 23:30, or inside a major news window. Pine input «open» = 0130.
 - `until = min(now + 45 min, close or Friday cutoff, next major news start)`. No new setups when less than 10 min is left.
 - Pine cannot read the bot's news file, so it uses fixed releases: 08:30 and 10:00 New York, optional 14:00, from 15 min before to 20 min after.
 - The indicator freezes a setup's numbers at birth and keeps it until `until`.
@@ -75,7 +75,7 @@ Weights: trend 25, fill 15, level 15, room 10, rr 15, adr 8, session 7, hunt 5. 
     Items that come only from the structure block count as medium with 0 touches.
   - FRESH = [0.5, 0.9, 1, 0.9, 0.75, 0.6].
 - room: `room/(1.5×ATR)`. rr: `(RR − 0.5)/1.5`. adr: `(130 − ADR used)/80`, or 0.5 when unknown.
-- session: 0.6 at 07:00–10:30, 0.5 at 23:00–00:30, else 1. Capped at 0.4 when news starts within 60 min (fixed release times in Pine).
+- session: 0.6 at 01:30–10:30, 0.5 at 23:00–00:30, else 1. Capped at 0.4 when news starts within 60 min (fixed release times in Pine).
 - hunt: `1 − 0.25` if the level has a high/low/PDH/PDL kind, and `− 0.25` more if a $5 round lies within ±1 of the SL.
 - Below 40 the setup gets ⚠.
 

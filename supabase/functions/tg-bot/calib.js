@@ -27,9 +27,9 @@ export function parseCalibrate(args) {
   if (!(price > 500 && price < 20000) || (ask !== null && !(ask >= price && ask - price <= 5))) throw new Error("bad");
   return { price, ask };
 }
-// Tehran trading sessions inside the DaryaGold day (07:00-00:30)
+// Tehran trading sessions inside the DaryaGold day (01:30-00:30)
 export function sessionOf(hm) {
-  if (hm >= "07:00" && hm < "11:15") return "asia";
+  if (hm >= "01:30" && hm < "11:15") return "asia";
   if (hm >= "11:15" && hm < "16:15") return "london";
   if (hm >= "16:15" || hm < "00:30") return "newyork";
   return "closed";

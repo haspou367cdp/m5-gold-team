@@ -381,7 +381,8 @@ FA_WD = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه"
 
 
 def session_cfg(cfg=None):
-    """DaryaGold session in Tehran time (owner, 2026-11-20): Mon-Fri 07:00 to 00:30 next day; Sat/Sun closed."""
+    """DaryaGold session in Tehran time (owner 2026-11-14 / 2026-11-21): opens Mon 01:30, each session 01:30 to 00:30 next
+    day (daily break 00:30-01:30), last close Sat 00:30. `alerts_from` (07:00) = start of the bot's automatic alerts/briefs."""
     cfg = cfg or load_config()
     s = cfg.get("session") or {}
     hours = s.get("no_new_entries_hours_before_friday_close")
@@ -390,7 +391,8 @@ def session_cfg(cfg=None):
     return {
         "tz": TEH,
         "days": tuple(int(d) for d in s.get("days", (0, 1, 2, 3, 4))),
-        "open": _hm(s.get("open"), "07:00"),
+        "open": _hm(s.get("open"), "01:30"),
+        "alerts_from": _hm(s.get("alerts_from"), "07:00"),
         "close": _hm(s.get("close"), "00:30"),
         "hours": float(hours),
         "reminder_min": int(s.get("close_reminder_minutes_before", 30)),
@@ -442,23 +444,39 @@ def next_session(now=None, cfg=None):
 
 
 def session_date(now=None, cfg=None):
-    """Trading-day key for the daily stop: the date the DaryaGold session opened (Tehran time minus the 07:00 open).
-    00:00-00:30 belongs to the previous day's session; the closed 00:30-07:00 gap also maps to it."""
+    """Trading-day key for the daily stop: the date the DaryaGold session opened (Tehran time minus the 01:30 open).
+    00:00-00:30 belongs to the previous day's session; the 00:30-01:30 break also maps to it."""
     sc = session_cfg(cfg)
     oh, om = sc["open"]
     return (_as_teh(now) - timedelta(hours=oh, minutes=om)).strftime("%Y-%m-%d")
 
 
 def session_start(now=None, cfg=None):
-    """Start (07:00 Tehran) of the trading day that `now` belongs to."""
+    """Start (01:30 Tehran) of the trading day that `now` belongs to."""
     sc = session_cfg(cfg)
     oh, om = sc["open"]
     d = datetime.strptime(session_date(now, cfg), "%Y-%m-%d")
     return d.replace(hour=oh, minute=om, tzinfo=TEH)
 
 
+def session_end(now=None, cfg=None):
+    """Close (00:30 next day) of the trading day that `now` belongs to."""
+    st = session_start(now, cfg)
+    return _bounds(st.date(), session_cfg(cfg))[1]
+
+
 def market_open(now=None, cfg=None):
     return current_session(now, cfg) is not None
+
+
+def alert_window(now=None, cfg=None):
+    """Bot's automatic alerts/briefs window: market open and at or after `alerts_from` (07:00) or before the 00:30 close."""
+    sc = session_cfg(cfg)
+    t = _as_teh(now)
+    if not market_open(t, cfg):
+        return False
+    m, (ah, am), (ch, cm) = t.hour * 60 + t.minute, sc["alerts_from"], sc["close"]
+    return m >= ah * 60 + am or m < ch * 60 + cm
 
 
 forex_open = market_open   # back-compat name used by bot.py
@@ -480,7 +498,7 @@ def _friday_session(t, sc, cfg):
 
 
 def session_entry_block(now=None, cfg=None):
-    """No new entries while DaryaGold is closed (00:30-07:00, Sat/Sun) or in the last N hours of Friday.
+    """No new entries while DaryaGold is closed (00:30-01:30 break, Sat/Sun) or in the last N hours of Friday.
 
     Signals stop at the daily close; open positions are never closed by this system, the owner checks them.
     """
@@ -501,7 +519,7 @@ def session_entry_block(now=None, cfg=None):
         reason = (f"جمعه از {fstart_fa} ورود جدید ممنوع است و سفارش‌های محدود در همان ساعت لغو می‌شوند. "
                   f"معامله‌های باز باید پیش از {c_fa} بسته شوند. تصمیم: NO TRADE.")
     elif not is_open:
-        reason = (f"بازار دریاگلد بسته است (دوشنبه تا جمعه {o_fa} تا {c_fa} تهران). "
+        reason = (f"بازار دریاگلد بسته است (دوشنبه تا جمعه از {o_fa} تا {c_fa} شب بعد، به وقت تهران). "
                   f"بازگشایی {FA_WD[reopen.weekday()]} {fa_digits(reopen.strftime('%H:%M'))}. تصمیم: NO TRADE.")
     else:
         reason = (f"بازار تا {fa_digits(close.strftime('%H:%M'))} باز است. "
@@ -519,7 +537,7 @@ def session_entry_block(now=None, cfg=None):
         "now_tehran": t.strftime("%Y-%m-%d %H:%M"),
         "reason_fa": reason,
         "hours_line_fa": (
-            f"ساعت کار دریاگلد: دوشنبه تا جمعه {o_fa} تا {c_fa} تهران؛ شنبه و یکشنبه بسته. "
+            f"ساعت کار دریاگلد: دوشنبه تا جمعه از {o_fa} تا {c_fa} شب بعد، به وقت تهران؛ شنبه و یکشنبه بسته. "
             f"ساعت {c_fa} سیگنال‌ها متوقف می‌شوند و وضعیت معامله‌های باز را خودت بررسی کن. "
             f"جمعه از {fstart_fa} ورود جدید ممنوع است."
         ),

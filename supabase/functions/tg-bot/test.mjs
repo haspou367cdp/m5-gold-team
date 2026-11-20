@@ -2,7 +2,7 @@
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
 import { CAL, basisStats, basisStatus, parseCalibrate, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { sessionDate, HELP, render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort, forexOpen, weekendClosed, closedLine, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
+import { sessionDate, HELP, render, parseAmount, normalize, teh, verifyOidc, toman, tomanShort, forexOpen, alertWindow, weekendClosed, closedLine, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
@@ -197,23 +197,27 @@ for (const [n, c] of [["other repo", { repository: "evil/x" }], ["other branch",
 const t = await jwt(good);
 // ---- DaryaGold hours (Tehran, no DST)
 const U = (x) => new Date(x);
-check("DaryaGold hours Mon-Fri 07:00-00:30 Tehran: Mon 07:00 open / 06:59 closed, Tue 00:29 open / 00:30 closed, Sat 00:29 open / 00:30 closed, Sunday and Mon 00:15 closed",
-  forexOpen(U("2026-11-16T03:30:00Z")) && !forexOpen(U("2026-11-16T03:29:00Z")) && forexOpen(U("2026-11-16T20:59:00Z")) && !forexOpen(U("2026-11-16T21:00:00Z")) &&
-  forexOpen(U("2026-11-13T20:59:00Z")) && !forexOpen(U("2026-11-13T21:00:00Z")) && !forexOpen(U("2026-11-15T08:30:00Z")) && !forexOpen(U("2026-11-15T20:45:00Z")) &&
-  forexOpen(U("2026-11-11T10:30:00Z")));
-check("weekendClosed = any closure (weekend and nightly 00:30-07:00)", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-11T22:15:00Z")) &&
-  !weekendClosed(U("2026-11-11T10:30:00Z")) && !weekendClosed(U("2026-11-13T20:15:00Z")));
-check("closed line: reopen Monday ۰۷:۰۰ / Thursday ۰۷:۰۰ at night, Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۷:۰۰" &&
-  closedLine(U("2026-11-11T22:15:00Z")).endsWith("پنجشنبه ۰۷:۰۰") && !/\d/.test(closedLine(U("2026-11-14T08:00:00Z"))));
-check("trading day: 00:15 Tehran belongs to the previous day; 07:00 starts a new one",
-  sessionDate({ date: "2026-11-13", hm: "00:15" }) === "2026-11-12" && sessionDate({ date: "2026-11-13", hm: "07:00" }) === "2026-11-13" &&
-  sessionDate({ date: "2026-12-01", hm: "06:59" }) === "2026-11-30");
+check("DaryaGold hours: opens Mon 01:30 Tehran; sessions 01:30-00:30 (break 00:30-01:30); Sat 00:29 open / 00:30 closed; Sunday and Mon 00:15 closed",
+  forexOpen(U("2026-11-15T22:00:00Z")) && !forexOpen(U("2026-11-15T21:59:00Z")) && forexOpen(U("2026-11-16T03:29:00Z")) &&
+  forexOpen(U("2026-11-16T20:59:00Z")) && !forexOpen(U("2026-11-16T21:00:00Z")) && !forexOpen(U("2026-11-16T21:59:00Z")) && forexOpen(U("2026-11-16T22:00:00Z")) &&
+  forexOpen(U("2026-11-13T20:59:00Z")) && !forexOpen(U("2026-11-13T21:00:00Z")) && !forexOpen(U("2026-11-14T22:00:00Z")) && !forexOpen(U("2026-11-15T08:30:00Z")) &&
+  !forexOpen(U("2026-11-15T20:45:00Z")) && forexOpen(U("2026-11-11T10:30:00Z")));
+check("alertWindow: alerts/briefs only 07:00-00:30 while open (Mon 03:00 open but quiet)",
+  !alertWindow(U("2026-11-15T23:30:00Z")) && forexOpen(U("2026-11-15T23:30:00Z")) && alertWindow(U("2026-11-16T03:30:00Z")) && !alertWindow(U("2026-11-16T03:29:00Z")) &&
+  alertWindow(U("2026-11-16T20:59:00Z")) && !alertWindow(U("2026-11-16T21:00:00Z")) && !alertWindow(U("2026-11-14T08:00:00Z")));
+check("weekendClosed = any closure (weekend and the 00:30-01:30 break)", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-11T21:15:00Z")) &&
+  !weekendClosed(U("2026-11-11T22:15:00Z")) && !weekendClosed(U("2026-11-11T10:30:00Z")) && !weekendClosed(U("2026-11-13T20:15:00Z")));
+check("closed line: reopen Monday ۰۱:۳۰ / Thursday ۰۱:۳۰ in the break, Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۱:۳۰" &&
+  closedLine(U("2026-11-11T21:15:00Z")).endsWith("پنجشنبه ۰۱:۳۰") && !/\d/.test(closedLine(U("2026-11-14T08:00:00Z"))));
+check("trading day: 00:15 Tehran belongs to the previous day; 01:30 starts a new one",
+  sessionDate({ date: "2026-11-13", hm: "00:15" }) === "2026-11-12" && sessionDate({ date: "2026-11-13", hm: "01:29" }) === "2026-11-12" &&
+  sessionDate({ date: "2026-11-13", hm: "01:30" }) === "2026-11-13" && sessionDate({ date: "2026-11-13", hm: "07:00" }) === "2026-11-13");
 { const s0 = normalize({ day: { date: "2026-11-12", losses: 3, loss_toman: 1, wins: 0, win_toman: 0, records: [] } }, { date: "2026-11-13", hm: "00:20", full: "2026-11-13 00:20" });
   const s1 = normalize({ day: { date: "2026-11-12", losses: 3, loss_toman: 1, wins: 0, win_toman: 0, records: [] } }, { date: "2026-11-13", hm: "07:05", full: "2026-11-13 07:05" });
-  check("daily stop kept until the 00:30 close and reset at 07:00", s0.day.losses === 3 && s1.day.losses === 0 && s1.day.date === "2026-11-13"); }
+  check("daily stop kept until the 00:30 close and reset by the next session", s0.day.losses === 3 && s1.day.losses === 0 && s1.day.date === "2026-11-13"); }
 CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pending_cmds.length;
 r = await tgSend("/brief"); check("Saturday /brief: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
-  r.out[0].includes("دوشنبه ۰۷:۰۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
+  r.out[0].includes("دوشنبه ۰۱:۳۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
 r = await tgSend("/brief"); check("Saturday /brief: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0);
 r = await tgSend("/levels"); check("Saturday /levels with no snapshot: same closed line, no dispatch", r.out.length === 1 && r.out[0].includes("بازار بسته است") && DISPATCHED.length === 0 && (st().pending_cmds || []).every((x) => x.cmd !== "/levels"));
 const LVBLOCK = "طلا  `3900.3`\nH4 نزولی  ·  H1 خنثی  ·  روند نامشخص\n\nبالا\n▸ `3910.3`  (+10.0)  مهم\n  سقف دیروز + سوئینگ H4  ·  2 تماس M15\n  پهنه  `3909.9`–`3910.7`";
@@ -240,7 +244,7 @@ DB.row.state.pending_cmds = [];
 check("levelsFresh helper", levelsFresh({ computed_at_tehran: "2026-11-11 13:50:00" }, CLOCK) && !levelsFresh({ computed_at_tehran: "2026-11-11 13:00:00" }, CLOCK));
 check("faDate Jalali matches Python (11 Nov 2026 = 20 Aban)", faDate(CLOCK).includes("آبان"));
 CLOCK = U("2026-11-14T08:00:00Z"); SENT.length = 0; let h = await (await app(new Request(FN + "/health"))).json();
-check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۷:۰۰") && h.build && SENT.length === 0);
+check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok && h.market_closed === true && h.closed_line.includes("دوشنبه ۰۱:۳۰") && h.build && SENT.length === 0);
 CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
 check("/health on a weekday: market open", h.market_closed === false && !h.closed_line);
 // ---- /offset (owner chat only)
@@ -372,8 +376,8 @@ check("GitHub may not overwrite group_enabled", st().group_enabled === geKept &&
 // ---- Phase 2: /calibrate (private only, stored with the live feed, offset from the median only when enough samples)
 check("parseCalibrate: price, optional ask, Persian digits; rejects junk", parseCalibrate(["3569.85"]).price === 3569.85 &&
   parseCalibrate(["۳۵۶۹٫۸۵", "3570.10"]).ask === 3570.1 && [[], ["abc"], ["35"], ["3569.85", "3560"], ["1", "2", "3"], ["3569.85", "3580"]].every((a) => { try { parseCalibrate(a); return false; } catch { return true; } }));
-check("sessionOf: asia 07:00, london 11:15, new york 16:15 to 00:30, closed after", sessionOf("07:00") === "asia" && sessionOf("11:15") === "london" &&
-  sessionOf("16:07") === "london" && sessionOf("16:15") === "newyork" && sessionOf("00:29") === "newyork" && sessionOf("00:30") === "closed" && sessionOf("06:59") === "closed");
+check("sessionOf: asia 01:30, london 11:15, new york 16:15 to 00:30, closed in the break", sessionOf("01:30") === "asia" && sessionOf("07:00") === "asia" && sessionOf("11:15") === "london" &&
+  sessionOf("16:07") === "london" && sessionOf("16:15") === "newyork" && sessionOf("00:29") === "newyork" && sessionOf("00:30") === "closed" && sessionOf("01:29") === "closed");
 check("basisStatus thresholds around the expected offset", basisStatus(0.3, 0.3) === "NORMAL_ALIGNMENT" && basisStatus(0.9, 0.3) === "MINOR_BASIS" &&
   basisStatus(2.0, 0.3) === "ELEVATED_BASIS" && basisStatus(3.0, 0.3) === "FEED_DESYNCHRONIZATION" && basisStatus(null, 0.3) === "DATA_UNAVAILABLE" && basisStatus(0.3, 0.3, false) === "DATA_UNAVAILABLE");
 const T0 = Date.parse("2026-11-20T12:37:44Z");

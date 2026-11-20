@@ -57,7 +57,7 @@ def load_state():
     s.setdefault("presession_sent", {})
     s.setdefault("signals_sent", [])
     today = now_teh().strftime("%Y-%m-%d")
-    tday = DG.session_date(now_teh())   # daily stop runs on the DaryaGold trading day (07:00-00:30 Tehran)
+    tday = DG.session_date(now_teh())   # daily stop runs on the DaryaGold trading day (01:30-00:30 Tehran)
     if (s.get("day") or {}).get("date") != tday:
         s["day"] = {"date": tday, "losses": 0, "loss_toman": 0, "wins": 0, "win_toman": 0, "records": []}
     s["presession_sent"] = {k: v for k, v in s["presession_sent"].items() if k >= today}
@@ -582,7 +582,7 @@ def friday_flag():
 
 NY = ZoneInfo("America/New_York")
 def day_start(t):
-    """Trading-day start for the day high/low: 07:00 Tehran DaryaGold session open (the day 00:00-00:30 belongs to)."""
+    """Trading-day start for the day high/low: 01:30 Tehran DaryaGold session open (the day 00:00-00:30 belongs to)."""
     return DG.session_start(t)
 
 def day_hilo(t):
@@ -768,7 +768,7 @@ def track_one(rec, bars, now, cfg):
     d = 1 if side == "BUY" else -1
     sent = datetime.fromisoformat(rec["sent_at"])
     valid = datetime.fromisoformat(rec["valid_until"]) if rec.get("valid_until") else sent + timedelta(minutes=30)
-    close = DG.session_start(sent, cfg) + timedelta(hours=17, minutes=30)      # 07:00 + 17:30 = 00:30
+    close = DG.session_end(sent, cfg)                                          # 00:30 after the 01:30 open
     end = min(now, close)
     import pandas as pd
     w = bars[(bars.index >= pd.Timestamp(sent)) & (bars.index < pd.Timestamp(end))]
@@ -881,7 +881,7 @@ def shadow_step(state, b, cfg, news_ok, now, record=True, session=None, valid=No
 
 # ---------------- weekend / Friday close ----------------
 def weekend_closed(t, cfg):
-    """DaryaGold closed (00:30-07:00 Tehran, Saturday, Sunday): commands get the closed line, no analysis."""
+    """DaryaGold closed (00:30-01:30 Tehran break, Saturday, Sunday): commands get the closed line, no analysis."""
     return not DG.market_open(t, cfg)
 
 def reopen_at(t, cfg):
@@ -1033,25 +1033,25 @@ def main():
         smp = sample_signal(b, cfg, state)
         if smp:
             send(smp)
-    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and friday_reminder(t, cfg):
+    elif a.mode == "scheduled" and DG.alert_window(t, cfg) and friday_reminder(t, cfg):
         # Friday after the entry cutoff: one short close reminder, no analysis, no signal
         tag = f"{t:%Y-%m-%d}"
         if state.get("friday_reminder_sent") not in (tag, (t - timedelta(days=1)).strftime("%Y-%m-%d")):
             if send(friday_reminder(t, cfg)):
                 state["friday_reminder_sent"] = tag
-    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and close_reminder(t, cfg):
+    elif a.mode == "scheduled" and DG.alert_window(t, cfg) and close_reminder(t, cfg):
         # last 30 min before the 00:30 close: one reminder per session, no analysis, no signal
         tag = f"close:{(t - timedelta(hours=7)):%Y-%m-%d}"
         if state.get("friday_reminder_sent") != tag:
             if send(close_reminder(t, cfg)):
                 state["friday_reminder_sent"] = tag
-    elif a.mode == "scheduled" and DG.forex_open(t, cfg) and ASIA_LOG_ONLY and in_asia(t):
+    elif a.mode == "scheduled" and DG.alert_window(t, cfg) and ASIA_LOG_ONLY and in_asia(t):
         # Asia: log-only. Shadow setups are recorded and resolved; nothing is ever sent.
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
         print("asia log-only:", "valid setup (not sent)" if ok else " | ".join(why)[:300])
         shadow_step(state, b, cfg, news_ok, t, record=not ok, session="asia", valid=(plan, sizing) if ok else None)
-    elif a.mode == "scheduled" and DG.forex_open(t, cfg):
+    elif a.mode == "scheduled" and DG.alert_window(t, cfg):
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
         if ok and AUTO_SIGNALS:

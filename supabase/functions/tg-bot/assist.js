@@ -334,7 +334,7 @@ const FRESH = [0.5, 0.9, 1, 0.9, 0.75, 0.6];
 const STR = { strong: 1, medium: 0.65, weak: 0.35 };
 function sessionFactor(nowMs, news) {
   const m = tehParts(nowMs).min;
-  let f = m >= 7 * 60 && m < 10 * 60 + 30 ? 0.6 : m >= 23 * 60 || m < 30 ? 0.5 : 1;
+  let f = m >= 90 && m < 10 * 60 + 30 ? 0.6 : m >= 23 * 60 || m < 30 ? 0.5 : 1;
   const nx = nextNews(news, nowMs, ["A", "B", "C"]);
   if (nx && nx.startMs - nowMs < 60 * 60000) f = Math.min(f, 0.4);
   return f;
@@ -354,7 +354,7 @@ export function insideNews(news, nowMs) {
   return newsList(news).filter((w) => isMajor(w) && w.startMs <= nowMs && nowMs < w.endMs).sort((a, b) => b.endMs - a.endMs)[0] || null;
 }
 
-// ---------------- session limits (DaryaGold Mon-Fri 07:00-00:30 Tehran; Friday no new entry from 23:30) ----------------
+// ---------------- session limits (DaryaGold Mon 01:30 to Sat 00:30 Tehran, daily break 00:30-01:30; Friday no new entry from 23:30) ----------------
 export function entryLimit(nowMs) {
   const p = tehParts(nowMs);
   const dayStart = Date.parse(p.date + "T00:00:00+03:30");
@@ -363,7 +363,7 @@ export function entryLimit(nowMs) {
     if (p.dow === 0 || p.dow === 1) return { closed: "closed" };
     return { untilMs: dayStart + 30 * 60000, why: "close" };
   }
-  if (p.min < 7 * 60 || p.dow === 0 || p.dow === 6) return { closed: "closed" };
+  if (p.min < 90 || p.dow === 0 || p.dow === 6) return { closed: "closed" };   // daily break 00:30-01:30, weekend
   if (p.dow === 5) return p.min >= 23 * 60 + 30 ? { closed: "friday" } : { untilMs: dayStart + (23 * 60 + 30) * 60000, why: "friday" };
   return { untilMs: dayStart + (24 * 60 + 30) * 60000, why: "close" };
 }

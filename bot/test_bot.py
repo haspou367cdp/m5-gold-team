@@ -142,8 +142,8 @@ gate("daily stop 3 losses", False, setup=lambda s: s["day"].update(losses=3))
 gate("daily stop 20% net", False, setup=lambda s: s["day"].update(loss_toman=420000))
 gate("net R:R < 1.5", False, mk_brief(tp=3877.6))
 gate("net R:R 1.55 with the fee once (owner-confirmed; per-side fee not gated)", True, mk_brief(tp=3876.15))
-why = gate("weekday 03:00 Tehran: DaryaGold closed (brief without session_entry)", False, {k: v for k, v in mk_brief().items() if k != "session_entry"}, setup=lambda s: CLOCK.__setitem__(0, datetime(2026, 11, 11, 3, 0, tzinfo=B.TEH)))
-check("closed reason names the 07:00 reopen", any("بازگشایی" in w for w in why)); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
+why = gate("weekday 01:00 Tehran (daily break 00:30-01:30): DaryaGold closed (brief without session_entry)", False, {k: v for k, v in mk_brief().items() if k != "session_entry"}, setup=lambda s: CLOCK.__setitem__(0, datetime(2026, 11, 11, 1, 0, tzinfo=B.TEH)))
+check("closed reason names the 01:30 reopen", any("بازگشایی" in w and "۰۱:۳۰" in w for w in why)); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 gate("SL < $1", False, mk_brief(sl=3880.8, tp=3877.0))
 gate("stale data 11 min", False, mk_brief(quality={"ok": True, "age_minutes": 11}))
 gate("futures fallback", False, mk_brief(fallback=True))
@@ -245,9 +245,10 @@ check("state stores the same snapshot (no second computation)", state().get("lev
 a, btm = B.near_levels(BRIEF[0])
 check("near_levels is the top of /levels", a["price_dg"] == 3895.3 and btm["price_dg"] == 3880.5)
 
-check("trading day = DaryaGold session: day start 07:00 Tehran; 00:15 belongs to the previous day; day key follows",
-      B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 07:00" and
-      B.day_start(datetime(2026, 11, 13, 0, 15, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 07:00" and
+check("trading day = DaryaGold session: day start 01:30 Tehran; 00:15 belongs to the previous day; day key follows",
+      B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 01:30" and
+      B.day_start(datetime(2026, 11, 13, 0, 15, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 01:30" and
+      DG.session_date(datetime(2026, 11, 13, 1, 29, tzinfo=B.TEH)) == "2026-11-12" and
       DG.session_date(datetime(2026, 11, 13, 0, 15, tzinfo=B.TEH)) == "2026-11-12" and
       DG.session_date(datetime(2026, 11, 13, 7, 0, tzinfo=B.TEH)) == "2026-11-13")
 _c0 = CLOCK[0]; CLOCK[0] = datetime(2026, 11, 12, 23, 50, tzinfo=B.TEH)
@@ -255,7 +256,7 @@ _s = B.load_state(); _s["day"].update(losses=3); B.save_state(_s)
 CLOCK[0] = datetime(2026, 11, 13, 0, 20, tzinfo=B.TEH)
 check("daily stop survives midnight until the 00:30 close (same trading day)", B.load_state()["day"]["losses"] == 3)
 CLOCK[0] = datetime(2026, 11, 13, 7, 5, tzinfo=B.TEH)
-check("daily stop resets at the 07:00 session open", B.load_state()["day"]["losses"] == 0)
+check("daily stop resets with the next session (opens 01:30)", B.load_state()["day"]["losses"] == 0)
 _s = B.load_state(); B.save_state(_s); CLOCK[0] = _c0
 check("risk_check daily cap uses start_equity", B.day_cap({"equity_toman": 2954400, "day": {"start_equity": 1000000}}, cfg) == 200000 and
       B.day_cap({"equity_toman": 2954400, "day": {}}, cfg) == 2954400 * 0.2)
@@ -340,17 +341,19 @@ CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); out = run("command", ["/
 check("Saturday 00:15 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
 BRIEF[0] = mk_brief()
 for when, nm in [(datetime(2026, 11, 14, 1, 45, tzinfo=B.TEH), "Saturday 01:45"), (datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), "Saturday noon"),
-                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 6, 59, tzinfo=B.TEH), "Monday 06:59"), (datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH), "Saturday 00:30")]:
+                 (datetime(2026, 11, 15, 20, 0, tzinfo=B.TEH), "Sunday 20:00"), (datetime(2026, 11, 16, 1, 29, tzinfo=B.TEH), "Monday 01:29"), (datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH), "Saturday 00:30")]:
     CLOCK[0] = when; CALLS[0] = 0; out = run("command", ["/scan", "/brief"])
-    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 07:00), no analysis",
-          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۷:۰۰" in x for x in out) and CALLS[0] == 0)
+    check(f"{nm}: /scan and /brief -> one closed line each (reopen Monday 01:30), no analysis",
+          len(out) == 2 and all(x.count("\n") == 0 and "بازار بسته است" in x and "دوشنبه ۰۱:۳۰" in x for x in out) and CALLS[0] == 0)
+CLOCK[0] = datetime(2026, 11, 16, 3, 0, tzinfo=B.TEH); CALLS[0] = 0; out = run("command", ["/scan"])
+check("Monday 03:00 (market open from 01:30): /scan is analysed, no closed line", len(out) == 1 and CALLS[0] > 0 and "بازار بسته است" not in out[0])
 
 # /levels on the weekend: never re-analyse; last snapshot (with age) or the same closed line
 CLOCK[0] = datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH)
 st = state(); st.pop("levels", None); json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("Saturday /levels with no snapshot: same closed line, no analysis",
-      len(out) == 1 and out[0].count("\n") == 0 and "بازار بسته است" in out[0] and "دوشنبه ۰۷:۰۰" in out[0] and CALLS[0] == 0)
+      len(out) == 1 and out[0].count("\n") == 0 and "بازار بسته است" in out[0] and "دوشنبه ۰۱:۳۰" in out[0] and CALLS[0] == 0)
 snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
@@ -360,14 +363,21 @@ check("Saturday /levels with a stored snapshot: served with age, no analysis",
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
     check(f"weekend scheduled run {when:%a %H:%M}: silent, no analysis", run("scheduled") == [] and CALLS[0] == 0)
-check("DaryaGold hours Mon-Fri 07:00-00:30 Tehran: Mon 07:00 open, 06:59 closed; Tue 00:29 open, 00:30 closed; Sat 00:29 open (Friday session), Sat 07:00 / Sun closed",
-      DG.forex_open(datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 6, 59, tzinfo=B.TEH), cfg) and
+check("DaryaGold hours: Mon 01:30 open, 01:29 closed; sessions 01:30-00:30 (Tue 00:29 open, 00:30-01:29 closed, 01:30 open); Sat 00:29 open (Friday session), Sat 07:00 / Sun closed",
+      DG.forex_open(datetime(2026, 11, 16, 1, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 1, 29, tzinfo=B.TEH), cfg) and
+      DG.forex_open(datetime(2026, 11, 16, 6, 59, tzinfo=B.TEH), cfg) and
       DG.forex_open(datetime(2026, 11, 17, 0, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 17, 0, 30, tzinfo=B.TEH), cfg) and
+      not DG.forex_open(datetime(2026, 11, 17, 1, 29, tzinfo=B.TEH), cfg) and DG.forex_open(datetime(2026, 11, 17, 1, 30, tzinfo=B.TEH), cfg) and
       DG.forex_open(datetime(2026, 11, 14, 0, 29, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 14, 7, 0, tzinfo=B.TEH), cfg) and
       not DG.forex_open(datetime(2026, 11, 15, 12, 0, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 11, 16, 0, 15, tzinfo=B.TEH), cfg) and
       DG.session_entry_block(datetime(2026, 11, 13, 20, 0, tzinfo=B.TEH), cfg)["close_tehran"] == "2026-11-14 00:30")
-check("weekday night 01:45 closed (reopen Thursday 07:00); weekday afternoon open", B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
-      "پنجشنبه 07:00" in B.closed_line(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
+check("weekday break 01:00 closed (reopen Thursday 01:30); 01:45 and afternoon open", B.weekend_closed(datetime(2026, 11, 12, 1, 0, tzinfo=B.TEH), cfg) and
+      "پنجشنبه 01:30" in B.closed_line(datetime(2026, 11, 12, 1, 0, tzinfo=B.TEH), cfg) and not B.weekend_closed(datetime(2026, 11, 12, 1, 45, tzinfo=B.TEH), cfg) and
+      not B.weekend_closed(datetime(2026, 11, 12, 14, 0, tzinfo=B.TEH), cfg))
+check("alert window 07:00-00:30 while open (Mon 03:00 open but quiet; Sat 00:15 Friday tail inside)",
+      not DG.alert_window(datetime(2026, 11, 16, 3, 0, tzinfo=B.TEH), cfg) and DG.alert_window(datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH), cfg) and
+      DG.alert_window(datetime(2026, 11, 17, 0, 29, tzinfo=B.TEH), cfg) and not DG.alert_window(datetime(2026, 11, 17, 1, 45, tzinfo=B.TEH), cfg) and
+      DG.alert_window(datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH), cfg) and not DG.alert_window(datetime(2026, 11, 14, 12, 0, tzinfo=B.TEH), cfg))
 # daily 00:30 close: one reminder in the last 30 min (Wednesday session), no analysis; nothing is closed automatically
 fresh(); CLOCK[0] = datetime(2026, 11, 12, 0, 0, tzinfo=B.TEH); CALLS[0] = 0; r1 = run("scheduled")
 CLOCK[0] = datetime(2026, 11, 12, 0, 20, tzinfo=B.TEH); r2 = run("scheduled")
@@ -386,7 +396,7 @@ check("09:04 valid SELL: signal sent live (no longer log-only), recorded with an
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 7, 0, tzinfo=B.TEH); out = run("scheduled")
 check("07:00 Monday open: valid setup is sent (+ the morning brief)", len(out) == 2 and any("فروش طلا" in x for x in out) and any("خلاصه‌ی صبح" in x for x in out))
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 6, 45, tzinfo=B.TEH); out = run("scheduled")
-check("06:45 (before the 07:00 open): nothing sent", out == [] and state()["signals_sent"] == [])
+check("06:45 (market open from 01:30, before the 07:00 alert window): nothing sent", out == [] and state()["signals_sent"] == [])
 fresh(); BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["news"]}, plan=None, sizing=None, regime={"code": "news_abnormal"},
                              news_window={"inside": True, "action": "block", "tier": "B", "end": "2026-11-16 09:30"})
 CLOCK[0] = datetime(2026, 11, 16, 9, 4, tzinfo=B.TEH); CAND[0] = cand(); out = run("scheduled"); sh = state()["shadow"]

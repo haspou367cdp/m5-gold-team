@@ -6,10 +6,10 @@
 // /calibrate: owner-entered DaryaGold price + live Dukascopy 1-minute bid/ask -> public.price_observations (service role only).
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
-import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
+import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, alertWindow, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
 import * as A from "./assist.js";
 
-export const BUILD = "2026-11-21-assistant-v5.1-onebasis";
+export const BUILD = "2026-11-21-assistant-v5.2-hours";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -215,7 +215,8 @@ export function makeApp(cfg) {
   async function onTick(req) {
     const env = await secrets();
     if (!env.WEBHOOK || (req.headers.get("x-report-key") || "") !== env.WEBHOOK) return new Response("forbidden", { status: 403 });
-    const now = clock(), nowMs = now.getTime(), open = forexOpen(now), out = { ok: true, sent: 0, setups: 0 };
+    // alerts only in the bot window (07:00-00:30 while the market is open); commands follow forexOpen (from 01:30)
+    const now = clock(), nowMs = now.getTime(), open = alertWindow(now), out = { ok: true, sent: 0, setups: 0 };
     try {   // menus follow the code: applied on the first tick after a deploy that changes MENU_VERSION
       const s0 = normalize((await loadRow()).state);
       if (s0.menu_version !== MENU_VERSION && await syncMenus(env)) {

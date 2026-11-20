@@ -122,6 +122,9 @@ check("entry limit: Sunday 00:10 and Monday 00:10 Tehran are closed (no session)
   A.hmOf(A.entryLimit(ms("2026-11-23T20:40:00Z")).untilMs) === "00:30" && A.entryLimit(ms("2026-11-23T20:40:00Z")).why === "close");
 check("entry limit: Friday 23:40 and Saturday 00:10 closed; Wednesday until 00:30", A.entryLimit(ms("2026-11-20T20:10:00Z")).closed === "friday" &&
   A.entryLimit(ms("2026-11-20T20:40:00Z")).closed === "friday" && A.hmOf(A.entryLimit(ms("2026-11-18T15:00:00Z")).untilMs) === "00:30");
+check("entry limit: market opens Monday 01:30 (until 00:30); Monday 01:00 and the weekday break 00:30-01:30 closed",
+  A.entryLimit(ms("2026-11-22T21:30:00Z")).closed === "closed" && A.hmOf(A.entryLimit(ms("2026-11-22T22:00:00Z")).untilMs) === "00:30" &&
+  A.entryLimit(ms("2026-11-17T21:30:00Z")).closed === "closed" && A.hmOf(A.entryLimit(ms("2026-11-17T22:05:00Z")).untilMs) === "00:30");
 const newsAt = (start, end, tier = "A", label = "US CPI m/m") => ({ windows: [{ start, end, tier, label, event_time_tehran: start.slice(0, 11) + "16:00", fomc: false }] });
 const lv = A.snapLevels(LEVELS(3530));
 const baseCtx = (over = {}) => ({ levels: lv, quote: { dg: 3530, bid: 3529.8, spread: 0.3, bidOff: 0.2 }, atr5: 4, trend: down, adrUsed: 70, nowMs: ms("2026-11-18T15:00:00Z"), news: { windows: [] }, ...over });
@@ -273,6 +276,16 @@ out = await owner("/setup");
 check("Saturday /setup: closed line", out.length === 1 && out[0].text.includes("بازار بسته است"));
 out = await owner("/trend");
 check("Saturday /trend: last data + closed line", out.length === 1 && out[0].text.includes("جهت بزرگ بازار") && out[0].text.includes("بازار بسته است"));
+// Monday 03:00 Tehran: market open (from 01:30) → commands answer normally; Monday 01:00 → closed line with the 01:30 reopen
+CLOCK = U("2026-11-22T23:30:00Z");
+out = await owner("/setup");
+check("Monday 03:00 /setup works (market open from 01:30)", out.length === 1 && out[0].text.includes("ستاپ‌ها") && out[0].text.includes("قیمت الان") && !out[0].text.includes("بازار بسته است"));
+out = await owner("/trend");
+check("Monday 03:00 /trend: no closed line", out.length === 1 && out[0].text.includes("روند طلا") && !out[0].text.includes("بازار بسته است"));
+CLOCK = U("2026-11-22T21:30:00Z");
+out = await owner("/setup");
+check("Monday 01:00 /setup: closed line, reopen ۰۱:۳۰", out.length === 1 && out[0].text.includes("بازار بسته است") && out[0].text.includes("۰۱:۳۰"));
+CLOCK = U("2026-11-21T10:00:00Z");
 // offset live
 out = await owner("/offset live 0.05");
 check("/offset live (old form) sets the one DaryaGold offset", DB.row.state.dg_offset === 0.05 && out[0].text.includes("ثبت شد"));
@@ -324,6 +337,9 @@ CLOCK = U("2026-11-21T10:00:00Z");
 for (const x of SETUPS) x.status = "expired";
 tk = await tick();
 check("tick: weekend with nothing pending → skipped, no message", tk.body.skipped === "closed" && tk.out.length === 0);
+CLOCK = U("2026-11-22T23:30:00Z");   // Monday 03:00 Tehran: market open but before the 07:00 alert window
+tk = await tick();
+check("tick: Monday 03:00 (open, before 07:00) → no alerts", tk.body.skipped === "closed" && tk.out.length === 0);
 // group never gets alerts
 check("no alert or assistant reply ever went to the group except member-requested ones", SENT.filter((x) => String(x.chat_id) === GID).every((x) => /ستاپ‌ها|روند طلا/.test(x.text)));
 
