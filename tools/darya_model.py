@@ -1,11 +1,15 @@
 """DaryaGold contract model (pure Python, no I/O): units, costs, P&L, 60-second hold, stop-out proximity.
 
-Every number below came from the owner and has NOT been verified on the DaryaGold panel yet.
+Every number below came from the owner. The fee (14,000 toman, charged once per trade) was confirmed by the
+owner on 2026-11-20, as were the margins (1U 1,000,000 / 0.5U 500,000; stop-out at 80% = 800,000 / 400,000).
+The other values (toman per $1, spread, 60-second hold) are not yet verified on the DaryaGold panel.
 Prices are in USD per ounce; money is in toman.
 """
 from datetime import datetime
 
 SOURCE = "USER_PROVIDED — NOT CURRENTLY VERIFIED"
+FEE_SOURCE = "USER_CONFIRMED 2026-11-20 — charged once per trade"
+MARGIN_SOURCE = "USER_CONFIRMED 2026-11-20 — initial margin; stop-out at 80% of it"
 
 
 def _v(value, note=""):
@@ -13,10 +17,10 @@ def _v(value, note=""):
 
 
 UNITS = {
-    "1U": {"label_fa": "یک واحد", "margin": _v(2_000_000), "toman_per_usd": _v(80_000),
-           "fee": _v(14_000), "stop_out_loss": _v(1_600_000, "80% of margin")},
-    "0.5U": {"label_fa": "نیم واحد", "margin": _v(1_000_000), "toman_per_usd": _v(40_000),
-             "fee": _v(14_000), "stop_out_loss": _v(800_000, "80% of margin")},
+    "1U": {"label_fa": "یک واحد", "margin": {"value": 1_000_000, "source": MARGIN_SOURCE, "note": ""}, "toman_per_usd": _v(80_000),
+           "fee": {"value": 14_000, "source": FEE_SOURCE, "note": ""}, "stop_out_loss": {"value": 800_000, "source": MARGIN_SOURCE, "note": "80% of margin"}},
+    "0.5U": {"label_fa": "نیم واحد", "margin": {"value": 500_000, "source": MARGIN_SOURCE, "note": ""}, "toman_per_usd": _v(40_000),
+             "fee": {"value": 14_000, "source": FEE_SOURCE, "note": ""}, "stop_out_loss": {"value": 400_000, "source": MARGIN_SOURCE, "note": "80% of margin"}},
 }
 UNIT_ALIASES = {"full_unit": "1U", "half_unit": "0.5U", "1U": "1U", "0.5U": "0.5U"}
 STOP_OUT_PCT = _v(80, "of margin")
@@ -25,6 +29,7 @@ ORDER_COST_USD = {"MARKET": _v(0.25, "spread paid once per round trip"), "LIMIT"
 FEE_ONCE = "ONCE"                     # fee charged once per trade
 FEE_ENTRY_AND_EXIT = "ENTRY_AND_EXIT"  # fee charged on entry and again on exit
 FEE_SCENARIOS = (FEE_ONCE, FEE_ENTRY_AND_EXIT)
+DEFAULT_FEE_SCENARIO = FEE_ONCE        # owner-confirmed 2026-11-20; ENTRY_AND_EXIT stays computable only
 SIDES = ("BUY", "SELL")
 
 
@@ -119,15 +124,15 @@ def min_hold_ok(opened_at, closed_at, min_seconds=None):
 
 
 def stop_out_check(side, entry, sl, unit_key="1U", order_type="MARKET", spread_usd=None,
-                   safety_margin=0.25, warn_ratio=0.5):
-    """Loss at SL (worst fee scenario, with spread) as a share of the stop-out loss (80% of margin).
+                   safety_margin=0.25, warn_ratio=0.5, fee_scenario=DEFAULT_FEE_SCENARIO):
+    """Loss at SL (fee scenario, with spread) as a share of the stop-out loss (80% of margin).
     REJECT when the SL loss is inside the safety margin of stop-out (ratio >= 1 - safety_margin),
     WARN from warn_ratio, else OK."""
     u = unit(unit_key)
     entry, sl = _num(entry, "entry"), _num(sl, "sl")
     sl_usd = abs(entry - sl)
     loss = sl_usd * u["toman_per_usd"] + order_cost_usd(order_type, spread_usd) * u["toman_per_usd"] \
-        + fee_total(unit_key, FEE_ENTRY_AND_EXIT)
+        + fee_total(unit_key, fee_scenario)
     ratio = loss / u["stop_out_loss"]
     status = "REJECT" if ratio >= 1 - safety_margin else ("WARN" if ratio >= warn_ratio else "OK")
     return {"status": status, "ratio": round(ratio, 3), "loss_at_sl_toman": round(loss),

@@ -49,14 +49,20 @@ def load_state():
     s.setdefault("presession_sent", {})
     s.setdefault("signals_sent", [])
     today = now_teh().strftime("%Y-%m-%d")
-    if (s.get("day") or {}).get("date") != today:
-        s["day"] = {"date": today, "losses": 0, "loss_toman": 0, "wins": 0, "win_toman": 0, "records": []}
+    tday = DG.session_date(now_teh())   # daily stop runs on the DaryaGold trading day (07:00-00:30 Tehran)
+    if (s.get("day") or {}).get("date") != tday:
+        s["day"] = {"date": tday, "losses": 0, "loss_toman": 0, "wins": 0, "win_toman": 0, "records": []}
     s["presession_sent"] = {k: v for k, v in s["presession_sent"].items() if k >= today}
     s["signals_sent"] = s["signals_sent"][-20:]
     return s
 
 def apply_offset(state, cfg):
-    """bot_state dg_offset (set by /offset in Telegram) overrides the file's price_offset_usd, for this run and brief.py."""
+    """bot_state dg_offset (/offset, or the /calibrate median when enough recent samples exist) overrides the file's
+    price_offset_usd, for this run and brief.py. Without it the file's +0.3 stays and the brief says «کالیبره نشده»."""
+    cal = (state.get("calibration") or {}).get("status")
+    if cal in ("calibrated", "not_calibrated"):
+        cfg["calibration_status"] = cal
+        os.environ["DG_CALIBRATION"] = cal
     v = state.get("dg_offset")
     try:
         v = float(v)
@@ -216,7 +222,7 @@ def write_journal(state):
         w = csv.DictWriter(f, fieldnames=["signal_id", "signal_time_tehran", "status", "outcome", "result_R"])
         w.writeheader()
         for i in range(int(d.get("losses") or 0)):
-            w.writerow({"signal_id": f"tg-loss-{i}", "signal_time_tehran": d["date"] + " 00:00",
+            w.writerow({"signal_id": f"tg-loss-{i}", "signal_time_tehran": d["date"] + " 12:00",
                         "status": "closed", "outcome": "loss", "result_R": "-1"})
 
 def run_brief(state):
@@ -282,7 +288,7 @@ def risk_check(b, state, cfg, news_ok):
     last = (state.get("signals_sent") or [None])[-1]
     if last and last.get("at"):
         age = (now_teh() - datetime.strptime(last["at"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)).total_seconds() / 60
-        closed = any(f"{d['date']} {r.get('at', '')}" >= last["at"] for r in d.get("records", []))
+        closed = any((r.get("at_full") or f"{d['date']} {r.get('at', '')}") >= last["at"] for r in d.get("records", []))
         if 0 <= age < SIGNAL_LOCK_MIN and not closed:
             reasons.append("معامله‌ی سیگنال قبلی هنوز باز فرض می‌شود؛ بعد از بستن، `/loss` یا `/win` را بفرستید.")
     cap_loss = day_cap(state, cfg)
@@ -537,15 +543,11 @@ def friday_flag():
 
 NY = ZoneInfo("America/New_York")
 def day_start(t):
-    """Forex trading day start: 17:00 New York (DaryaGold/MT server 00:00; 01:30 Tehran in US winter, 00:30 in summer)."""
-    ny = t.astimezone(NY)
-    st = ny.replace(hour=17, minute=0, second=0, microsecond=0)
-    if ny < st:
-        st -= timedelta(days=1)
-    return st.astimezone(TEH)
+    """Trading-day start for the day high/low: 07:00 Tehran DaryaGold session open (the day 00:00-00:30 belongs to)."""
+    return DG.session_start(t)
 
 def day_hilo(t):
-    """(high_bid, low_bid) of today's forex day from 1-minute bid candles, or None."""
+    """(high_bid, low_bid) of today's DaryaGold session from 1-minute bid candles, or None."""
     try:
         import pandas as pd
         d = pd.read_parquet(f"{ROOT}/data/xauusd_1m.parquet", columns=["h_b", "l_b"])

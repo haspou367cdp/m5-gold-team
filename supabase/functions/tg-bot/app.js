@@ -3,10 +3,16 @@
 //   GET|POST .../state     GitHub Actions only (OIDC JWT: this repo, main branch)
 //   POST .../admin/setup   GitHub Actions only: store secrets in Vault, set webhook, announce once
 //   GET .../health
+// /calibrate: owner-entered DaryaGold price + live Dukascopy 1-minute bid/ask -> public.price_observations (service role only).
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
-import { CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
+import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
+import { offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
 
-export const BUILD = "2026-11-20-phase1-darya-hours";
+export const BUILD = "2026-11-20-phase2-calibrate";
+const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
+  `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
+const r2 = (x) => Math.round(x * 100) / 100;
+const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(r2(x));
 export function makeApp(cfg) {
   const { url: SB, key: KEY } = cfg;   // SUPABASE_URL, service-role key
   const clock = cfg.clock || (() => new Date());   // injectable for tests (market hours)
@@ -45,6 +51,52 @@ export function makeApp(cfg) {
     throw new Error("state busy");
   };
 
+  async function feedNow(nowMs) {
+    try {
+      const ts = nowMs - (nowMs % 60000) - 20 * 60000;
+      const [b, a] = await Promise.all(["B", "A"].map((side) => fetch(DUKA(side, ts), {
+        headers: { "user-agent": "Mozilla/5.0", referer: "https://freeserv.dukascopy.com/" },
+        signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))));
+      return pickFeed(parseDuka(b), parseDuka(a), nowMs);
+    } catch { return null; }
+  }
+  async function onCalibrate(c) {
+    const now = clock(), nowMs = now.getTime(), t = teh(now);
+    const s0 = normalize((await loadRow()).state);
+    const cur = offsetOf(s0);
+    const L = [];
+    if (c.show) L.push(CAL_HELP, "");
+    else {
+      const f = await feedNow(nowMs);
+      const ok = !!f && f.age_s <= CAL.MAX_FEED_AGE_S;
+      const basis = ok ? r2(c.price - f.feed_bid) : null;
+      const status = basisStatus(basis, cur, ok);
+      const r = await fetch(`${SB}/rest/v1/price_observations`, { method: "POST", headers: { ...hdr, prefer: "return=minimal" },
+        body: JSON.stringify({ observed_at: now.toISOString(), source: "telegram_calibrate", darya_price: c.price, darya_ask: c.ask,
+          reference: "dukascopy_bid", feed_bid: f ? f.feed_bid : null, feed_ask: f ? f.feed_ask : null, feed_ref: f ? f.feed_bid : null,
+          feed_bar_at: f ? f.bar_at : null, feed_age_s: f ? f.age_s : null, basis_usd: basis, session: sessionOf(t.hm), status }) });
+      if (!r.ok) throw new Error(`insert ${r.status}`);
+      L.push("**🎯 قیمت دریاگلد ثبت شد**", `~~${t.hm} · دریاگلد \`${c.price}\`` + (ok ? ` · مرجع \`${f.feed_bid}\`` : "") + "~~", "");
+      L.push(ok ? `اختلاف ${sgn(basis)} دلار · ${STATUS_FA[status]}` : `${STATUS_FA[status]}؛ این نمونه در محاسبه حساب نمی‌شود`);
+    }
+    const since = new Date(nowMs - CAL.WINDOW_DAYS * 86400000).toISOString();
+    const q = await fetch(`${SB}/rest/v1/price_observations?select=observed_at,basis_usd,reference,session,status&observed_at=gte.${encodeURIComponent(since)}&order=observed_at.asc`, { headers: hdr });
+    if (!q.ok) throw new Error(`select ${q.status}`);
+    const st = basisStats(await q.json(), nowMs);
+    let after = cur;
+    await mutate(async (s) => {
+      if (st.calibrated) { s.dg_offset = st.offset; s.dg_offset_source = "calibrate"; s.dg_offset_at = t.full; }
+      else if (s.dg_offset_source === "calibrate") { s.dg_offset = null; s.dg_offset_source = null; s.dg_offset_at = t.full; }
+      s.calibration = { status: st.calibrated ? "calibrated" : "not_calibrated", count: st.count, median: st.median, std: st.std,
+        offset: st.offset, at: t.full };
+      after = offsetOf(s);
+      return true;
+    });
+    if (!c.show) L.push("");
+    L.push(...statsLines(st, after));
+    return L.join("\n");
+  }
+
   async function onTelegram(req) {
     const env = await secrets();
     if (!env.TELEGRAM_BOT_TOKEN || (req.headers.get("x-telegram-bot-api-secret-token") || "") !== env.WEBHOOK)
@@ -74,6 +126,13 @@ export function makeApp(cfg) {
       return r;
     });
     if (!res) return new Response("ok");
+    if (res.calibrate) {
+      let msg;
+      try { msg = await onCalibrate(res.calibrate); }
+      catch (e) { console.error("calibrate:", String(e && e.message || e)); msg = "**⚠️ ثبت نشد**\n~~ذخیره‌ی قیمت ممکن نشد؛ چند دقیقه‌ی دیگر دوباره بفرستید~~"; }
+      await send(env, msg);   // owner's private chat only; never mirrored to the group
+      return new Response("ok");
+    }
     if (res.queue) {
       const d = res.recent ? { ok: true } : await dispatch(env, "command");
       await send(env, d.ok ? "**⏳ در حال بررسی…**\n~~جواب تا حدود یک دقیقه‌ی دیگر~~"

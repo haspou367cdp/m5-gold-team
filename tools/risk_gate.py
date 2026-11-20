@@ -3,6 +3,7 @@
 evaluate(...) -> {"status": APPROVED | APPROVED_WITH_WARNING | REJECTED | NO_TRADE, "reasons_fa", "warnings_fa", "metrics"}
   NO_TRADE  conditions are unsuitable (market closed, news blackout, no BUY/SELL setup)
   REJECTED  a setup exists but fails a risk rule (stale/invalid data, net R:R, stop-out, calculation failure)
+Net R:R uses the owner-confirmed fee (14,000 toman once per trade) plus at least the $0.25 market spread.
 Pure function apart from optional reads of the session config / news file when they are not passed in.
 """
 from datetime import datetime
@@ -69,7 +70,7 @@ def evaluate(now, side, entry, sl, tp, unit="1U", order_type="MARKET", spread_us
     elif data_age_min is None or float(data_age_min) > max_data_age_min:
         reject.append(f"داده‌ی قیمت تازه نیست (بیش از {_fa(max_data_age_min, 0)} دقیقه گذشته است).")
 
-    # 5. costs, net R:R (worse fee scenario) and stop-out proximity; any failure here rejects
+    # 5. costs, net R:R (fee once, market spread) and stop-out proximity; any failure here rejects
     if side in DM.SIDES:
         r, w, mm = cost_checks(side, entry, sl, tp, unit, order_type, spread_usd, min_net_rr, stopout_safety, stopout_warn)
         reject += r; warn += w; m.update(mm)
@@ -89,17 +90,19 @@ def evaluate(now, side, entry, sl, tp, unit="1U", order_type="MARKET", spread_us
 
 def cost_checks(side, entry, sl, tp, unit="1U", order_type="MARKET", spread_usd=None, min_net_rr=MIN_NET_RR,
                 stopout_safety=0.25, stopout_warn=0.5):
-    """(reject_reasons_fa, warnings_fa, metrics) for net R:R after costs (worse fee scenario) and stop-out."""
+    """(reject_reasons_fa, warnings_fa, metrics) for net R:R after costs (fee once, spread) and stop-out."""
     reject, warn, m = [], [], {}
     try:
-        econ = DM.worst_case_economics(side, entry, sl, tp, unit, order_type, spread_usd)
+        econ = DM.trade_economics(side, entry, sl, tp, unit, order_type, DM.DEFAULT_FEE_SCENARIO, spread_usd)
+        alt = DM.trade_economics(side, entry, sl, tp, unit, order_type, DM.FEE_ENTRY_AND_EXIT, spread_usd)
+        econ["scenarios"] = {DM.FEE_ONCE: econ, DM.FEE_ENTRY_AND_EXIT: alt}   # per-side case: reported, not gated
         so = DM.stop_out_check(side, entry, sl, unit, order_type, spread_usd, stopout_safety, stopout_warn)
         m.update(net_rr=econ["net_rr"], risk_toman=econ["risk_toman"], reward_toman=econ["reward_toman"],
                  fee_scenario=econ["fee_scenario"], unit=econ["unit"], order_type=econ["order_type"],
                  stop_out=so, scenarios={k: v["net_rr"] for k, v in econ["scenarios"].items()})
         if econ["net_rr"] is None or econ["net_rr"] < min_net_rr:
             reject.append(f"نسبت سود به ضرر خالص بعد از کارمزد و اسپرد {_fa(econ['net_rr'] or 0)} است "
-                          f"(حداقل {_fa(min_net_rr)}، با کارمزد ورود و خروج).")
+                          f"(حداقل {_fa(min_net_rr)}).")
         if so["status"] == "REJECT":
             reject.append(f"حد ضرر به حراج (استاپ‌اوت) خیلی نزدیک است: ضرر در حد ضرر "
                           f"{_fa(so['ratio'] * 100, 0)}٪ ضرر حراج است.")

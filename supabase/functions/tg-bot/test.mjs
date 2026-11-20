@@ -1,12 +1,14 @@
 // Offline tests for the Edge Function (node >= 20): Telegram, GitHub, Supabase REST/RPC and JWKS are mocked.
 // usage: node supabase/functions/tg-bot/test.mjs   (nothing is sent anywhere)
 import { makeApp } from "./app.js";
-import { HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
+import { CAL, basisStats, basisStatus, parseCalibrate, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
+import { sessionDate, HELP, render, parseAmount, parseTrade, normalize, teh, verifyOidc, toman, tomanShort, shadowMsg, forexOpen, weekendClosed, closedLine, tradeWarn, marketPrice, levelsMsg, levelsFresh, faDate, channelChat, publicReply, groupEnabled } from "./lib.js";
 let fails = 0;
 const check = (n, c) => { console.log((c ? "PASS " : "FAIL ") + n); if (!c) fails++; };
 const SB = "https://x.supabase.co";
 const DB = { row: { state: { equity_toman: 2085600, signals_sent: [], presession_sent: { "2026-11-13-pm": true } }, news: { windows: [] }, version: 0 }, vault: { tg_webhook_secret: "W".repeat(64) } };
 const SENT = [], DISPATCHED = [];
+const OBS = []; let OBS_FAIL = false, DUKA_DOWN = false; const DUKA = { A: [], B: [] };
 let failHtml = false, failGroup = false, ghStatus = 204, raceOnce = false;
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 globalThis.fetch = async (url, init = {}) => {
@@ -41,6 +43,17 @@ globalThis.fetch = async (url, init = {}) => {
     if (url.endsWith("/deleteMyCommands")) { (DB.menuDeleted = DB.menuDeleted || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
+  }
+  if (url.startsWith(SB + "/rest/v1/price_observations")) {
+    if (OBS_FAIL) return new Response("x", { status: 500 });
+    if ((init.method || "GET") === "POST") { OBS.push(JSON.parse(init.body)); return new Response(null, { status: 201 }); }
+    const since = decodeURIComponent(url.split("observed_at=gte.")[1].split("&")[0]);
+    return J(OBS.filter((o) => o.observed_at >= since).map(({ observed_at, basis_usd, reference, session, status }) => ({ observed_at, basis_usd, reference, session, status })));
+  }
+  if (url.includes("freeserv.dukascopy.com")) {
+    if (DUKA_DOWN) throw new Error("network");
+    const side = url.includes("offer_side=A") ? "A" : "B";
+    return new Response("_cb(" + JSON.stringify(DUKA[side]) + ");", { status: 200 });
   }
   if (url.includes("api.github.com")) { DISPATCHED.push(JSON.parse(init.body)); return new Response(null, { status: ghStatus }); }
   throw new Error("unexpected fetch " + url);
@@ -83,7 +96,7 @@ for (const bad of [[], ["-5"], ["abc"], ["nan"], ["inf"], ["0"], ["1e5"]]) {
 // setup (GitHub OIDC): secrets into Vault, migrate state, webhook, announce once
 let o = await (await gh("/admin/setup", "POST", { telegram_token: "123:TESTTOKEN", gh_token: "github_pat_TEST",
   set_webhook: true, set_commands: true, announce: true })).json();
-check("setup menu: 14 commands (incl. /levels, /offset, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 14 && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
+check("setup menu: 15 commands (incl. /levels, /offset, /calibrate, /groupoff and /groupon), same wording as /help, no examples or digits", o.commands && DB.menu.length === 15 && DB.menu.some((c) => c.command === "calibrate") && DB.menu.some((c) => c.command === "levels") && DB.menu.some((c) => c.command === "offset") && DB.menu.some((c) => c.command === "groupoff") && DB.menu.some((c) => c.command === "groupon") &&
   DB.menuDeleted.length === 3 && DB.menu.every((c) => (c.command === "help" || HELP.includes(`/${c.command}`)) && !/\d/.test(c.description) &&
   (c.command === "help" || HELP.includes(c.description))));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
@@ -196,6 +209,12 @@ check("weekendClosed = any closure (weekend and nightly 00:30-07:00)", weekendCl
   !weekendClosed(U("2026-11-11T10:30:00Z")) && !weekendClosed(U("2026-11-13T20:15:00Z")));
 check("closed line: reopen Monday ۰۷:۰۰ / Thursday ۰۷:۰۰ at night, Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۷:۰۰" &&
   closedLine(U("2026-11-11T22:15:00Z")).endsWith("پنجشنبه ۰۷:۰۰") && !/\d/.test(closedLine(U("2026-11-14T08:00:00Z"))));
+check("trading day: 00:15 Tehran belongs to the previous day; 07:00 starts a new one",
+  sessionDate({ date: "2026-11-13", hm: "00:15" }) === "2026-11-12" && sessionDate({ date: "2026-11-13", hm: "07:00" }) === "2026-11-13" &&
+  sessionDate({ date: "2026-12-01", hm: "06:59" }) === "2026-11-30");
+{ const s0 = normalize({ day: { date: "2026-11-12", losses: 3, loss_toman: 1, wins: 0, win_toman: 0, records: [] } }, { date: "2026-11-13", hm: "00:20", full: "2026-11-13 00:20" });
+  const s1 = normalize({ day: { date: "2026-11-12", losses: 3, loss_toman: 1, wins: 0, win_toman: 0, records: [] } }, { date: "2026-11-13", hm: "07:05", full: "2026-11-13 07:05" });
+  check("daily stop kept until the 00:30 close and reset at 07:00", s0.day.losses === 3 && s1.day.losses === 0 && s1.day.date === "2026-11-13"); }
 CLOCK = U("2026-11-14T08:00:00Z"); DISPATCHED.length = 0; const pend0 = st().pending_cmds.length;
 r = await tgSend("/scan"); check("Saturday /scan: one closed line, no dispatch, nothing queued", r.out.length === 1 && r.out[0].includes("بازار بسته است") &&
   r.out[0].includes("دوشنبه ۰۷:۰۰") && r.out[0].split("\n").length === 1 && DISPATCHED.length === 0 && st().pending_cmds.length === pend0);
@@ -361,4 +380,52 @@ check("/levels is mirrored again after /groupon", r.out.length === 2 && r.chats[
 const geKept = st().group_enabled;
 await gh("/state", "POST", { patch: { group_enabled: false, last_price: { bid: 3912, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may not overwrite group_enabled", st().group_enabled === geKept && st().last_price.bid === 3912);
+// ---- Phase 2: /calibrate (private only, stored with the live feed, offset from the median only when enough samples)
+check("parseCalibrate: price, optional ask, Persian digits; rejects junk", parseCalibrate(["3569.85"]).price === 3569.85 &&
+  parseCalibrate(["۳۵۶۹٫۸۵", "3570.10"]).ask === 3570.1 && [[], ["abc"], ["35"], ["3569.85", "3560"], ["1", "2", "3"], ["3569.85", "3580"]].every((a) => { try { parseCalibrate(a); return false; } catch { return true; } }));
+check("sessionOf: asia 07:00, london 11:15, new york 16:15 to 00:30, closed after", sessionOf("07:00") === "asia" && sessionOf("11:15") === "london" &&
+  sessionOf("16:07") === "london" && sessionOf("16:15") === "newyork" && sessionOf("00:29") === "newyork" && sessionOf("00:30") === "closed" && sessionOf("06:59") === "closed");
+check("basisStatus thresholds around the expected offset", basisStatus(0.3, 0.3) === "NORMAL_ALIGNMENT" && basisStatus(0.9, 0.3) === "MINOR_BASIS" &&
+  basisStatus(2.0, 0.3) === "ELEVATED_BASIS" && basisStatus(3.0, 0.3) === "FEED_DESYNCHRONIZATION" && basisStatus(null, 0.3) === "DATA_UNAVAILABLE" && basisStatus(0.3, 0.3, false) === "DATA_UNAVAILABLE");
+const T0 = Date.parse("2026-11-20T12:37:44Z");
+check("parseDuka + pickFeed: latest bar at or before now, ask matched, age from bar end",
+  (() => { const b = parseDuka("_cb([[" + (T0 - 104000) + ",1,1,1,3569.5,1],[" + (T0 - 44000) + ",1,1,1,3569.78,1]]);"), a = parseDuka("_cb([[" + (T0 - 44000) + ",1,1,1,3570.32,1]]);");
+    const f = pickFeed(b, a, T0); return f.feed_bid === 3569.78 && f.feed_ask === 3570.32 && f.age_s === 0; })());
+const mk = (n, basis, hAgo = 1, ref = "dukascopy_bid", ses = "london") => Array.from({ length: n }, (_, i) => ({ observed_at: new Date(T0 - (hAgo + i) * 3.6e6).toISOString(), basis_usd: basis + (i % 2 ? 0.02 : -0.02), reference: ref, session: ses, status: "NORMAL_ALIGNMENT" }));
+let bs = basisStats(mk(4, 0.1), T0);
+check("stats: 4 samples -> not calibrated (keep current offset)", !bs.calibrated && bs.offset === null && bs.count === 4 && bs.why.includes("few"));
+bs = basisStats([...mk(5, 0.1), ...mk(3, -0.09, 1, "oanda_m1_close")], T0);
+check("stats: 5 recent Dukascopy samples -> calibrated at the median; other references ignored", bs.calibrated && bs.offset === 0.08 && bs.count === 5 && bs.other_reference_samples === 3 && bs.std < 0.05 && bs.by_session.london.count === 5);
+check("stats: newest sample older than 72 h -> not calibrated", !basisStats(mk(6, 0.1, 80), T0).calibrated);
+check("stats: samples outside 7 days ignored", basisStats(mk(6, 0.1, 24 * 8), T0).count === 0);
+check("stats: wide spread -> not calibrated", !basisStats([...mk(3, 0.1), ...mk(3, 1.6, 4)], T0).calibrated);
+check("stats lines: Persian, no «زیان»", statsLines(bs, 0.1).join(" ").includes("میانه") && !statsLines(bs, 0.1).join(" ").includes("زیان"));
+// end to end through the webhook
+CLOCK = new Date(T0); OBS.length = 0;
+DUKA.B = [[T0 - 44000, 1, 1, 1, 3569.55, 1]]; DUKA.A = [[T0 - 44000, 1, 1, 1, 3569.9, 1]];
+st().dg_offset = null; st().dg_offset_source = null;
+r = await tgSend("/calibrate 3569.85");
+check("/calibrate stores the price with the live feed (basis +0.3, normal), private reply, not calibrated yet",
+  r.out.length === 1 && r.chats[0] === "45639251" && OBS.length === 1 && OBS[0].basis_usd === 0.3 && OBS[0].reference === "dukascopy_bid" &&
+  OBS[0].source === "telegram_calibrate" && OBS[0].status === "NORMAL_ALIGNMENT" && OBS[0].session === "london" && OBS[0].feed_ask === 3569.9 &&
+  r.out[0].includes("<code>3569.85</code>") && r.out[0].includes("کالیبره نشده") && st().calibration.status === "not_calibrated" && st().dg_offset == null);
+for (const p of ["3569.95", "3569.95", "3569.85", "3569.95"]) await tgSend("/calibrate " + p);
+check("/calibrate: 5th sample -> offset = median (0.4), source calibrate", OBS.length === 5 && st().calibration.status === "calibrated" && st().dg_offset === 0.4 && st().dg_offset_source === "calibrate");
+r = await tgSend("/calibrate");
+check("/calibrate without a price: help + stats, nothing stored", r.out.length === 1 && OBS.length === 5 && r.out[0].includes("کالیبره"));
+DUKA_DOWN = true; r = await tgSend("/calibrate 3569.9"); DUKA_DOWN = false;
+check("feed down: stored as DATA_UNAVAILABLE, excluded from stats", OBS.length === 6 && OBS[5].status === "DATA_UNAVAILABLE" && OBS[5].basis_usd === null && r.out[0].includes("در دسترس نیست") && st().calibration.count === 5);
+DUKA.B = [[T0 - 600000, 1, 1, 1, 3569.55, 1]]; r = await tgSend("/calibrate 3569.9");
+check("stale feed bar (10 min) -> DATA_UNAVAILABLE", OBS[6].status === "DATA_UNAVAILABLE");
+DUKA.B = [[T0 - 44000, 1, 1, 1, 3569.55, 1]];
+r = await tgSend("/calibrate 35");
+check("/calibrate junk -> format hint, nothing stored", r.out[0].includes("ثبت نشد") && OBS.length === 7);
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/calibrate 3569.85" } });
+check("/calibrate in the group is ignored (private only)", r.out.length === 0 && OBS.length === 7);
+r = await tgSend("/calibrate 3569.85", 999);
+check("/calibrate from another chat is ignored", r.out.length === 0 && OBS.length === 7);
+OBS_FAIL = true; r = await tgSend("/calibrate 3569.85"); OBS_FAIL = false;
+check("database failure -> short error to the owner only", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("ثبت نشد"));
+await tgSend("/offset 0.5");
+check("/offset marks a manual offset", st().dg_offset === 0.5 && st().dg_offset_source === "manual");
 console.log(`\n${fails} failed`); process.exit(fails ? 1 : 0);

@@ -21,20 +21,24 @@ def ev(**kw):
 def test_clean_setup_approved():
     g = ev()
     assert g["status"] == RG.APPROVED and g["approved"] and g["reasons_fa"] == []
-    assert g["metrics"]["fee_scenario"] == "ENTRY_AND_EXIT" and g["metrics"]["net_rr"] >= 1.5
+    assert g["metrics"]["fee_scenario"] == "ONCE" and g["metrics"]["net_rr"] >= 1.5
 
 
-def test_rr_uses_worse_fee_scenario():
-    # passes with the fee once (1.55) but not with entry and exit fees (1.45)
+def test_rr_uses_confirmed_once_fee_with_spread():
+    # 1.55 with the fee once (gated) and 1.45 with entry+exit fees (reported only) -> approved
     g = ev(tp=3876.15)
-    assert g["metrics"]["scenarios"]["ONCE"] >= 1.5 > g["metrics"]["net_rr"]
-    assert g["status"] == RG.REJECTED and any("نسبت سود به ضرر خالص" in r for r in g["reasons_fa"])
+    assert g["status"] == RG.APPROVED
+    assert g["metrics"]["net_rr"] == g["metrics"]["scenarios"]["ONCE"] >= 1.5 > g["metrics"]["scenarios"]["ENTRY_AND_EXIT"]
+    # spread is still charged: risk 1.6*80k + 0.25*80k + 14k
+    assert g["metrics"]["risk_toman"] == 128_000 + 20_000 + 14_000
+    r = ev(tp=3877.6)
+    assert r["status"] == RG.REJECTED and any("نسبت سود به ضرر خالص" in x for x in r["reasons_fa"])
 
 
 def test_stop_out_warning_and_reject():
-    w = ev(side="BUY", entry=3550, sl=3540, tp=3575)
+    w = ev(side="BUY", entry=3550, sl=3545, tp=3560)
     assert w["status"] == RG.APPROVED_WITH_WARNING and w["warnings_fa"] and "استاپ‌اوت" in w["warnings_fa"][0]
-    r = ev(side="BUY", entry=3550, sl=3535, tp=3600)
+    r = ev(side="BUY", entry=3550, sl=3542.5, tp=3570)
     assert r["status"] == RG.REJECTED and any("حراج" in x for x in r["reasons_fa"])
 
 
@@ -85,7 +89,7 @@ def test_no_setup_is_no_trade():
 
 def test_persian_wording():
     texts = []
-    for kw in ({"tp": 3876.15}, {"side": "BUY", "entry": 3550, "sl": 3535, "tp": 3600}, {"news_ok": False},
+    for kw in ({"tp": 3877.6}, {"side": "BUY", "entry": 3550, "sl": 3542.5, "tp": 3570}, {"news_ok": False},
                {"data_age_min": 30}, {"entry": None}):
         g = ev(**kw); texts += g["reasons_fa"] + g["warnings_fa"]
     blob = " ".join(texts)

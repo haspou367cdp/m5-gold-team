@@ -43,6 +43,10 @@ def load_config(equity=None):
                 cfg["price_offset_usd"] = v
         except ValueError:
             pass
+    cal = os.environ.get("DG_CALIBRATION")   # "calibrated" | "not_calibrated" (from /calibrate stats via bot.py)
+    if cal:
+        cfg = dict(cfg)
+        cfg["calibration_status"] = cal
     return cfg
 
 
@@ -118,6 +122,10 @@ def price_convention_fa(cfg):
                 "قبل از هر ورود، عدد را روی نمودار دریاگلد تطبیق بده.")
     unc_s = f"عدم قطعیت حدود ±{_n(unc)} دلار" if unc is not None else "عدم قطعیت اعلام نشده"
     cal = f"، کالیبره {when}" if when else ""
+    if cfg.get("calibration_status") == "calibrated":
+        cal = "، کالیبره با میانه‌ی نمونه‌های /calibrate"
+    elif cfg.get("calibration_status") == "not_calibrated":
+        cal = "، کالیبره نشده"
     return (f"قیمت‌های دریاگلد = bid دوکاسکوپی + {_n(off)} دلار ({unc_s}{cal}). "
             "اعداد داخل پرانتز bid خام هستند.")
 
@@ -409,6 +417,22 @@ def next_session(now=None, cfg=None):
     raise RuntimeError("no DaryaGold session configured")
 
 
+def session_date(now=None, cfg=None):
+    """Trading-day key for the daily stop: the date the DaryaGold session opened (Tehran time minus the 07:00 open).
+    00:00-00:30 belongs to the previous day's session; the closed 00:30-07:00 gap also maps to it."""
+    sc = session_cfg(cfg)
+    oh, om = sc["open"]
+    return (_as_teh(now) - timedelta(hours=oh, minutes=om)).strftime("%Y-%m-%d")
+
+
+def session_start(now=None, cfg=None):
+    """Start (07:00 Tehran) of the trading day that `now` belongs to."""
+    sc = session_cfg(cfg)
+    oh, om = sc["open"]
+    d = datetime.strptime(session_date(now, cfg), "%Y-%m-%d")
+    return d.replace(hour=oh, minute=om, tzinfo=TEH)
+
+
 def market_open(now=None, cfg=None):
     return current_session(now, cfg) is not None
 
@@ -497,14 +521,18 @@ def friday_close_block(now=None, cfg=None):
 def journal_today(cfg=None):
     """Closed-loss count for today from journal.csv (best-effort)."""
     path = f"{ROOT}/journal.csv"
-    today = datetime.now(TEH).strftime("%Y-%m-%d")
+    today = session_date(datetime.now(TEH), cfg)
     if not os.path.exists(path):
         return {"losses": 0, "note_fa": "در ژورنال معامله‌ی بسته‌شده‌ای برای امروز دیده نشد.", "path": path}
     losses = 0
     try:
         with open(path, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
-                t = (row.get("signal_time_tehran") or row.get("logged_at_tehran") or "")[:10]
+                raw = (row.get("signal_time_tehran") or row.get("logged_at_tehran") or "").strip()
+                try:   # trading day = DaryaGold session (07:00-00:30), not the calendar date
+                    t = session_date(datetime.strptime(raw[:16], "%Y-%m-%d %H:%M").replace(tzinfo=TEH), cfg)
+                except ValueError:
+                    t = raw[:10]
                 if t != today:
                     continue
                 status = (row.get("status") or "").lower()
@@ -569,9 +597,9 @@ def fa_risk_lines(cfg, spread=None, sizing=None, friday=None):
         f"**دروازه‌های ریسک (دریاگلد، ارزش حساب {toman(equity)} تومان، "
         f"سقف ریسک هر معامله { _n(risk_pct, 0)}٪ = {toman(budget)} تومان، "
         f"سقف ضرر روزانه { _n(day_pct, 0)}٪ = {toman(day_budget)} تومان):** "
-        f"حجم فقط «نیم واحدی» (وجه تضمین {toman(half.get('margin') or 1000000)}، "
+        f"حجم فقط «نیم واحدی» (وجه تضمین {toman(half.get('margin') or 500000)}، "
         f"هر ۱ دلار {toman(half.get('toman_per_usd') or 40000)}) یا «یک واحد» "
-        f"(وجه تضمین {toman(full.get('margin') or 2000000)}، "
+        f"(وجه تضمین {toman(full.get('margin') or 1000000)}، "
         f"هر ۱ دلار {toman(full.get('toman_per_usd') or 80000)})؛ "
         f"بزرگ‌ترین حجمی انتخاب می‌شود که ضرر حد ضرر + کارمزد + هزینه اسپرد از بودجه ریسک بیشتر نشود. "
         f"ورود ترجیحاً با اوردر (حد، بدون اسپرد). "

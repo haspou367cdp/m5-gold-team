@@ -128,7 +128,7 @@ gate("Friday 23:30 session block", False, mk_brief(session_entry={"blocked": Tru
 gate("daily stop 3 losses", False, setup=lambda s: s["day"].update(losses=3))
 gate("daily stop 20% net", False, setup=lambda s: s["day"].update(loss_toman=420000))
 gate("net R:R < 1.5", False, mk_brief(tp=3877.6))
-gate("net R:R >= 1.5 only with the fee charged once (risk gate uses entry+exit fee)", False, mk_brief(tp=3876.15))
+gate("net R:R 1.55 with the fee once (owner-confirmed; per-side fee not gated)", True, mk_brief(tp=3876.15))
 why = gate("weekday 03:00 Tehran: DaryaGold closed (brief without session_entry)", False, {k: v for k, v in mk_brief().items() if k != "session_entry"}, setup=lambda s: CLOCK.__setitem__(0, datetime(2026, 11, 11, 3, 0, tzinfo=B.TEH)))
 check("closed reason names the 07:00 reopen", any("بازگشایی" in w for w in why)); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 gate("SL < $1", False, mk_brief(sl=3880.8, tp=3877.0))
@@ -147,7 +147,7 @@ out = run("scheduled"); check("scheduled: signal sent once", len(out) == 1 and "
 sig = out[0] if out else ""
 check("single target (no TP2)", sig.count("<code>") == 3 and "هدف ۲" not in sig)
 check("copy prices Latin '.' digits", "<code>3880.3</code>" in sig and "<code>3876.3</code>" in sig)
-check("rest of signal Persian digits (worst-case fee R:R)", "۱٫۵" in sig and "1.5" not in sig.replace("<code>", "|"))
+check("rest of signal Persian digits", "۱٫۸" in sig and "1.8" not in sig.replace("<code>", "|"))
 check("every line RLM", all(l.startswith("\u200f") for l in sig.split("\n") if l.strip()))
 CLOCK[0] = datetime(2026, 11, 11, 14, 15, tzinfo=B.TEH)
 check("scheduled: duplicate not resent", run("scheduled") == [])
@@ -232,10 +232,18 @@ check("state stores the same snapshot (no second computation)", state().get("lev
 a, btm = B.near_levels(BRIEF[0])
 check("near_levels is the top of /levels", a["price_dg"] == 3895.3 and btm["price_dg"] == 3880.5)
 
-check("forex day start: 17:00 New York = 01:30 Tehran (winter) / 00:30 (summer)",
-      B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 01:30" and
-      B.day_start(datetime(2026, 11, 13, 1, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 01:30" and
-      B.day_start(datetime(2026, 7, 15, 12, 0, tzinfo=B.TEH)).strftime("%H:%M") == "00:30")
+check("trading day = DaryaGold session: day start 07:00 Tehran; 00:15 belongs to the previous day; day key follows",
+      B.day_start(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-13 07:00" and
+      B.day_start(datetime(2026, 11, 13, 0, 15, tzinfo=B.TEH)).strftime("%m-%d %H:%M") == "11-12 07:00" and
+      DG.session_date(datetime(2026, 11, 13, 0, 15, tzinfo=B.TEH)) == "2026-11-12" and
+      DG.session_date(datetime(2026, 11, 13, 7, 0, tzinfo=B.TEH)) == "2026-11-13")
+_c0 = CLOCK[0]; CLOCK[0] = datetime(2026, 11, 12, 23, 50, tzinfo=B.TEH)
+_s = B.load_state(); _s["day"].update(losses=3); B.save_state(_s)
+CLOCK[0] = datetime(2026, 11, 13, 0, 20, tzinfo=B.TEH)
+check("daily stop survives midnight until the 00:30 close (same trading day)", B.load_state()["day"]["losses"] == 3)
+CLOCK[0] = datetime(2026, 11, 13, 7, 5, tzinfo=B.TEH)
+check("daily stop resets at the 07:00 session open", B.load_state()["day"]["losses"] == 0)
+_s = B.load_state(); B.save_state(_s); CLOCK[0] = _c0
 check("risk_check daily cap uses start_equity", B.day_cap({"equity_toman": 2954400, "day": {"start_equity": 1000000}}, cfg) == 200000 and
       B.day_cap({"equity_toman": 2954400, "day": {}}, cfg) == 2954400 * 0.2)
 

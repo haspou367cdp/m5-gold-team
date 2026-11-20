@@ -32,6 +32,12 @@ export function forexOpen(d = new Date()) {   // name kept for app.js; means "Da
   if (min < CLOSE_MIN) return dow >= 2 && dow <= 6;          // tail of yesterday's session (Tue-Sat 00:00-00:30)
   return false;
 }
+// trading-day key: the date the session opened (00:00-00:30 and the closed night belong to the previous day)
+export function sessionDate(now = teh()) {
+  if (now.hm >= "07:00") return now.date;
+  const d = new Date(Date.parse(now.date + "T00:00:00Z") - 86400000);
+  return d.toISOString().slice(0, 10);
+}
 // any closure (nightly 00:30-07:00 and the weekend): /scan and /brief get the closed line
 export const weekendClosed = (d = new Date()) => !forexOpen(d);
 export function reopenAt(d = new Date()) {
@@ -45,6 +51,7 @@ export function closedLine(d = new Date()) {
   return `🔒 بازار بسته است؛ بازگشایی ${FA_WD[r.dow]} ${faNum(r.hm)}`;   // Persian digits, as Telegram shows them
 }
 
+import { parseCalibrate } from "./calib.js";
 // ---------------- formatting (port of bot/bot.py) ----------------
 const FA = "۰۱۲۳۴۵۶۷۸۹";
 export function faNum(t) {
@@ -96,6 +103,7 @@ export const HELP = `**🤖 راهنما**
 \`/win 200000\`  ثبت سود
 \`/undo\`  حذف آخرین ثبت
 \`/offset\`  اختلاف قیمت دریاگلد
+\`/calibrate 3569.85\`  کالیبره با قیمت دریاگلد
 
 **گروه**
 \`/groupoff\`  قطع موقت ارسال به گروه
@@ -104,7 +112,7 @@ export const HELP = `**🤖 راهنما**
 ~~بررسی خودکار بی‌صداست، مگر سیگنال باشد · خلاصه‌ی بازار ۱۱:۱۵ و ۱۶:۱۵~~`;
 // Telegram menu (setMyCommands): short, same wording as /help, no examples
 export const COMMANDS = [["scan", "بررسی سیگنال"], ["brief", "خلاصه‌ی بازار"], ["levels", "سطوح"], ["shadow", "سیگنال‌های ردشده"],
-  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"],
+  ["status", "وضعیت حساب و سیستم"], ["trade", "ثبت معامله"], ["balance", "ثبت موجودی"], ["loss", "ثبت ضرر"], ["win", "ثبت سود"], ["undo", "حذف آخرین ثبت"], ["offset", "اختلاف قیمت دریاگلد"], ["calibrate", "کالیبره با قیمت دریاگلد"],
   ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره ارسال به گروه"], ["help", "راهنما"]]
   .map(([command, description]) => ({ command, description }));
 export const ANNOUNCE = "**✅ بات از این به بعد فوری جواب می‌دهد.**\n~~راهنما:~~ `/help`";
@@ -116,8 +124,9 @@ export function normalize(s, now = teh()) {
   s.presession_sent = s.presession_sent || {};
   s.signals_sent = (s.signals_sent || []).slice(-20);
   s.pending_cmds = s.pending_cmds || [];
-  if (!s.day || s.day.date !== now.date)
-    s.day = { date: now.date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
+  const tday = sessionDate(now);   // daily stop runs on the DaryaGold trading day (07:00-00:30 Tehran)
+  if (!s.day || s.day.date !== tday)
+    s.day = { date: tday, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
   s.day.records = s.day.records || [];
   if (!(Number(s.day.start_equity) > 0)) s.day.start_equity = s.equity_toman;   // daily-stop base (20%)
   s.trades = (s.trades || []).slice(-300);
@@ -257,6 +266,11 @@ export function handle(s, text, now = teh(), at = new Date()) {
     if (levelsFresh(s.levels, at)) return { reply: levelsMsg(s.levels, at) };
     return { queue: c };
   }
+  if (c === "/calibrate") {   // private chat only (onTelegram drops groups); never mirrored
+    if (!args.length) return { calibrate: { show: true } };
+    try { return { calibrate: parseCalibrate(args) }; }
+    catch { return { reply: "**⚠️ ثبت نشد**\n~~قیمت دریاگلد را با نقطه بنویسید، مثل:~~ `/calibrate 3569.85`" }; }
+  }
   if (c === "/offset") {
     const cur = offsetOf(s);
     if (!args.length)
@@ -266,6 +280,7 @@ export function handle(s, text, now = teh(), at = new Date()) {
     if (!(Math.abs(v) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset 0.4`" };
     s.dg_offset = v;
     s.dg_offset_at = now.full;
+    s.dg_offset_source = "manual";
     return { reply: `**🎚 اختلاف قیمت ثبت شد**\n~~از ${cur} به ${v} دلار؛ از بررسی بعدی اعمال می‌شود~~` };
   }
   if (c === "/groupoff") { s.group_enabled = false; return { reply: "**⏸ ارسال به گروه موقتاً قطع شد.**" }; }
@@ -282,7 +297,7 @@ export function handle(s, text, now = teh(), at = new Date()) {
     s.equity_toman = tr.equity_after;
     s.trades.push(tr);
     const loss = t.net < 0;
-    d.records.push({ type: loss ? "loss" : "win", toman: Math.abs(t.net), at: now.hm, trade: tr.id, net: t.net });
+    d.records.push({ type: loss ? "loss" : "win", toman: Math.abs(t.net), at: now.hm, at_full: now.full, trade: tr.id, net: t.net });
     if (loss) { d.losses += 1; d.loss_toman += -t.net; } else { d.wins += 1; d.win_toman += t.net; }
     const net = d.loss_toman - d.win_toman;
     const stop = d.losses >= 3 || net >= dayCap(s);
@@ -304,7 +319,7 @@ export function handle(s, text, now = teh(), at = new Date()) {
     }
     if (c === "/loss" || c === "/win") {
       const v = parseAmount(args);
-      d.records.push({ type: c.slice(1), toman: v, at: now.hm });
+      d.records.push({ type: c.slice(1), toman: v, at: now.hm, at_full: now.full });
       if (c === "/loss") { d.losses += 1; d.loss_toman += v; } else { d.wins += 1; d.win_toman += v; }
       const net = d.loss_toman - d.win_toman;
       const stop = d.losses >= 3 || net >= dayCap(s);

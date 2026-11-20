@@ -6,28 +6,30 @@
     "half_unit": {
       "key": "half_unit",
       "label_fa": "نیم واحدی",
-      "margin": 1000000,
+      "margin": 500000,
       "toman_per_usd": 40000,
       "fee": 14000,
       "fee_unconfirmed": false,
-      "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
+      "fee_note": "Owner-confirmed 2026-11-13 and again 2026-11-20: 14,000 toman charged ONCE per trade (not on entry and exit).",
       "fee_confirmed_by": "owner",
-      "fee_confirmed_at": "2026-11-13",
-      "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
-      "margin_note": "Owner spec 2026-11-20 (1U 2,000,000 / 0.5U 1,000,000; stop-out at 80% of margin). Mirrors tools/darya_model.py."
+      "fee_confirmed_at": "2026-11-20",
+      "source": "margin and fee USER_CONFIRMED 2026-11-20; toman_per_usd USER_PROVIDED — NOT CURRENTLY VERIFIED",
+      "margin_note": "Owner-confirmed 2026-11-20: initial margin 1U 1,000,000 / 0.5U 500,000; stop-out at 80% of margin (800,000 / 400,000). Mirrors tools/darya_model.py.",
+      "fee_scenario": "once"
     },
     "full_unit": {
       "key": "full_unit",
       "label_fa": "یک واحد",
-      "margin": 2000000,
+      "margin": 1000000,
       "toman_per_usd": 80000,
       "fee": 14000,
       "fee_unconfirmed": false,
-      "fee_note": "Confirmed by the owner on 2026-11-13: 14,000 toman per trade for both the half unit and the full unit.",
+      "fee_note": "Owner-confirmed 2026-11-13 and again 2026-11-20: 14,000 toman charged ONCE per trade (not on entry and exit).",
       "fee_confirmed_by": "owner",
-      "fee_confirmed_at": "2026-11-13",
-      "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
-      "margin_note": "Owner spec 2026-11-20 (1U 2,000,000 / 0.5U 1,000,000; stop-out at 80% of margin). Mirrors tools/darya_model.py."
+      "fee_confirmed_at": "2026-11-20",
+      "source": "margin and fee USER_CONFIRMED 2026-11-20; toman_per_usd USER_PROVIDED — NOT CURRENTLY VERIFIED",
+      "margin_note": "Owner-confirmed 2026-11-20: initial margin 1U 1,000,000 / 0.5U 500,000; stop-out at 80% of margin (800,000 / 400,000). Mirrors tools/darya_model.py.",
+      "fee_scenario": "once"
     }
   },
   "typical_spread_usd": 0.25,
@@ -79,5 +81,5 @@
     "B"
   ],
   "news_semantics": "Single source of truth for DaryaGold news windows. Effective window = union of the stored data/news_windows.json start/end and event_time minus before_min / plus after_min. For tiers in news_block_tiers (A and B): no new entries and no pending orders from the effective start until the effective end, and any open position must be closed before the effective start. Example: US PPI 17:00 Tehran stored 16:45-17:15 -> no entries from 16:45 (not 16:50) to 17:15, close open trades before 16:45. Tier C is monitor only.",
-  "liquidation_note": "Stop-out at 80% of margin (1U 1,600,000 / 0.5U 800,000 toman). USER_PROVIDED — NOT CURRENTLY VERIFIED"
+  "liquidation_note": "Stop-out at 80% of margin (1U 800,000 / 0.5U 400,000 toman). Owner-confirmed 2026-11-20."
 }

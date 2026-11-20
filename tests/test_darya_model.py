@@ -5,12 +5,15 @@ import darya_model as DM
 
 def test_units_and_sources():
     one, half = DM.unit("1U"), DM.unit("0.5U")
-    assert (one["margin"], one["toman_per_usd"], one["fee"], one["stop_out_loss"]) == (2_000_000, 80_000, 14_000, 1_600_000)
-    assert (half["margin"], half["toman_per_usd"], half["fee"], half["stop_out_loss"]) == (1_000_000, 40_000, 14_000, 800_000)
+    assert (one["margin"], one["toman_per_usd"], one["fee"], one["stop_out_loss"]) == (1_000_000, 80_000, 14_000, 800_000)
+    assert (half["margin"], half["toman_per_usd"], half["fee"], half["stop_out_loss"]) == (500_000, 40_000, 14_000, 400_000)
     assert DM.unit("full_unit")["key"] == "1U" and DM.unit("half_unit")["key"] == "0.5U"
     for u in DM.UNITS.values():
-        for k in ("margin", "toman_per_usd", "fee", "stop_out_loss"):
-            assert u[k]["source"] == "USER_PROVIDED — NOT CURRENTLY VERIFIED"
+        assert u["toman_per_usd"]["source"] == "USER_PROVIDED — NOT CURRENTLY VERIFIED"
+        for k in ("margin", "stop_out_loss"):
+            assert u[k]["source"].startswith("USER_CONFIRMED 2026-11-20")
+        assert u["fee"]["source"].startswith("USER_CONFIRMED 2026-11-20")
+    assert DM.DEFAULT_FEE_SCENARIO == DM.FEE_ONCE
     assert DM.ORDER_COST_USD["MARKET"]["source"] == DM.SOURCE and DM.MIN_HOLD_SECONDS["value"] == 60
     with pytest.raises(ValueError):
         DM.unit("2U")
@@ -64,10 +67,12 @@ def test_min_hold():
 
 
 def test_stop_out_proximity():
-    ok = DM.stop_out_check("BUY", 3550, 3548, "1U")
-    assert ok["status"] == "OK" and ok["stop_out_distance_usd"] == 20.0
-    warn = DM.stop_out_check("BUY", 3550, 3540, "1U")        # 800k+20k+28k = 848k / 1.6M = 0.53
+    ok = DM.stop_out_check("BUY", 3550, 3548, "1U")          # 160k+20k+14k = 194k / 800k = 0.24
+    assert ok["status"] == "OK" and ok["stop_out_distance_usd"] == 10.0 and ok["stop_out_loss_toman"] == 800_000
+    assert DM.stop_out_check("BUY", 3550, 3548, "0.5U")["stop_out_distance_usd"] == 10.0
+    warn = DM.stop_out_check("BUY", 3550, 3545, "1U")        # 400k+20k+14k = 434k / 800k = 0.54
     assert warn["status"] == "WARN"
-    rej = DM.stop_out_check("BUY", 3550, 3535, "1U")         # 1.2M+48k -> 0.78 >= 0.75
-    assert rej["status"] == "REJECT"
-    assert DM.stop_out_check("BUY", 3550, 3535, "1U", safety_margin=0.1)["status"] == "WARN"
+    rej = DM.stop_out_check("BUY", 3550, 3542.5, "1U")       # 600k+34k = 634k / 800k = 0.79 >= 0.75
+    assert rej["status"] == "REJECT" and rej["loss_at_sl_toman"] == 634_000
+    assert DM.stop_out_check("BUY", 3550, 3542.5, "1U", fee_scenario=DM.FEE_ENTRY_AND_EXIT)["loss_at_sl_toman"] == 648_000
+    assert DM.stop_out_check("BUY", 3550, 3542.5, "1U", safety_margin=0.1)["status"] == "WARN"

@@ -43,3 +43,19 @@ def test_close_reminder_never_closes():
 def test_no_old_forex_schedule_left():
     line = DG.session_entry_block(T(2026, 11, 18, 14, 0), CFG)["hours_line_fa"]
     assert "۰۷:۰۰" in line and "۰۰:۳۰" in line and "۰۱:۳۰" not in line and "نیویورک" not in line
+
+
+def test_calibration_label(monkeypatch):
+    monkeypatch.setenv("DG_CALIBRATION", "not_calibrated")
+    c = DG.load_config()
+    assert c["calibration_status"] == "not_calibrated" and "کالیبره نشده" in DG.price_convention_fa(c)
+    monkeypatch.setenv("DG_CALIBRATION", "calibrated")
+    monkeypatch.setenv("DG_OFFSET_USD", "0.12")
+    c = DG.load_config()
+    assert DG.offset_usd(c) == 0.12 and "/calibrate" in DG.price_convention_fa(c)
+
+
+def test_trading_day_key():
+    assert DG.session_date(T(2026, 11, 21, 0, 20), CFG) == "2026-11-20"
+    assert DG.session_date(T(2026, 11, 20, 7, 0), CFG) == "2026-11-20"
+    assert DG.session_start(T(2026, 11, 20, 0, 10), CFG).strftime("%Y-%m-%d %H:%M") == "2026-11-19 07:00"
