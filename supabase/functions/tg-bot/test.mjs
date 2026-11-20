@@ -205,6 +205,24 @@ check("DaryaGold hours: opens Mon 01:30 Tehran; sessions 01:30-00:30 (break 00:3
 check("alertWindow: alerts/briefs only 07:00-00:30 while open (Mon 03:00 open but quiet)",
   !alertWindow(U("2026-11-15T23:30:00Z")) && forexOpen(U("2026-11-15T23:30:00Z")) && alertWindow(U("2026-11-16T03:30:00Z")) && !alertWindow(U("2026-11-16T03:29:00Z")) &&
   alertWindow(U("2026-11-16T20:59:00Z")) && !alertWindow(U("2026-11-16T21:00:00Z")) && !alertWindow(U("2026-11-14T08:00:00Z")));
+{ const H = await import("./hours.js"), A2 = await import("./assist.js");
+  const hm = (ms) => H.tehP(ms).hm;
+  check("US DST rule: EST in Nov/Jan, EDT in Jul; switch 2026-03-08 07:00Z and 2026-11-01 06:00Z",
+    H.nyOffsetMin(Date.parse("2026-11-20T12:00:00Z")) === -300 && H.nyOffsetMin(Date.parse("2026-07-15T12:00:00Z")) === -240 &&
+    H.nyOffsetMin(Date.parse("2026-03-08T06:59:00Z")) === -300 && H.nyOffsetMin(Date.parse("2026-03-08T07:00:00Z")) === -240 &&
+    H.nyOffsetMin(Date.parse("2026-11-01T05:59:00Z")) === -240 && H.nyOffsetMin(Date.parse("2026-11-01T06:00:00Z")) === -300);
+  check("winter hours in Tehran stay 01:30 / 00:30 / Friday 23:30", JSON.stringify(H.hoursFa(Date.parse("2026-11-18T12:00:00Z"))) === JSON.stringify({ open: "01:30", close: "00:30", friCut: "23:30" }));
+  check("summer hours in Tehran follow New York: 00:30 / 23:30 / Friday 22:30", JSON.stringify(H.hoursFa(Date.parse("2026-07-15T12:00:00Z"))) === JSON.stringify({ open: "00:30", close: "23:30", friCut: "22:30" }));
+  check("summer: Monday 00:30 Tehran open (Sunday 17:00 EDT), 00:29 closed; Tuesday 23:30-00:30 break; Saturday closed",
+    forexOpen(U("2026-07-12T21:00:00Z")) && !forexOpen(U("2026-07-12T20:59:00Z")) && !forexOpen(U("2026-07-13T20:00:00Z")) && !forexOpen(U("2026-07-13T20:59:00Z")) &&
+    forexOpen(U("2026-07-13T21:00:00Z")) && forexOpen(U("2026-07-17T19:59:00Z")) && !forexOpen(U("2026-07-17T20:00:00Z")) && !forexOpen(U("2026-07-18T08:00:00Z")));
+  check("summer entry limit: Friday 22:20 Tehran -> until 22:30; 22:40 closed (friday); weekday until 23:30",
+    hm(A2.entryLimit(Date.parse("2026-07-17T18:50:00Z")).untilMs) === "22:30" && A2.entryLimit(Date.parse("2026-07-17T19:10:00Z")).closed === "friday" &&
+    hm(A2.entryLimit(Date.parse("2026-07-15T12:00:00Z")).untilMs) === "23:30");
+  check("summer alerts: Monday 03:00 quiet (open since 00:30), 07:00 on, 23:15 on", !alertWindow(U("2026-07-12T23:30:00Z")) && alertWindow(U("2026-07-13T03:30:00Z")) && alertWindow(U("2026-07-13T19:45:00Z")));
+  check("summer closed line names the 00:30 reopen", closedLine(U("2026-07-18T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۰:۳۰");
+  check("trading day key: summer Monday 00:30 Tehran = Monday; winter Tuesday 00:45 (break) = Monday",
+    sessionDate({ date: "2026-07-13", hm: "00:30" }) === "2026-07-13" && sessionDate({ date: "2026-11-17", hm: "00:45" }) === "2026-11-16"); }
 check("weekendClosed = any closure (weekend and the 00:30-01:30 break)", weekendClosed(U("2026-11-14T08:00:00Z")) && weekendClosed(U("2026-11-11T21:15:00Z")) &&
   !weekendClosed(U("2026-11-11T22:15:00Z")) && !weekendClosed(U("2026-11-11T10:30:00Z")) && !weekendClosed(U("2026-11-13T20:15:00Z")));
 check("closed line: reopen Monday ۰۱:۳۰ / Thursday ۰۱:۳۰ in the break, Persian digits", closedLine(U("2026-11-14T08:00:00Z")) === "🔒 بازار بسته است؛ بازگشایی دوشنبه ۰۱:۳۰" &&

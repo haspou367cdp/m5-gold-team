@@ -1,3 +1,4 @@
+import { marketOpen, fridayCutMs, sessionCloseMs, hoursFa } from "./hours.js";
 // Owner assistant (owner decisions t226u-t232u, 2026-11-20): live DaryaGold price, /trend, /e, /setup, and the
 // alert checks run by /tick. Pure functions except fetchMarket(). Never places trades.
 //
@@ -354,18 +355,12 @@ export function insideNews(news, nowMs) {
   return newsList(news).filter((w) => isMajor(w) && w.startMs <= nowMs && nowMs < w.endMs).sort((a, b) => b.endMs - a.endMs)[0] || null;
 }
 
-// ---------------- session limits (DaryaGold Mon 01:30 to Sat 00:30 Tehran, daily break 00:30-01:30; Friday no new entry from 23:30) ----------------
+// ---------------- session limits (hours.js: New York based; winter Tehran Mon 01:30 -> Sat 00:30, break 00:30-01:30, Friday cutoff 23:30) ----------------
 export function entryLimit(nowMs) {
-  const p = tehParts(nowMs);
-  const dayStart = Date.parse(p.date + "T00:00:00+03:30");
-  if (p.min < 30) {   // 00:00-00:30 belongs to the previous trading day: Sat = Friday tail (entries closed), Sun/Mon = no session
-    if (p.dow === 6) return { closed: "friday" };
-    if (p.dow === 0 || p.dow === 1) return { closed: "closed" };
-    return { untilMs: dayStart + 30 * 60000, why: "close" };
-  }
-  if (p.min < 90 || p.dow === 0 || p.dow === 6) return { closed: "closed" };   // daily break 00:30-01:30, weekend
-  if (p.dow === 5) return p.min >= 23 * 60 + 30 ? { closed: "friday" } : { untilMs: dayStart + (23 * 60 + 30) * 60000, why: "friday" };
-  return { untilMs: dayStart + (24 * 60 + 30) * 60000, why: "close" };
+  if (!marketOpen(nowMs)) return { closed: "closed" };
+  const fc = fridayCutMs(nowMs);
+  if (fc !== null) return nowMs >= fc ? { closed: "friday" } : { untilMs: fc, why: "friday" };
+  return { untilMs: sessionCloseMs(nowMs), why: "close" };
 }
 
 // ---------------- /setup ----------------
@@ -475,7 +470,7 @@ export function setupMsg(res, ctx, v, { group = false, snapNote = null } = {}) {
   return L.join("\n\n");
 }
 export function noSetupMsg(v, nowMs) {
-  if (v.closed === "friday") return "**🎯 ستاپ‌ها**\nجمعه از ساعت 23:30 ورود جدید بسته است، پس ستاپی داده نمی‌شود.\n~~دریاگلد ساعت 00:30 بسته می‌شود؛ معامله‌های باز را تا آن موقع ببندید.~~";
+  if (v.closed === "friday") { const h = hoursFa(nowMs); return `**🎯 ستاپ‌ها**\nجمعه از ساعت ${h.friCut} ورود جدید بسته است، پس ستاپی داده نمی‌شود.\n~~دریاگلد ساعت ${h.close} بسته می‌شود؛ معامله‌های باز را تا آن موقع ببندید.~~`; }
   if (v.news) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nالان زمان یک خبر مهم آمریکاست و قیمت ممکن است تند و غیرقابل‌پیش‌بینی حرکت کند؛ تا ${hmOf(v.news.endMs)} ستاپی داده نمی‌شود.`;
   if (v.short) return `**🎯 ستاپ‌ها**\n~~${hmOf(nowMs)} به وقت تهران~~\n\nتا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""} کمتر از ۱۰ دقیقه مانده و برای ستاپ تازه وقت کافی نیست.`;
   return null;

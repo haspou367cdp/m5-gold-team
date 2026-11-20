@@ -34,9 +34,11 @@ float  tgtLo   = input.float(5.0, "{{I_TGT}}", step = 0.5, group = GS)
 int    holdMin = input.int(60, "{{I_HOLD}}", minval = 5, maxval = 480, group = GS)
 
 const string GT = "{{G_TIME}}"
-int    openHM  = input.int(130, "{{I_OPEN}}", minval = 0, maxval = 2359, group = GT)
-int    closeHM = input.int(30, "{{I_CLOSE}}", minval = 0, maxval = 459, group = GT)
-int    friHM   = input.int(2330, "{{I_FRI}}", minval = 0, maxval = 2359, group = GT)
+// DaryaGold hours in New York time (owner t247u): US daylight saving is followed automatically.
+// Winter in Tehran: open Mon 01:30, close 00:30, Friday cutoff 23:30; summer one hour earlier.
+int    openHM  = input.int(1700, "{{I_OPEN}}", minval = 0, maxval = 2359, group = GT)
+int    closeHM = input.int(1600, "{{I_CLOSE}}", minval = 0, maxval = 2359, group = GT)
+int    friHM   = input.int(1500, "{{I_FRI}}", minval = 0, maxval = 2359, group = GT)
 int    soonMin = input.int(30, "{{I_SOON}}", minval = 0, maxval = 120, group = GT)
 bool   n830    = input.bool(true, "{{I_N830}}", group = GT)
 bool   n1000   = input.bool(true, "{{I_N1000}}", group = GT)
@@ -287,19 +289,20 @@ if inNY
 
 // ───────────────────────── {{S_HOURS}} ─────────────────────────
 f_clock(int t) =>
-    int dow = dayofweek(t, TZT)
-    int hm  = hour(t, TZT) * 100 + minute(t, TZT)
-    bool isWk     = dow >= dayofweek.monday and dow <= dayofweek.friday
-    bool afterMid = dow >= dayofweek.tuesday and dow <= dayofweek.saturday and hm < closeHM
-    bool open_    = (isWk and hm >= openHM) or afterMid
-    bool friCut   = (dow == dayofweek.friday and hm >= friHM) or (dow == dayofweek.saturday and hm < closeHM)
-    int  hmMin    = int(math.floor(hm / 100)) * 60 + hm % 100
-    int  clMin    = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
-    int  frMin    = int(math.floor(friHM / 100)) * 60 + friHM % 100
-    // minutes until the daily close (00:30) or, on Friday, until the no-new-entry time
-    int  toClose  = afterMid ? clMin - hmMin : 1440 - hmMin + clMin
-    int  toFri    = dow == dayofweek.friday and hm < friHM ? frMin - hmMin : 9999
-    bool soon     = open_ and (math.min(toClose, toFri) <= soonMin)
+    // New York clock: a session opens openHM (17:00) the day before its trading day and closes closeHM (16:00)
+    int dow   = dayofweek(t, TZN)
+    int m     = hour(t, TZN) * 60 + minute(t, TZN)
+    int opMin = int(math.floor(openHM / 100)) * 60 + openHM % 100
+    int clMin = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
+    int frMin = int(math.floor(friHM / 100)) * 60 + friHM % 100
+    int td    = m >= opMin ? dow % 7 + 1 : dow                       // trading day (Sunday evening = Monday)
+    bool brk  = m >= clMin and m < opMin                             // daily break / after the Friday close
+    bool open_  = not brk and td >= dayofweek.monday and td <= dayofweek.friday
+    int  toFri  = td == dayofweek.friday ? (m >= opMin ? 1440 - m + frMin : frMin - m) : 9999
+    bool friCut = open_ and td == dayofweek.friday and toFri <= 0
+    // minutes until the daily close or, on Friday, until the no-new-entry time
+    int  toClose = m >= opMin ? 1440 - m + clMin : clMin - m
+    bool soon    = open_ and not friCut and (math.min(toClose, toFri) <= soonMin)
     int  ndow = dayofweek(t, TZN)
     int  nm   = hour(t, TZN) * 60 + minute(t, TZN)
     bool nwk  = ndow >= dayofweek.monday and ndow <= dayofweek.friday
@@ -934,21 +937,25 @@ f_nextNews(int t) =>
 
 // entry limit (assist.entryLimit): end of the allowed entry time for t, or na when closed
 f_limit(int t) =>
-    int dow = dayofweek(t, TZT)
-    int m = hour(t, TZT) * 60 + minute(t, TZT)
-    int d0 = timestamp(TZT, year(t, TZT), month(t, TZT), dayofmonth(t, TZT), 0, 0)
-    int clMin = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
+    int dow   = dayofweek(t, TZN)
+    int m     = hour(t, TZN) * 60 + minute(t, TZN)
     int opMin = int(math.floor(openHM / 100)) * 60 + openHM % 100
+    int clMin = int(math.floor(closeHM / 100)) * 60 + closeHM % 100
     int frMin = int(math.floor(friHM / 100)) * 60 + friHM % 100
+    int td    = m >= opMin ? dow % 7 + 1 : dow
+    bool brk  = m >= clMin and m < opMin
+    int y  = year(t, TZN)
+    int mo = month(t, TZN)
+    int d  = dayofmonth(t, TZN)
+    int add = m >= opMin ? 24 * HOUR : 0                             // evening part: the close is tomorrow (no DST switch inside a session)
     int r = na
-    if m < clMin
-        r := dow == dayofweek.saturday or dow == dayofweek.sunday or dow == dayofweek.monday ? na : d0 + clMin * MIN
-    else if m < opMin or dow == dayofweek.sunday or dow == dayofweek.saturday
+    if brk or td < dayofweek.monday or td > dayofweek.friday
         r := na
-    else if dow == dayofweek.friday
-        r := m >= frMin ? na : d0 + frMin * MIN
+    else if td == dayofweek.friday
+        int fr = timestamp(TZN, y, mo, d, int(math.floor(friHM / 100)), friHM % 100) + add
+        r := t >= fr ? na : fr
     else
-        r := d0 + (1440 + clMin) * MIN
+        r := timestamp(TZN, y, mo, d, int(math.floor(closeHM / 100)), closeHM % 100) + add
     r
 
 int tEval = barstate.isrealtime ? timenow : time_close

@@ -60,8 +60,7 @@
   "news_buffers_note": "Single source of truth: tools/news_windows.py (effective_doc). Effective window = union of these floors (from the official release time) and the stored start/end in data/news_windows.json; never shrunk. Tier A and tier B are both no-entry blocks inside the effective window; for tier B be flat (positions closed, pending orders cancelled) before the effective start. Tier C is monitor only.",
   "no_hold_over_weekend_or_iranian_holidays": true,
   "session": {
-    "kind": "tehran_fixed",
-    "timezone": "Asia/Tehran",
+    "timezone": "America/New_York",
     "days": [
       0,
       1,
@@ -69,13 +68,15 @@
       3,
       4
     ],
-    "open": "01:30",
-    "close": "00:30",
+    "open_ny": "17:00",
+    "close_ny": "16:00",
     "no_new_entries_hours_before_friday_close": 1,
+    "alerts_from": "07:00",
     "close_reminder_minutes_before": 30,
-    "source": "USER_PROVIDED — owner 2026-11-14 (open Monday 01:30 = Sunday 17:00 New York) and 2026-11-21",
-    "note": "Owner 2026-11-21: DaryaGold market opens Monday 01:30 Tehran (Sunday 17:00 New York); each session runs 01:30 to 00:30 next day (daily break 00:30-01:30); the last session closes Saturday 00:30. Friday: no new setups from 23:30. Commands (/setup /trend /levels /e /brief) work whenever the market is open; the bot's automatic alerts and briefs run 07:00-00:30 only (alerts_from). The bot never closes anything; it only reminds the owner.",
-    "alerts_from": "07:00"
+    "tehran_winter": "open Monday 01:30, sessions 01:30-00:30, last close Saturday 00:30, Friday cutoff 23:30",
+    "tehran_summer": "open Monday 00:30, sessions 00:30-23:30, last close Friday 23:30, Friday cutoff 22:30",
+    "source": "USER_PROVIDED — owner 2026-11-14 (open Sunday 17:00 New York = Monday 01:30 Tehran), 2026-11-21 (t247u: follow New York time)",
+    "note": "Defined in New York time so US daylight saving is followed: opens Sunday 17:00 NY, daily close 16:00 NY and reopen 17:00 NY (1 h break), last close Friday 16:00 NY, Friday no new setups from 15:00 NY. 'days' = trading days (NY date a session closes on, Mon=0). Commands work whenever the market is open; the bot's automatic alerts and briefs start at alerts_from (Tehran, no DST). The bot never closes anything."
   },
   "news_block_tiers": [
     "A",

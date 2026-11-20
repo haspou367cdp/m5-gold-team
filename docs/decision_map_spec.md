@@ -58,7 +58,7 @@ The TradingView indicator `tradingview/xauscalper_map*.pine` (built from `tradin
 - **Toman** = `Δ$ × 80,000 × units − 14,000`. The indicator shows both the best and the worst edge, like the bot.
 
 ## 4. Validity (assist.validity / entryLimit)
-- No setups when DaryaGold is closed (open Mon 01:30 Tehran; sessions 01:30–00:30 next day, break 00:30–01:30; closed Sat 00:30 → Mon 01:30), after Friday 23:30, or inside a major news window. Pine input «open» = 0130.
+- No setups when DaryaGold is closed, after the Friday cutoff, or inside a major news window. Hours are New York time (Pine inputs open 1700, close 1600, Friday cutoff 1500, read with `America/New_York`, so DST is automatic): winter Tehran open Mon 01:30, sessions 01:30–00:30, cutoff Fri 23:30; summer one hour earlier.
 - `until = min(now + 45 min, close or Friday cutoff, next major news start)`. No new setups when less than 10 min is left.
 - Pine cannot read the bot's news file, so it uses fixed releases: 08:30 and 10:00 New York, optional 14:00, from 15 min before to 20 min after.
 - The indicator freezes a setup's numbers at birth and keeps it until `until`.

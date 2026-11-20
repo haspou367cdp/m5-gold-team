@@ -380,20 +380,26 @@ def _hm(s, default="17:00"):
 FA_WD = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
 
 
+NY_TZ = ZoneInfo("America/New_York")
+
+
 def session_cfg(cfg=None):
-    """DaryaGold session in Tehran time (owner 2026-11-14 / 2026-11-21): opens Mon 01:30, each session 01:30 to 00:30 next
-    day (daily break 00:30-01:30), last close Sat 00:30. `alerts_from` (07:00) = start of the bot's automatic alerts/briefs."""
+    """DaryaGold session, defined in New York time so US daylight saving is followed (owner t247u, 2026-11-21):
+    opens Sunday 17:00 NY, daily close 16:00 NY and reopen 17:00 NY (1 h break), last close Friday 16:00 NY,
+    Friday no new entries `no_new_entries_hours_before_friday_close` (1) hours before the close.
+    Winter in Tehran: open Mon 01:30, sessions 01:30 -> 00:30, Friday cutoff 23:30; summer one hour earlier.
+    `alerts_from` (07:00 Tehran) = start of the bot's automatic alerts/briefs."""
     cfg = cfg or load_config()
     s = cfg.get("session") or {}
     hours = s.get("no_new_entries_hours_before_friday_close")
     if hours is None:
         hours = 1
     return {
-        "tz": TEH,
-        "days": tuple(int(d) for d in s.get("days", (0, 1, 2, 3, 4))),
-        "open": _hm(s.get("open"), "01:30"),
+        "tz": ZoneInfo(s.get("timezone") or "America/New_York"),
+        "days": tuple(int(d) for d in s.get("days", (0, 1, 2, 3, 4))),   # trading days (the NY date a session closes on)
+        "open": _hm(s.get("open_ny"), "17:00"),
+        "close": _hm(s.get("close_ny"), "16:00"),
         "alerts_from": _hm(s.get("alerts_from"), "07:00"),
-        "close": _hm(s.get("close"), "00:30"),
         "hours": float(hours),
         "reminder_min": int(s.get("close_reminder_minutes_before", 30)),
     }
@@ -406,27 +412,34 @@ def _as_teh(now):
     return t.astimezone(TEH)
 
 
+def trading_day(now=None, cfg=None):
+    """NY date of the session `now` belongs to: a session opens 17:00 NY the day before and closes 16:00 NY.
+    Closed time after a close (break, weekend) belongs to the session that just closed."""
+    sc = session_cfg(cfg)
+    n = _as_teh(now).astimezone(sc["tz"])
+    oh, om = sc["open"]
+    return n.date() + timedelta(days=1) if (n.hour, n.minute) >= (oh, om) else n.date()
+
+
 def _bounds(day, sc):
-    """(start, end) of the session that opens on calendar date `day` (Tehran)."""
+    """(start, end) in Tehran time of the session that closes on NY trading day `day`."""
     oh, om = sc["open"]
     ch, cm = sc["close"]
-    start = datetime(day.year, day.month, day.day, oh, om, tzinfo=TEH)
-    end = datetime(day.year, day.month, day.day, ch, cm, tzinfo=TEH)
-    if end <= start:
-        end += timedelta(days=1)
-    return start, end
+    prev = day - timedelta(days=1)
+    start = datetime(prev.year, prev.month, prev.day, oh, om, tzinfo=sc["tz"])
+    end = datetime(day.year, day.month, day.day, ch, cm, tzinfo=sc["tz"])
+    return start.astimezone(TEH), end.astimezone(TEH)
 
 
 def current_session(now=None, cfg=None):
     """(start, end) of the session open at `now`, else None."""
     sc = session_cfg(cfg)
     t = _as_teh(now)
-    for back in (0, 1):
-        d = (t - timedelta(days=back)).date()
-        if d.weekday() in sc["days"]:
-            s, e = _bounds(d, sc)
-            if s <= t < e:
-                return s, e
+    d = trading_day(t, cfg)
+    if d.weekday() in sc["days"]:
+        s, e = _bounds(d, sc)
+        if s <= t < e:
+            return s, e
     return None
 
 
@@ -434,8 +447,9 @@ def next_session(now=None, cfg=None):
     """(start, end) of the next session that opens after `now`."""
     sc = session_cfg(cfg)
     t = _as_teh(now)
-    for k in range(0, 9):
-        d = (t + timedelta(days=k)).date()
+    d0 = trading_day(t, cfg)
+    for k in range(0, 10):
+        d = d0 + timedelta(days=k)
         if d.weekday() in sc["days"]:
             s, e = _bounds(d, sc)
             if s > t:
@@ -444,25 +458,19 @@ def next_session(now=None, cfg=None):
 
 
 def session_date(now=None, cfg=None):
-    """Trading-day key for the daily stop: the date the DaryaGold session opened (Tehran time minus the 01:30 open).
-    00:00-00:30 belongs to the previous day's session; the 00:30-01:30 break also maps to it."""
-    sc = session_cfg(cfg)
-    oh, om = sc["open"]
-    return (_as_teh(now) - timedelta(hours=oh, minutes=om)).strftime("%Y-%m-%d")
+    """Trading-day key for the daily stop (the NY trading day; in Tehran = the date the session opened).
+    00:00-00:30 Tehran and the break after the close belong to the previous day's session."""
+    return trading_day(now, cfg).strftime("%Y-%m-%d")
 
 
 def session_start(now=None, cfg=None):
-    """Start (01:30 Tehran) of the trading day that `now` belongs to."""
-    sc = session_cfg(cfg)
-    oh, om = sc["open"]
-    d = datetime.strptime(session_date(now, cfg), "%Y-%m-%d")
-    return d.replace(hour=oh, minute=om, tzinfo=TEH)
+    """Start (Tehran time; 01:30 in winter) of the trading day that `now` belongs to."""
+    return _bounds(trading_day(now, cfg), session_cfg(cfg))[0]
 
 
 def session_end(now=None, cfg=None):
-    """Close (00:30 next day) of the trading day that `now` belongs to."""
-    st = session_start(now, cfg)
-    return _bounds(st.date(), session_cfg(cfg))[1]
+    """Close (Tehran time; 00:30 next day in winter) of the trading day that `now` belongs to."""
+    return _bounds(trading_day(now, cfg), session_cfg(cfg))[1]
 
 
 def market_open(now=None, cfg=None):
@@ -470,13 +478,22 @@ def market_open(now=None, cfg=None):
 
 
 def alert_window(now=None, cfg=None):
-    """Bot's automatic alerts/briefs window: market open and at or after `alerts_from` (07:00) or before the 00:30 close."""
+    """Bot's automatic alerts/briefs window: market open, from `alerts_from` (07:00 Tehran), plus the late tail of a
+    session that opened on an earlier Tehran date (e.g. 00:00-00:30 in winter)."""
     sc = session_cfg(cfg)
     t = _as_teh(now)
     if not market_open(t, cfg):
         return False
-    m, (ah, am), (ch, cm) = t.hour * 60 + t.minute, sc["alerts_from"], sc["close"]
-    return m >= ah * 60 + am or m < ch * 60 + cm
+    ah, am = sc["alerts_from"]
+    return t.hour * 60 + t.minute >= ah * 60 + am or session_start(t, cfg).date() != t.date()
+
+
+def hours_tehran(now=None, cfg=None):
+    """Tehran wall-clock open, close and Friday cutoff of the session in force (or the next one)."""
+    sc = session_cfg(cfg)
+    t = _as_teh(now)
+    s, e = current_session(t, cfg) or next_session(t, cfg)
+    return s.strftime("%H:%M"), e.strftime("%H:%M"), (e - timedelta(hours=sc["hours"])).strftime("%H:%M")
 
 
 forex_open = market_open   # back-compat name used by bot.py
@@ -485,11 +502,11 @@ forex_open = market_open   # back-compat name used by bot.py
 def _friday_session(t, sc, cfg):
     """The Friday session that is open now, or the next one."""
     cur = current_session(t, cfg)
-    if cur and cur[0].weekday() == 4:
+    if cur and trading_day(t, cfg).weekday() == 4:
         return cur
-    d = t.date()
-    for k in range(0, 8):
-        day = d + timedelta(days=k)
+    d0 = trading_day(t, cfg)
+    for k in range(0, 9):
+        day = d0 + timedelta(days=k)
         if day.weekday() == 4:
             s, e = _bounds(day, sc)
             if e > t:
@@ -509,9 +526,9 @@ def session_entry_block(now=None, cfg=None):
     is_open = cur is not None
     fs, fe = _friday_session(t, sc, cfg)
     f_start = fe - timedelta(hours=sc["hours"])
-    in_friday_window = is_open and cur[0].weekday() == 4 and f_start <= t < fe
+    in_friday_window = is_open and trading_day(t, cfg).weekday() == 4 and f_start <= t < fe
     blocked = (not is_open) or in_friday_window
-    o, c = (f"{h:02d}:{m:02d}" for h, m in (sc["open"], sc["close"]))
+    o, c, _ = hours_tehran(t, cfg)   # Tehran clock of this season (winter 01:30 / 00:30)
     o_fa, c_fa, fstart_fa = fa_digits(o), fa_digits(c), fa_digits(f_start.strftime("%H:%M"))
     close = cur[1] if is_open else next_session(t, cfg)[1]
     reopen = None if is_open else next_session(t, cfg)[0]
@@ -571,7 +588,7 @@ def journal_today(cfg=None):
         with open(path, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 raw = (row.get("signal_time_tehran") or row.get("logged_at_tehran") or "").strip()
-                try:   # trading day = DaryaGold session (07:00-00:30), not the calendar date
+                try:   # trading day = DaryaGold session (01:30-00:30 Tehran in winter), not the calendar date
                     t = session_date(datetime.strptime(raw[:16], "%Y-%m-%d %H:%M").replace(tzinfo=TEH), cfg)
                 except ValueError:
                     t = raw[:10]

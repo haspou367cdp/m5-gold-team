@@ -93,3 +93,22 @@ def test_persian_user_guide():
     for must in ("۰۱:۳۰ تا ۰۰:۳۰", "۰۷:۰۰ تا ۰۰:۳۰", "14,000", "0.25", "80,000", "40,000", "1,000,000", "500,000", "۶۰ ثانیه", "گزارش", "محدودیت"):
         assert must in s
     assert "زیان" not in s and not re.search(r"(^|[\s،.])قوی([\s،.]|$)", s)
+
+
+def test_new_york_dst_summer_and_winter():
+    # winter (EST): Tehran 01:30 / 00:30 / Friday 23:30
+    assert DG.hours_tehran(T(2026, 11, 18, 12, 0), CFG) == ("01:30", "00:30", "23:30")
+    assert DG.hours_tehran(T(2027, 1, 13, 12, 0), CFG) == ("01:30", "00:30", "23:30")
+    # summer (EDT): one hour earlier
+    assert DG.hours_tehran(T(2026, 7, 15, 12, 0), CFG) == ("00:30", "23:30", "22:30")
+    assert DG.market_open(T(2026, 7, 13, 0, 30), CFG) and not DG.market_open(T(2026, 7, 13, 0, 29), CFG)
+    assert not DG.market_open(T(2026, 7, 14, 23, 30), CFG) and DG.market_open(T(2026, 7, 15, 0, 30), CFG)
+    f = DG.session_entry_block(T(2026, 7, 17, 22, 30), CFG)
+    assert f["blocked"] and f["friday_window"] and f["close_tehran"] == "2026-07-17 23:30"
+    assert not DG.session_entry_block(T(2026, 7, 17, 22, 29), CFG)["blocked"]
+    assert DG.session_entry_block(T(2026, 7, 18, 12, 0), CFG)["reopen_tehran"] == "2026-07-20 00:30"
+    assert not DG.alert_window(T(2026, 7, 13, 3, 0), CFG) and DG.alert_window(T(2026, 7, 13, 7, 0), CFG)
+    # switch weekends: US DST starts 2026-03-08, ends 2026-11-01
+    assert DG.session_entry_block(T(2026, 3, 7, 12, 0), CFG)["reopen_tehran"] == "2026-03-09 00:30"
+    assert DG.session_entry_block(T(2026, 10, 31, 12, 0), CFG)["reopen_tehran"] == "2026-11-02 01:30"
+    assert DG.session_date(T(2026, 7, 13, 0, 30), CFG) == "2026-07-13"

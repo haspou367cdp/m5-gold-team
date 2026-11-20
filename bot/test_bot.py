@@ -334,8 +334,10 @@ check("Friday 23:30: one short close reminder (flat by 00:30), no signal, no ana
 CLOCK[0] = datetime(2026, 11, 13, 23, 45, tzinfo=B.TEH); a1 = run("scheduled")
 CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); a2 = run("scheduled")
 check("close reminder sent once (23:45 and Saturday 00:15 silent)", a1 == [] and a2 == [])
-fresh(); CLOCK[0] = datetime(2026, 7, 17, 23, 30, tzinfo=B.TEH); out = run("scheduled")
-check("summer Friday 23:30: reminder says flat by 00:30", len(out) == 1 and "<code>00:30</code>" in out[0])
+fresh(); CLOCK[0] = datetime(2026, 7, 17, 22, 30, tzinfo=B.TEH); out = run("scheduled")
+check("summer Friday 22:30 (cutoff follows New York DST): reminder says flat by 23:30", len(out) == 1 and "<code>23:30</code>" in out[0])
+fresh(); CLOCK[0] = datetime(2026, 7, 17, 23, 30, tzinfo=B.TEH); CALLS[0] = 0
+check("summer Friday 23:30: market already closed, scheduled run silent", run("scheduled") == [] and CALLS[0] == 0)
 fresh(); BRIEF[0] = mk_brief(session_entry={"blocked": True, "friday_window": True}, decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); out = run("command", ["/scan"])
 check("Saturday 00:15 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
@@ -545,7 +547,12 @@ check("Friday flag: none on Friday afternoon", flag_at(datetime(2026, 11, 13, 18
 check("Friday flag: warning 22:00 -> cutoff 23:30", "23:30" in "".join(flag_at(datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH))))
 check("Friday flag: Saturday 00:15 still closing (00:30)", "00:30" in "".join(flag_at(datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH))))
 check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH)) == [])
-check("Friday flag: midsummer also 23:30 (DaryaGold, no DST)", "23:30" in "".join(flag_at(datetime(2026, 7, 17, 22, 15, tzinfo=B.TEH))))
+check("Friday flag: midsummer cutoff 22:30 (follows New York DST)", "22:30" in "".join(flag_at(datetime(2026, 7, 17, 21, 15, tzinfo=B.TEH))))
+check("summer hours (EDT): Mon 00:30 open, 00:29 closed; weekday 23:30-00:30 break; winter stays 01:30/00:30/23:30",
+      DG.forex_open(datetime(2026, 7, 13, 0, 30, tzinfo=B.TEH), cfg) and not DG.forex_open(datetime(2026, 7, 13, 0, 29, tzinfo=B.TEH), cfg) and
+      not DG.forex_open(datetime(2026, 7, 14, 23, 45, tzinfo=B.TEH), cfg) and DG.forex_open(datetime(2026, 7, 15, 0, 30, tzinfo=B.TEH), cfg) and
+      DG.hours_tehran(datetime(2026, 7, 15, 12, 0, tzinfo=B.TEH), cfg) == ("00:30", "23:30", "22:30") and
+      DG.hours_tehran(datetime(2026, 11, 18, 12, 0, tzinfo=B.TEH), cfg) == ("01:30", "00:30", "23:30"))
 check("Friday flag: none on a Wednesday night", flag_at(datetime(2026, 11, 11, 22, 45, tzinfo=B.TEH)) == [])
 CLOCK[0] = _c
 

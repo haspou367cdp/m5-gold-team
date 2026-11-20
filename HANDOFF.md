@@ -5,10 +5,13 @@ Owner: pouhasaa (Asia/Tehran). All dates below are Tehran dates.
 
 ## 1. Goal
 A Persian Telegram assistant for scalping XAUUSD on **DaryaGold** (an Iranian counterparty platform: prices in USD,
-P&L and fees in toman, no partial close; market opens **Monday 01:30 Tehran** (Sunday 17:00 New York), each session
-01:30 → 00:30 next day (daily break 00:30–01:30), last close Saturday 00:30; no new setups Friday after 23:30).
+P&L and fees in toman, no partial close). **Hours are defined in New York time** (owner t247u): open Sunday 17:00 NY,
+daily close 16:00 NY and reopen 17:00 NY, last close Friday 16:00 NY, Friday cutoff 15:00 NY. In Tehran (no DST):
+winter (EST) open Monday 01:30, sessions 01:30 → 00:30, last close Saturday 00:30, Friday cutoff 23:30; summer (EDT)
+one hour earlier (00:30 / 23:30 / 22:30). Code: `supabase/functions/tg-bot/hours.js` (US DST rule), Python
+`tools/broker_daryagold.py` (zoneinfo America/New_York, config `session.open_ny/close_ny`), Pine inputs in NY time.
 Commands (`/setup` `/trend` `/levels` `/e` `/brief`) work whenever the market is open; the bot's automatic alerts and
-briefs run only **07:00–00:30** (`session.alerts_from`, JS `alertWindow`, Python `DG.alert_window`).
+briefs run only from **07:00 Tehran until the close** (`session.alerts_from`, JS `alertWindow`, Python `DG.alert_window`).
 It gives levels, trend, ready-made setups and plain-language alerts on request. It **never places orders**, never
 logs in to DaryaGold, and since 2026-11-20 it sends **no automatic trade signals** (research showed no edge, see §6).
 A TradingView indicator (ZARVA Map, formerly Xauscalper Map) shows the same levels, trend and setups on the phone chart.
@@ -137,10 +140,10 @@ If it never recovers: check the bot in @BotFather, or regenerate the token, upda
 secret and run the setup workflow (it stores the token in Vault).
 
 Pending / owner questions:
-1. Hours settled (owner 2026-11-21): market open Mon 01:30, sessions 01:30–00:30, Friday cutoff 23:30, alerts/briefs
-   from 07:00. Implemented in build `2026-11-21-assistant-v5.2-hours`. Note: the 01:30 open is fixed in Tehran time; if
-   DaryaGold follows New York summer time (EDT), the open/close would move one hour earlier in Tehran — change
-   `session.open`/`close` in `tools/broker_daryagold.json`, `OPEN_MIN`/`CLOSE_MIN` in `lib.js`, `entryLimit` and the Pine inputs.
+1. Hours settled (owner 2026-11-21, t247u): New York based, follows US DST (see §1); alerts/briefs from 07:00 Tehran.
+   The owner's message said "close Friday 17:00 NY, break 17:00–18:00 NY", but the required winter result
+   (00:30 close / 01:30 open Tehran) means close 16:00 NY and reopen 17:00 NY; that is what is implemented.
+   The pg_cron/GitHub cron schedules are in UTC and already cover both seasons.
 2. Repost the updated guide/indicator to the group (owner decision; nothing is posted without approval).
 
 ## 9. Security rules

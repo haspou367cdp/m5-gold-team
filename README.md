@@ -38,7 +38,9 @@ research results, what is deployed and what is pending, security rules, and how 
 
 ## Cost model (owner-confirmed)
 1 unit = 80,000 toman per $1, 0.5 unit = 40,000; fee 14,000 toman once per trade; spread ~$0.25; margins
-1,000,000 / 500,000. Prices: ONE basis, DaryaGold = Dukascopy mid + 0.02 for
+1,000,000 / 500,000. Hours: New York based (open Sun 17:00 NY, close 16:00 NY, Friday cutoff 15:00 NY) = Tehran winter
+Mon 01:30, 01:30–00:30, Fri cutoff 23:30 (summer one hour earlier); bot alerts/briefs from 07:00 Tehran.
+Prices: ONE basis, DaryaGold = Dukascopy mid + 0.02 for
 levels, live price, setups and the indicator. Setups need SL distance + M5 ATR ≤ $9 and net R:R ≥ 0.6.
 
 ## Tests
