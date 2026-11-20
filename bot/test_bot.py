@@ -107,7 +107,7 @@ def run(mode="scheduled", cmds=()):
     if cmds:
         s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
         for c in cmds:
-            c, origin = (c, None) if isinstance(c, str) else c     # ("/scan", "group") = asked in the «• Z A R V A •» group
+            c, origin = (c, None) if isinstance(c, str) else c     # ("/scan", "group") = asked in the «⬩ Z A R V A ⬩» group
             s.setdefault("pending_cmds", []).append({"id": NEXT_ID[0], "cmd": c, **({"origin": origin} if origin else {})}); NEXT_ID[0] += 1
         os.makedirs(B.STATE_DIR, exist_ok=True); json.dump(s, open(B.STATE_JSON, "w"))
     sys.argv = ["bot.py", "--mode", mode]; B.main()
@@ -698,7 +698,7 @@ st_t = {"signals_sent": [dict(_rec), {"key": "legacy"}, dict(_rec, id="S-2026111
 n = B.track_signals(st_t, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
 check("track_signals updates only signals with an ID that are not final", n == 1 and st_t["signals_sent"][0]["track"]["outcome"] == "tp")
 
-# ---- group read-only commands (t189u): a request from the «• Z A R V A •» group is answered in the group only
+# ---- group read-only commands (t189u): a request from the «⬩ Z A R V A ⬩» group is answered in the group only
 with_group(); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 out = run("command", [("/brief", "group")])

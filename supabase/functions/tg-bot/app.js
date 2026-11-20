@@ -9,7 +9,7 @@ import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed,
 import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
 import * as A from "./assist.js";
 
-export const BUILD = "2026-11-21-assistant-v5-onebasis";
+export const BUILD = "2026-11-21-assistant-v5.1-onebasis";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -280,7 +280,7 @@ export function makeApp(cfg) {
     const m = u.message || {};
     const chat = m.chat || {};
     const text = (m.text || "").trim();
-    // Groups: only the «• Z A R V A •» group (bot_state.channel_id), only GROUP_CMDS, any member, read-only, cooldown per command.
+    // Groups: only the «⬩ Z A R V A ⬩» group (bot_state.channel_id), only GROUP_CMDS, any member, read-only, cooldown per command.
     if (["group", "supergroup"].includes(chat.type)) return await onGroup(env, u, chat, text);
     // Everything else: commands only from the owner's private chat. Never reply anywhere else.
     if (chat.type === "channel") return new Response("ok");
@@ -343,7 +343,7 @@ export function makeApp(cfg) {
     return BOT_USER;
   }
 
-  // Group members («• Z A R V A •», formerly BAROBAX) may run GROUP_CMDS only. Replies are the group variants (publicReply / public_card):
+  // Group members («⬩ Z A R V A ⬩», formerly BAROBAX) may run GROUP_CMDS only. Replies are the group variants (publicReply / public_card):
   // no toman, no balance, no buttons. One answer per command per GROUP_COOLDOWN_MS; repeats are ignored silently.
   async function onGroup(env, u, chat, text) {
     const ok = new Response("ok");

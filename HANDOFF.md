@@ -9,8 +9,8 @@ P&L and fees in toman, no partial close, Mon–Fri 07:00–00:30 Tehran, no new 
 It gives levels, trend, ready-made setups and plain-language alerts on request. It **never places orders**, never
 logs in to DaryaGold, and since 2026-11-20 it sends **no automatic trade signals** (research showed no edge, see §6).
 A TradingView indicator (ZARVA Map, formerly Xauscalper Map) shows the same levels, trend and setups on the phone chart.
-The audience includes complete beginners in the Telegram group «• Z A R V A •» (formerly BAROBAX), so every message must be plain Persian.
-Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@Xauscalperibot), group «• Z A R V A •». IDs and the username are unchanged
+The audience includes complete beginners in the Telegram group «⬩ Z A R V A ⬩» (formerly BAROBAX), so every message must be plain Persian.
+Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@Xauscalperibot), group «⬩ Z A R V A ⬩». IDs and the username are unchanged
 (owner chat 45639251, group -1001958445009, username @Xauscalperibot). `lib.js` `BOT_NAME` / `GROUP_NAME` hold the display names.
 
 ## 2. History and decisions
@@ -27,7 +27,7 @@ Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@Xauscalperibot)
 | 2026-11-21 00:04 | **Group post** (owner t238u): Xauscalper Map fa (msg 2979) and en (2980) files plus the plain group guide (2981–2982) posted to BAROBAX via a one-off workflow on branch `group-guide-post` (workflow deleted afterwards). |
 | 2026-11-21 | `bot-assistant-v2` (fast-forward) and `tv-decision-map` (merge commit) merged into `main`; the Python plain wording is live from the next GitHub Actions run. |
 | 2026-11-21 | **Telegram outage** (owner t245u «دستورها کار نمی‌کنه»): from ~Nov 20 evening every authenticated Bot API call for this bot hangs (invalid tokens get 401 at once), so no command replies. Not caused by our code; `tg()` now has a 20 s timeout. See §8. |
-| 2026-11-21 | **Final audit** (owner t244u, t246u, branch `final-audit`): new names; ONE price basis DaryaGold = mid + 0.02 (levels too, old snapshots rebased); stricter SL rule (SL distance + M5 ATR ≤ $9); phone-friendly `/levels` ladder, `/brief`, setup cards, `/trend`; menu descriptions + bot description/short description; indicator renamed to ZARVA Map with the same basis and SL rule. tg-bot build `2026-11-21-assistant-v5-onebasis`. |
+| 2026-11-21 | **Final audit** (owner t244u, t246u, branch `final-audit`): new names; ONE price basis DaryaGold = mid + 0.02 (levels too, old snapshots rebased); stricter SL rule (SL distance + M5 ATR ≤ $9); phone-friendly `/levels` ladder, `/brief`, setup cards, `/trend`; menu descriptions + bot description/short description; indicator renamed to ZARVA Map with the same basis and SL rule. tg-bot build `2026-11-21-assistant-v5.1-onebasis`. |
 
 ## 3. Architecture
 ```
@@ -58,10 +58,10 @@ pg_cron ──dispatch──▶ GitHub Actions .github/workflows/telegram-bot.ym
 - Telegram menus, the bot description and short description (fa + default) are set by `menuCalls()` once per `MENU_VERSION` on the next `/tick` (`state.menu_version`), or by
   `/admin/setup set_commands`.
 
-## 4. Commands (tg-bot build 2026-11-21-assistant-v5-onebasis)
+## 4. Commands (tg-bot build 2026-11-21-assistant-v5.1-onebasis)
 Owner private chat (45639251), menu order: `/setup` `/e` `/trend` `/levels` `/brief` `/status` `/balance` `/offset`
 `/calibrate` `/groupoff` `/groupon` `/help`.
-Group «• Z A R V A •» (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
+Group «⬩ Z A R V A ⬩» (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
 variant has no toman or balance; respects `/groupoff`).
 Hidden aliases: `/signal` and `/scan` → `/setup`; `/start` → `/help`.
 Removed for good (answer «دستور ناشناخته»): `/trade /loss /win /undo /shadow /entered /tp /sl /closed /journal /pnl`,
@@ -114,8 +114,8 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
 
 ## 8. Deployed vs pending
 Deployed (2026-11-21 01:58 Tehran):
-- tg-bot **v26** (build `2026-11-21-assistant-v5-onebasis`): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
-  20 s `tg()` timeout. `MENU_VERSION` `2026-11-21-t246u` (menus + bot description/short description) is applied by the
+- tg-bot **v27** (build `2026-11-21-assistant-v5.1-onebasis`; v26 = v5 without the exact group title): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
+  20 s `tg()` timeout. `MENU_VERSION` `2026-11-21-t246u-b` (menus + bot description/short description) is applied by the
   first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
 - `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
   brief, plain ladder) are live from the next GitHub Actions run.

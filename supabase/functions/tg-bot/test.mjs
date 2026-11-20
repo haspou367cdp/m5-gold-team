@@ -270,11 +270,11 @@ async function tgUpdate(update) {
     body: JSON.stringify({ update_id: uid++, ...update }) }), jw);
   return { status: r.status, out: SENT.map((x) => x.text), chats: SENT.map((x) => String(x.chat_id)) };
 }
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/status" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "⬩ Z A R V A ⬩" }, from: { id: 45639251 }, text: "/status" } });
 check("owner /status in the group is ignored", r.out.length === 0 && DB.row.version === vG);
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, text: "TEST2" } });
 check("plain group message is ignored", r.out.length === 0);
-r = await tgUpdate({ channel_post: { chat: { id: Number(GID), type: "channel", title: "• Z A R V A •" }, text: "/levels" } });
+r = await tgUpdate({ channel_post: { chat: { id: Number(GID), type: "channel", title: "⬩ Z A R V A ⬩" }, text: "/levels" } });
 check("channel_post updates are ignored", r.out.length === 0 && DB.row.version === vG);
 DISPATCHED.length = 0; DB.row.state.last_dispatch = 0; DB.row.state.pending_cmds = [];
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
@@ -298,7 +298,7 @@ check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] 
 r = await tgSend("/brief");
 check("Saturday /brief closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
 DB.row.state.group_cmd_at = {};
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 777 }, text: "/brief" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "⬩ Z A R V A ⬩" }, from: { id: 777 }, text: "/brief" } });
 check("Saturday: member /brief in the group gets the closed line in the group only", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("بازار بسته است"));
 check("publicReply leaves /levels untouched and drops data errors", publicReply("/levels", "سطوح") === "سطوح" && publicReply("/setup", "داده‌ی قیمت در دسترس نیست") === null);
 CLOCK = U("2026-11-11T10:30:00Z");
@@ -321,7 +321,7 @@ DISPATCHED.length = 0;
 r = await tgSend("/levels");
 check("/levels is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح") && DISPATCHED.length === 0);
 const geOff = st().group_enabled;
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/groupon" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "⬩ Z A R V A ⬩" }, from: { id: 45639251 }, text: "/groupon" } });
 check("/groupon in the group is ignored", r.out.length === 0 && st().group_enabled === geOff);
 r = await tgSend("/groupon", 999);
 check("/groupon from another chat is ignored", r.out.length === 0 && st().group_enabled === false);
@@ -335,7 +335,7 @@ check("/levels is mirrored again after /groupon", r.out.length === 2 && r.chats[
 CLOCK = U("2026-11-11T10:30:00Z");
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
 DB.row.state.group_cmd_at = {}; DB.row.state.pending_cmds = []; DB.row.state.last_dispatch = 0; DISPATCHED.length = 0;
-const G = (text, from = 777, id = Number(GID)) => tgUpdate({ message: { chat: { id, type: "supergroup", title: "• Z A R V A •" }, from: { id: from }, text } });
+const G = (text, from = 777, id = Number(GID)) => tgUpdate({ message: { chat: { id, type: "supergroup", title: "⬩ Z A R V A ⬩" }, from: { id: from }, text } });
 r = await G("/levels");
 check("member /levels in the group: group copy only, no buttons, never to the owner", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("سطوح") && !r.out[0].includes("تومان") && !SENT[0].reply_markup);
 r = await G("/levels");
@@ -410,7 +410,7 @@ check("stale feed bar (10 min) -> DATA_UNAVAILABLE", OBS[6].status === "DATA_UNA
 DUKA.B = [[T0 - 44000, 1, 1, 1, 3569.55, 1]];
 r = await tgSend("/calibrate 35");
 check("/calibrate junk -> format hint, nothing stored", r.out[0].includes("ثبت نشد") && OBS.length === 7);
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/calibrate 3569.85" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "⬩ Z A R V A ⬩" }, from: { id: 45639251 }, text: "/calibrate 3569.85" } });
 check("/calibrate in the group is ignored (private only)", r.out.length === 0 && OBS.length === 7);
 r = await tgSend("/calibrate 3569.85", 999);
 check("/calibrate from another chat is ignored", r.out.length === 0 && OBS.length === 7);

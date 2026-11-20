@@ -89,7 +89,7 @@ export function parseAmount(args) {
 
 // Owner decision t226u-t232u (2026-11-20): the bot is an assistant. No automatic entry signals, no trade journal.
 // t238u (2026-11-20): the old journal/signal commands are removed entirely (unknown command reply).
-export const BOT_NAME = "Z A R V A •|• BTV", GROUP_NAME = "• Z A R V A •";   // display names (owner t244u/t246u); ids unchanged
+export const BOT_NAME = "Z A R V A •|• BTV", GROUP_NAME = "⬩ Z A R V A ⬩";   // display names (owner t244u/t246u); ids unchanged
 export const HELP = `**🤖 راهنما**
 ~~${BOT_NAME} · دستیار طلای دریاگلد~~
 
@@ -122,7 +122,7 @@ export const COMMANDS = MENU.map(([command, description]) => ({ command, descrip
 export const DESCRIPTION = `${BOT_NAME}، دستیار طلای گروه ${GROUP_NAME}.\nسقف‌ها و کف‌های مهم، روند، نقشه‌ی ورود و هشدارهای طلا (XAUUSD) برای دریاگلد، به زبان ساده.\nدستورها: /setup /trend /levels /brief`;
 export const SHORT_DESCRIPTION = `دستیار طلای گروه ${GROUP_NAME}: سطح‌ها، روند و نقشه‌ی ورود به زبان ساده`;
 export const GROUP_MENU = COMMANDS.filter((c) => ["setup", "trend", "levels", "brief"].includes(c.command));
-export const MENU_VERSION = "2026-11-21-t246u";
+export const MENU_VERSION = "2026-11-21-t246u-b";
 // Telegram calls that make the menus exactly this (narrow scopes first are cleared, then set)
 export function menuCalls() {
   return [

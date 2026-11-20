@@ -112,7 +112,7 @@ def group_enabled(state=None):
     return not state or state.get("group_enabled") is not False
 
 def channel_chat(state=None):
-    """Mirror target from bot_state.channel_id (the «• Z A R V A •» group). Empty if unset, disabled, or equal to the owner chat."""
+    """Mirror target from bot_state.channel_id (the «⬩ Z A R V A ⬩» group). Empty if unset, disabled, or equal to the owner chat."""
     if not group_enabled(state):
         return ""
     raw = (state or {}).get("channel_id")
