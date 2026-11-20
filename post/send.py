@@ -20,10 +20,10 @@ def doc(path, caption):
     try: return json.load(urllib.request.urlopen(r, timeout=60))
     except urllib.error.HTTPError as e: return json.load(e)
     except Exception as e: return {"ok": False, "description": type(e).__name__}
-steps = [("doc_fa", lambda: doc(os.path.join(D, "xauscalper_map.pine"), rd("cap_fa.html"))),
-         ("doc_en", lambda: doc(os.path.join(D, "xauscalper_map_en.pine"), rd("cap_en.html"))),
-         ("guide1", lambda: call("sendMessage", {"chat_id": chat, "text": rd("guide1.html"), "parse_mode": "HTML", "disable_web_page_preview": True})),
-         ("guide2", lambda: call("sendMessage", {"chat_id": chat, "text": rd("guide2.html"), "parse_mode": "HTML", "disable_web_page_preview": True}))]
+steps = [("doc_fa", lambda: doc(os.path.join(D, "xauscalper_map.pine"), rd("cap_fa.txt"))),
+         ("doc_en", lambda: doc(os.path.join(D, "xauscalper_map_en.pine"), rd("cap_en.txt"))),
+         ("guide1", lambda: call("sendMessage", {"chat_id": chat, "text": rd("guide1.txt"), "parse_mode": "HTML", "disable_web_page_preview": True})),
+         ("guide2", lambda: call("sendMessage", {"chat_id": chat, "text": rd("guide2.txt"), "parse_mode": "HTML", "disable_web_page_preview": True}))]
 for name, fn in steps:
     r = fn()
     print(name, "ok" if r.get("ok") else "FAIL", r.get("result", {}).get("message_id") if r.get("ok") else r.get("description"), flush=True)
