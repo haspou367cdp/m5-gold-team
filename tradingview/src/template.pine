@@ -36,7 +36,7 @@ string unitT   = input.string("@V_1U@", "@I_UNIT@", options = ["@V_1U@", "@V_05U
 float  slBufA  = input.float(0.5, "@I_SLBUFA@", step = 0.1, group = GS)
 float  slBufK  = input.float(0.3, "@I_SLBUFK@", step = 0.05, group = GS)
 float  slMinA  = input.float(1.0, "@I_SLMINA@", step = 0.1, group = GS)
-float  slMinK  = input.float(0.6, "@I_SLMINK@", step = 0.05, group = GS)
+float  slMinK  = input.float(0.5, "@I_SLMINK@", step = 0.05, group = GS)
 float  roomK   = input.float(2.0, "@I_ROOM@", step = 0.1, group = GS)
 float  tpBufA  = input.float(0.3, "@I_TPBUFA@", step = 0.05, group = GS)
 float  tpBufK  = input.float(0.1, "@I_TPBUFK@", step = 0.05, group = GS)
@@ -50,10 +50,11 @@ int    coolBar = input.int(6, "@I_COOL@", minval = 1, group = GS)
 
 const string GF = "@G_FILTERS@"
 int    adrLen  = input.int(20, "@I_ADR@", minval = 5, maxval = 60, group = GF)
-float  adrMax  = input.float(100, "@I_ADRMAX@", step = 5, group = GF)
+float  adrMax  = input.float(130, "@I_ADRMAX@", step = 5, group = GF)
 float  volK    = input.float(2.0, "@I_VOLK@", step = 0.1, group = GF)
 int    medDays = input.int(5, "@I_MEDDAYS@", minval = 2, maxval = 20, tooltip = "@T_MED@", group = GF)
-float  bufMax  = input.float(5.0, "@I_BUF@", step = 0.5, group = GF)
+float  bufMax  = input.float(9.0, "@I_BUF@", step = 0.5, group = GF)
+bool   bufHard = input.bool(false, "@I_BUFHARD@", tooltip = "@T_BUFHARD@", group = GF)
 int    openHM  = input.int(700, "@I_OPEN@", minval = 0, maxval = 2359, group = GF)
 int    closeHM = input.int(30, "@I_CLOSE@", minval = 0, maxval = 459, group = GF)
 int    friHM   = input.int(2330, "@I_FRI@", minval = 0, maxval = 2359, group = GF)
@@ -71,10 +72,10 @@ int  n3e  = input.time(timestamp("2026-11-27T11:45:00+03:30"), "@I_TO@", inline 
 
 const string GD = "@G_DISPLAY@"
 bool   showTbl = input.bool(true, "@I_TBL@", group = GD)
-string blkMode = input.string("@V_BLK_FIRST@", "@I_BLK@", options = ["@V_BLK_FIRST@", "@V_BLK_ALL@", "@V_BLK_NONE@"], tooltip = "@T_BLK@", group = GD)
+string blkMode = input.string("@V_BLK_NONE@", "@I_BLK@", options = ["@V_BLK_FIRST@", "@V_BLK_ALL@", "@V_BLK_NONE@"], tooltip = "@T_BLK@", group = GD)
 int    lblGap  = input.int(3, "@I_LBLGAP@", minval = 0, maxval = 20, tooltip = "@T_LBLGAP@", group = GD)
 bool   showZn  = input.bool(true, "@I_ZN@", group = GD)
-int    histBar = input.int(3000, "@I_HIST@", minval = 300, maxval = 20000, tooltip = "@T_HIST@", group = GD)
+int    histBar = input.int(6000, "@I_HIST@", minval = 300, maxval = 20000, tooltip = "@T_HIST@", group = GD)
 string tblPos  = input.string("@V_TR@", "@I_TBLPOS@", options = ["@V_TR@", "@V_TL@", "@V_BR@", "@V_BL@"], group = GD)
 
 // ───────────────────────── @S_TREND@ ─────────────────────────
@@ -285,7 +286,7 @@ f_rr(float tpD, float slD) =>
     rsk > 0 ? rew / rsk : na
 
 f_why(float d, float tpD, float rr) =>
-    baseWhy != 0 ? baseWhy : d + atr5 > bufMax ? 6 : tpD > tpCapK * atr5 ? 7 : na(rr) or rr < rrMin ? 8 : rr > rrMax ? 9 : 0
+    baseWhy != 0 ? baseWhy : bufHard and d + atr5 > bufMax ? 6 : tpD > tpCapK * atr5 ? 7 : na(rr) or rr < rrMin ? 8 : rr > rrMax ? 9 : 0
 
 int kL = -1
 int kS = -1
@@ -352,26 +353,26 @@ bool shortBlk = barstate.isconfirmed and mktOpen and newS and sWhy != 0 and cool
 
 f_px(float p) => str.tostring(p + dgOff, "0.00")
 
-f_draw(int dir, float e, float sl, float tp, float rr) =>
+f_draw(int dir, float e, float sl, float tp, float rr, bool warn) =>
     color c = dir == 1 ? color.teal : color.red
     int x2 = bar_index + expBars
-    line.new(bar_index, e, x2, e, color = c, width = 2)
+    line.new(bar_index, e, x2, e, color = color.new(c, 30), width = 1)
     line.new(bar_index, sl, x2, sl, color = color.red, style = line.style_dashed)
     line.new(bar_index, tp, x2, tp, color = color.green, style = line.style_dashed)
     // one script per line: the Persian/English header alone, then Latin-only number lines (no mixed-direction text)
-    string t = (dir == 1 ? "▲ @T_BUY@" : "▼ @T_SELL@") + "\nE " + f_px(e) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp) + "\nRR " + str.tostring(rr, "0.00")
-    label.new(bar_index, dir == 1 ? low : high, t, style = dir == 1 ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.small)
+    string t = (dir == 1 ? "▲ @T_BUY@" : "▼ @T_SELL@") + (warn ? " ⚠" : "") + "\nE " + f_px(e) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp) + "\nRR " + str.tostring(rr, "0.00")
+    label.new(bar_index, dir == 1 ? low : high, t, style = dir == 1 ? label.style_label_up : label.style_label_down, color = color.new(c, 25), textcolor = color.white, size = size.tiny, tooltip = warn ? "@R_BUF@" : "")
 
 f_alert(string side, float e, float sl, float tp, float rr) =>
     "XSZ " + side + " | E " + f_px(e) + " | SL " + f_px(sl) + " | TP " + f_px(tp) + " | R:R " + str.tostring(rr, "0.00")
 
 if longOK
     lastL := bar_index
-    f_draw(1, lE, lSL, lTP, lRR)
+    f_draw(1, lE, lSL, lTP, lRR, lE - lSL + atr5 > bufMax)
     alert(f_alert("@T_BUY@", lE, lSL, lTP, lRR), alert.freq_once_per_bar_close)
 if shortOK
     lastS := bar_index
-    f_draw(-1, sE, sSL, sTP, sRR)
+    f_draw(-1, sE, sSL, sTP, sRR, sSL - sE + atr5 > bufMax)
     alert(f_alert("@T_SELL@", sE, sSL, sTP, sRR), alert.freq_once_per_bar_close)
 // Blocked markers: tiny grey cross, reason in the tooltip. "first per streak" = only when the reason changes since the last marker on that side.
 var int lastBlkL = 0
@@ -389,9 +390,9 @@ if shortBlk
     lastS := bar_index
     lastBlkS := sWhy
 if drawBL
-    label.new(bar_index, low, "", style = label.style_xcross, color = color.new(color.gray, 40), size = size.tiny, yloc = yloc.belowbar, tooltip = "@T_BUY@: " + f_rname(lWhy))
+    label.new(bar_index, low, "", style = label.style_circle, color = color.new(color.gray, 75), size = size.tiny, yloc = yloc.belowbar, tooltip = "@T_BUY@: " + f_rname(lWhy))
 if drawBS
-    label.new(bar_index, high, "", style = label.style_xcross, color = color.new(color.gray, 40), size = size.tiny, yloc = yloc.abovebar, tooltip = "@T_SELL@: " + f_rname(sWhy))
+    label.new(bar_index, high, "", style = label.style_circle, color = color.new(color.gray, 75), size = size.tiny, yloc = yloc.abovebar, tooltip = "@T_SELL@: " + f_rname(sWhy))
 
 // Blocked-setup counts for today (per reason), so a too-strict filter is visible.
 var array<int> blkCnt = array.new<int>(10, 0)
@@ -433,8 +434,8 @@ if barstate.islast
                 belowSeen += 1
                 pick := belowTot - belowSeen < nShow
             if pick
-                color bc = above ? color.new(color.red, 85) : below ? color.new(color.teal, 85) : color.new(color.yellow, 80)
-                boxes.push(box.new(bar_index - 40, zHi.get(i), xR, zLo.get(i), border_color = color.new(bc, 40), bgcolor = bc))
+                color bc = above ? color.new(color.red, 92) : below ? color.new(color.teal, 92) : color.new(color.yellow, 88)
+                boxes.push(box.new(bar_index - 40, zHi.get(i), xR, zLo.get(i), border_color = color.new(color.gray, 85), bgcolor = bc))
                 float y = (zMn.get(i) + zMx.get(i)) / 2
                 // labels at the right edge: price to the right of the edge, short tag to the left; skipped when too close to the previous one
                 if na(lastLblY) or math.abs(y - lastLblY) >= lblGap
@@ -442,18 +443,18 @@ if barstate.islast
                     string tg = zTg.get(i)
                     int cut = str.pos(tg, "@SEP@")
                     string shortTg = na(cut) ? tg : str.substring(tg, 0, cut) + " …"
-                    zlbls.push(label.new(xR, y, f_px(y), style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.gray, size = size.small, tooltip = tg))
-                    zlbls.push(label.new(xR, y, shortTg, style = label.style_label_right, color = color.new(color.black, 100), textcolor = color.gray, size = size.small, tooltip = tg))
+                    zlbls.push(label.new(xR, y, f_px(y), style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.new(color.gray, 20), size = size.tiny, tooltip = tg))
+                    zlbls.push(label.new(xR, y, shortTg, style = label.style_label_right, color = color.new(color.black, 100), textcolor = color.new(color.gray, 20), size = size.tiny, tooltip = tg))
 
 // ───────────────────────── @S_TABLE@ ─────────────────────────
 f_pos(string s) => s == "@V_TL@" ? position.top_left : s == "@V_BR@" ? position.bottom_right : s == "@V_BL@" ? position.bottom_left : position.top_right
 // 4 columns, each cell holds only one script (text or numbers): key | number | extra number | text
 var table tb = table.new(f_pos(tblPos), 4, 28, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.new(color.gray, 70))
 f_row(int r, string k, string n, string d, string t, color vc) =>
-    table.cell(tb, @KCOL@, r, k, text_color = color.silver, text_size = size.small, text_halign = @KALIGN@)
-    table.cell(tb, @NCOL@, r, n, text_color = vc, text_size = size.small, text_halign = text.align_right)
-    table.cell(tb, @DCOL@, r, d, text_color = color.gray, text_size = size.small, text_halign = text.align_right)
-    table.cell(tb, @TCOL@, r, t, text_color = vc, text_size = size.small, text_halign = @KALIGN@)
+    table.cell(tb, @KCOL@, r, k, text_color = color.silver, text_size = size.tiny, text_halign = @KALIGN@)
+    table.cell(tb, @NCOL@, r, n, text_color = vc, text_size = size.tiny, text_halign = text.align_right)
+    table.cell(tb, @DCOL@, r, d, text_color = color.gray, text_size = size.tiny, text_halign = text.align_right)
+    table.cell(tb, @TCOL@, r, t, text_color = vc, text_size = size.tiny, text_halign = @KALIGN@)
 
 if barstate.islast and showTbl
     table.clear(tb, 0, 0, 3, 27)
