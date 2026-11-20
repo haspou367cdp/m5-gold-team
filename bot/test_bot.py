@@ -96,7 +96,8 @@ def run(mode="scheduled", cmds=()):
     if cmds:
         s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
         for c in cmds:
-            s.setdefault("pending_cmds", []).append({"id": NEXT_ID[0], "cmd": c}); NEXT_ID[0] += 1
+            c, origin = (c, None) if isinstance(c, str) else c     # ("/scan", "group") = asked in the BAROBAX group
+            s.setdefault("pending_cmds", []).append({"id": NEXT_ID[0], "cmd": c, **({"origin": origin} if origin else {})}); NEXT_ID[0] += 1
         os.makedirs(B.STATE_DIR, exist_ok=True); json.dump(s, open(B.STATE_JSON, "w"))
     sys.argv = ["bot.py", "--mode", mode]; B.main()
     st = json.load(open(B.STATE_JSON))   # emulate the Worker's merge: done commands leave the queue
@@ -681,6 +682,31 @@ check("tracking: still open mid-trade is not final", tr3["outcome"] == "open" an
 st_t = {"signals_sent": [dict(_rec), {"key": "legacy"}, dict(_rec, id="S-20261116-002", track={"final": True})]}
 n = B.track_signals(st_t, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
 check("track_signals updates only signals with an ID that are not final", n == 1 and st_t["signals_sent"][0]["track"]["outcome"] == "tp")
+
+# ---- group read-only commands (t189u): a request from the BAROBAX group is answered in the group only
+with_group(); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
+BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
+out = run("command", [("/brief", "group")])
+check("group /brief: group copy only (no balance, no loss cap), owner not messaged",
+      len(out) == 1 and SENT_TO == [GID] and "خلاصه‌ی بازار" in out[0] and "موجودی" not in out[0] and "سقف ضرر" not in out[0] and MARKUP[0] is None)
+out = run("command", [("/scan", "group")])
+check("group /scan no-trade: group only", len(out) == 1 and SENT_TO == [GID] and "معامله نه" in out[0])
+out = run("command", [("/levels", "group")])
+check("group /levels: group only", len(out) == 1 and SENT_TO == [GID] and "تومان" not in out[0])
+out = run("command", [("/scan", "group"), "/scan"])
+check("group + owner /scan in one run: one owner card + its group mirror (no third message)", len(out) == 2 and SENT_TO == [OWNER, GID])
+check("group requests leave the queue", state().get("pending_cmds") == [])
+with_group(); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH)
+out = run("command", [("/scan", "group")])
+check("group /scan that finds a NEW signal: normal signal (owner card with buttons + group copy without)",
+      len(out) == 2 and SENT_TO == [OWNER, GID] and MARKUP[0] and MARKUP[1] is None and "تومان" not in out[1] and len(state()["signals_sent"]) == 1)
+out = run("command", [("/scan", "group")])
+check("group /scan repeat: group only, no buttons, no second record, owner not messaged again",
+      len(out) == 1 and SENT_TO == [GID] and MARKUP[0] is None and "تومان" not in out[0] and len(state()["signals_sent"]) == 1)
+st = state(); st["group_enabled"] = False; json.dump(st, open(B.STATE_JSON, "w"))
+out = run("command", [("/levels", "group"), ("/brief", "group")])
+check("group requests while /groupoff: nothing sent anywhere", out == [])
+st = state(); st.pop("group_enabled", None); json.dump(st, open(B.STATE_JSON, "w"))
 
 print(f"\n{len(fails)} failed" + (": " + "; ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

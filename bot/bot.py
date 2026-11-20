@@ -884,7 +884,12 @@ def main():
     apply_offset(state, cfg)
     # /scan, /brief and /levels are queued by the Edge Function; every other command is answered there.
     pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief", "/levels")]
-    cmds = [(x["cmd"], []) for x in pending]
+    # one answer per command; origin "group" = asked by a BAROBAX member: answer only in the group (group variant).
+    # If the owner asked too, the owner's card wins (and is mirrored to the group as usual).
+    group_only = {}
+    for x in pending:
+        group_only[x["cmd"]] = group_only.get(x["cmd"], True) and x.get("origin") == "group"
+    cmds = list(group_only.items())
     state["done_cmds"] = [x["id"] for x in state.get("pending_cmds") or []]
     print(f"mode={a.mode} commands={[c for c, _ in cmds]}")
     news_ok = None
@@ -905,41 +910,56 @@ def main():
                 pass
         return brief
 
-    def emit_signal(b, plan, sizing, on_request=False):
-        """Send a signal at most once (dedup key), and record it so the 1-position lock applies."""
+    def emit_signal(b, plan, sizing, on_request=False, group_only=False):
+        """Send a signal at most once (dedup key), and record it so the 1-position lock applies.
+        group_only (a group member's /scan): an already-sent signal is repeated in the group only, never to the owner again."""
         t = now_teh()
         key = f"{t:%Y-%m-%d}|{plan['side']}|{round(plan['entry'] * 2) / 2}|{round(plan['sl'] * 2) / 2}"
         if key in [x["key"] for x in state["signals_sent"]] and not on_request:
             print("signal already sent:", key)
             return False
         prev = next((x for x in state["signals_sent"] if x["key"] == key and x.get("id")), None)
+        if group_only and key in [x["key"] for x in state["signals_sent"]]:
+            return group_answer("signal", signal_msg(b, plan, sizing, state, cfg, sig_id=prev["id"] if prev else None))
         rec = prev or signal_record(b, plan, sizing, cfg, next_signal_id(state, t), t)
         ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg, sig_id=rec["id"]), state, markup=signal_keyboard(rec["id"]))
         if ok and not prev and key not in [x["key"] for x in state["signals_sent"]]:
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M"), **rec})
         return ok
 
+    def group_answer(kind, text):
+        """Group-only reply (public_card variant, no buttons); nothing if the group is unset or /groupoff."""
+        cid, pub = channel_chat(state), public_card(kind, text)
+        return send_chat(cid, pub) if cid and pub else False
+
+    def answer(kind, text, g_only):
+        if g_only:
+            return group_answer(kind, text)
+        if kind in ("levels", "closed"):
+            return send(text, also=channel_chat(state))
+        return send_public(kind, text, state)
+
     closed = weekend_closed(now_teh(), cfg)
-    for c, _ in cmds:
+    for c, g_only in cmds:
         if c == "/levels":
             # Weekend: never re-analyse. Serve the last stored snapshot (with its age) or the closed line.
             if closed:
                 snap = state.get("levels")
-                send(levels_card({"levels": snap}, state) if snap else closed_line(now_teh(), cfg), also=channel_chat(state))
+                answer("levels", levels_card({"levels": snap}, state) if snap else closed_line(now_teh(), cfg), g_only)
             else:
-                send(levels_card(get_brief(), state), also=channel_chat(state))
+                answer("levels", levels_card(get_brief(), state), g_only)
         elif closed:   # queued just before the close: never analyse stale weekend data
-            send(closed_line(now_teh(), cfg), also=channel_chat(state))
+            answer("closed", closed_line(now_teh(), cfg), g_only)
         elif c == "/brief":
             b = get_brief()
-            send_public("brief", brief_msg(b, state), state)
+            answer("brief", brief_msg(b, state), g_only)
         elif c == "/scan":
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
             if ok:
-                emit_signal(b, plan, sizing, on_request=True)
+                emit_signal(b, plan, sizing, on_request=True, group_only=g_only)
             else:
-                send_public("scan", short_brief(b, state, cfg, reasons=why), state)
+                answer("scan", short_brief(b, state, cfg, reasons=why), g_only)
 
     t = now_teh()
     if a.mode == "test":

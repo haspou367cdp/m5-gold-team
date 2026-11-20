@@ -378,6 +378,9 @@ export function channelChat(s) {
 }
 // Group copy of a mirrored card. Drops personal toman/balance and error cards; otherwise the same text.
 export const MIRROR_CMDS = ["/levels", "/scan", "/brief", "/shadow"];
+// Read-only commands any BAROBAX member may run in the group (owner decision t189u). /signal is an alias of /scan.
+export const GROUP_CMDS = { "/scan": "/scan", "/signal": "/scan", "/levels": "/levels", "/brief": "/brief" };
+export const GROUP_COOLDOWN_MS = 60000;
 export function publicReply(cmd, text) {
   if (!text) return null;
   if (text.includes("داده‌ی قیمت در دسترس نیست")) return null;

@@ -7,9 +7,9 @@
 // State: one row in public.bot_state (jsonb), optimistic versioning; secrets: Supabase Vault via RPC (service_role).
 import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed, sessionOf, statsLines } from "./calib.js";
 import { matchSignal, tradeMatchCard, JOURNAL_CMDS, BAD_JOURNAL, parseJournalCmd, parseCallback, applyAction, previewText, confirmKeyboard, doneText, journalMsg, pnlMsg, reportMsg, effectiveStatus } from "./ledger.js";
-import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS } from "./lib.js";
+import { parseTrade, sessionDate, toman, offsetOf, DEFAULT_OFFSET, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, COMMANDS, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS } from "./lib.js";
 
-export const BUILD = "2026-11-20-phase4-tracking";
+export const BUILD = "2026-11-20-phase4-group-cmds";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -258,8 +258,10 @@ export function makeApp(cfg) {
     const m = u.message || {};
     const chat = m.chat || {};
     const text = (m.text || "").trim();
-    // Commands only from the owner's private chat. Ignore groups, channels, and everyone else. Never reply there.
-    if (["group", "supergroup", "channel"].includes(chat.type)) return new Response("ok");
+    // Groups: only the BAROBAX group (bot_state.channel_id), only GROUP_CMDS, any member, read-only, cooldown per command.
+    if (["group", "supergroup"].includes(chat.type)) return await onGroup(env, u, chat, text);
+    // Everything else: commands only from the owner's private chat. Never reply anywhere else.
+    if (chat.type === "channel") return new Response("ok");
     if (String(chat.id || "") !== CHAT_ID || !text.startsWith("/")) return new Response("ok");
     const res = await mutate(async (s) => {
       if ((s.seen_updates || []).includes(u.update_id)) return null;   // Telegram retry
@@ -276,7 +278,8 @@ export function makeApp(cfg) {
       if (r.queue) {
         // a different command always gets its own run (a run already in progress may have pulled the state
         // before it was queued); only a repeat of a command that is still pending and was dispatched < 90 s ago is skipped
-        const already = s.pending_cmds.some((x) => x.cmd === r.queue);
+        // a pending group request answers only the group, so the owner always gets an item of their own
+        const already = s.pending_cmds.some((x) => x.cmd === r.queue && x.origin !== "group");
         if (!already) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full });
         r.recent = already && !!s.last_dispatch && Date.now() - s.last_dispatch < 90000;
         if (!r.recent) s.last_dispatch = Date.now();
@@ -339,6 +342,55 @@ export function makeApp(cfg) {
       }
     }
     return new Response("ok");
+  }
+
+  let BOT_USER = null;   // warm-instance cache of the bot's @username (for /levels@Name in groups)
+  async function botUsername(env) {
+    if (BOT_USER == null) {
+      const r = await tg(env, "getMe", {});
+      BOT_USER = String((r && r.ok && r.result && r.result.username) || "");
+    }
+    return BOT_USER;
+  }
+
+  // Group members (BAROBAX) may run GROUP_CMDS only. Replies are the group variants (publicReply / public_card):
+  // no toman, no balance, no buttons. One answer per command per GROUP_COOLDOWN_MS; repeats are ignored silently.
+  async function onGroup(env, u, chat, text) {
+    const ok = new Response("ok");
+    const head = text.split(/\s+/)[0] || "";
+    if (!head.startsWith("/")) return ok;
+    const [raw, at] = head.split("@");
+    const cmd = GROUP_CMDS[raw.toLowerCase()];
+    if (!cmd) return ok;
+    if (at && at.toLowerCase() !== (await botUsername(env)).toLowerCase()) return ok;   // addressed to another bot
+    const nowMs = clock().getTime();
+    const res = await mutate(async (s) => {
+      if (!channelChat(s) || String(chat.id) !== channelChat(s)) return null;   // other groups, or /groupoff
+      if ((s.seen_updates || []).includes(u.update_id)) return null;
+      s.seen_updates = [...(s.seen_updates || []), u.update_id].slice(-50);
+      s.group_cmd_at = s.group_cmd_at && typeof s.group_cmd_at === "object" ? s.group_cmd_at : {};
+      if (nowMs - (Number(s.group_cmd_at[cmd]) || 0) < GROUP_COOLDOWN_MS) return null;
+      s.group_cmd_at[cmd] = nowMs;
+      const r = handle(s, cmd, teh(), clock());   // /scan, /brief, /levels: read-only (reply or queue)
+      if (r.queue) {
+        const already = s.pending_cmds.some((x) => x.cmd === r.queue);
+        if (!already) s.pending_cmds.push({ id: u.update_id, cmd: r.queue, at: teh().full, origin: "group" });
+        r.recent = already && !!s.last_dispatch && Date.now() - s.last_dispatch < 90000;
+        if (!r.recent) s.last_dispatch = Date.now();
+      }
+      return { queue: r.queue, recent: r.recent, reply: r.reply, chat: String(chat.id) };
+    });
+    if (!res) return ok;
+    if (res.queue) {   // the GitHub run answers in the group (group variant only); no "checking" line, to keep the group quiet
+      if (!res.recent) {
+        const d = await dispatch(env, "command");
+        if (!d.ok) await mutate(async (s) => { s.last_dispatch = 0; s.last_dispatch_error = d.why; return true; });
+      }
+      return ok;
+    }
+    const pub = publicReply(cmd, res.reply);
+    if (pub) { try { await send(env, pub, res.chat); } catch { /* never retry into the group */ } }
+    return ok;
   }
 
   async function onSetup(req, origin) {

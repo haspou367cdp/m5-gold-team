@@ -46,6 +46,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/answerCallbackQuery")) { (DB.answers = DB.answers || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/editMessageReplyMarkup")) { (DB.edits = DB.edits || []).push(b); return J({ ok: true }); }
+    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "XauscalperBot" } });
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
   }
   const tm = url.match(/\/rest\/v1\/(signals|journal)(\?.*)?$/);
@@ -315,8 +316,6 @@ async function tgUpdate(update) {
     body: JSON.stringify({ update_id: uid++, ...update }) }), jw);
   return { status: r.status, out: SENT.map((x) => x.text), chats: SENT.map((x) => String(x.chat_id)) };
 }
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/levels" } });
-check("owner /levels in the group is ignored", r.out.length === 0 && DB.row.version === vG);
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/status" } });
 check("owner /status in the group is ignored", r.out.length === 0 && DB.row.version === vG);
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, text: "TEST2" } });
@@ -350,10 +349,11 @@ r = await tgSend("/scan");
 check("Saturday /scan closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
 r = await tgSend("/brief");
 check("Saturday /brief closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/scan" } });
-check("owner /scan in the group is ignored", r.out.length === 0);
+DB.row.state.group_cmd_at = {};
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 777 }, text: "/scan" } });
+check("Saturday: member /scan in the group gets the closed line in the group only", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("بازار بسته است"));
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/shadow" } });
-check("owner /shadow in the group is ignored", r.out.length === 0);
+check("/shadow in the group is ignored", r.out.length === 0);
 DB.row.state.shadow = [{ at: "2026-11-13 18:10", side: "SELL", entry: 3894.2, sl: 3896.2, tp: 3890.2, offset: 0.3, gates: ["news"], status: "tp", R: 2, toman: 306000 },
   { at: "2026-11-13 18:40", side: "BUY", entry: 3880, sl: 3878, tp: 3884, offset: 0.3, gates: ["volatility", "news"], status: "sl", R: -1, toman: -174000 }];
 r = await tgSend("/shadow");
@@ -401,6 +401,43 @@ r = await tgSend("/status");
 check("/status shows group sending is on", r.out.length === 1 && r.out[0].includes("ارسال به گروه: وصل"));
 r = await tgSend("/levels");
 check("/levels is mirrored again after /groupon", r.out.length === 2 && r.chats[1] === GID && r.out[0].includes("سطوح"));
+// ---- group read-only commands (t189u): any member; /scan (alias /signal), /levels, /brief; 60 s cooldown; @suffix; /groupoff
+CLOCK = U("2026-11-11T10:30:00Z");
+DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
+DB.row.state.group_cmd_at = {}; DB.row.state.pending_cmds = []; DB.row.state.last_dispatch = 0; DISPATCHED.length = 0;
+const G = (text, from = 777, id = Number(GID)) => tgUpdate({ message: { chat: { id, type: "supergroup", title: "BAROBAX" }, from: { id: from }, text } });
+r = await G("/levels");
+check("member /levels in the group: group copy only, no buttons, never to the owner", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("سطوح") && !r.out[0].includes("تومان") && !SENT[0].reply_markup);
+r = await G("/levels");
+check("group repeat within 60 s is ignored silently", r.out.length === 0);
+CLOCK = U("2026-11-11T10:31:01Z");
+r = await G("/levels@XauscalperBot");
+check("/levels@BotName answers after the cooldown", r.out.length === 1 && r.chats[0] === GID);
+CLOCK = U("2026-11-11T10:33:00Z");
+r = await G("/levels@OtherBot");
+check("/levels@OtherBot is ignored", r.out.length === 0);
+r = await G("/scan");
+check("member /scan: group-only queued run, dispatched, no ack line in the group", r.out.length === 0 && DISPATCHED.length === 1 && st().pending_cmds.some((x) => x.cmd === "/scan" && x.origin === "group"));
+r = await G("/signal");
+check("/signal is an alias of /scan (same cooldown, no second run)", r.out.length === 0 && DISPATCHED.length === 1 && st().pending_cmds.filter((x) => x.cmd === "/scan").length === 1);
+r = await G("/brief");
+check("member /brief: group-only queued run", r.out.length === 0 && DISPATCHED.length === 2 && st().pending_cmds.some((x) => x.cmd === "/brief" && x.origin === "group"));
+r = await tgSend("/scan");
+check("owner /scan while a group /scan is pending: own item + private ack", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("در حال بررسی") &&
+  st().pending_cmds.filter((x) => x.cmd === "/scan").length === 2 && st().pending_cmds.some((x) => x.cmd === "/scan" && !x.origin));
+let quiet = true;
+for (const c of ["/status", "/help", "/trade sell 3900 3890 1", "/journal", "/pnl", "/calibrate 3569.8", "/groupoff", "/groupon", "/shadow", "/offset 0.5", "/entered S-20261111-001", "/undo"]) {
+  const v = DB.row.version; r = await G(c, 45639251);
+  quiet = quiet && r.out.length === 0 && DB.row.version === v;
+}
+check("every other command in the group is ignored, even from the owner (no reply, no state change)", quiet);
+DB.row.state.group_cmd_at = {};
+r = await G("/levels", 777, -100123456);
+check("another group is ignored", r.out.length === 0);
+DB.row.state.group_enabled = false;
+r = await G("/levels");
+check("group commands are ignored while /groupoff", r.out.length === 0);
+DB.row.state.group_enabled = true; DB.row.state.pending_cmds = []; DB.row.state.group_cmd_at = {};
 const geKept = st().group_enabled;
 await gh("/state", "POST", { patch: { group_enabled: false, last_price: { bid: 3912, at: "2026-11-11 14:00" } }, done_cmds: [] });
 check("GitHub may not overwrite group_enabled", st().group_enabled === geKept && st().last_price.bid === 3912);
