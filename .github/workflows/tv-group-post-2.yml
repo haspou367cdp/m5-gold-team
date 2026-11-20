@@ -1,0 +1,17 @@
+name: tv-group-post-2
+# One-off: posts the optimised Persian + English indicator files and one Persian note to the BAROBAX group (owner t206u).
+on:
+  push:
+    branches: [tv-group-post-2]
+permissions:
+  contents: read
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Send to group
+        env:
+          TG: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python3 tradingview/post2/send.py
