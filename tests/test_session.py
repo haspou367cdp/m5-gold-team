@@ -24,9 +24,11 @@ def test_entry_block_and_close_times():
     assert not w["blocked"] and w["close_tehran"] == "2026-11-19 00:30"
     n = DG.session_entry_block(T(2026, 11, 19, 1, 0), CFG)
     assert n["blocked"] and n["reopen_tehran"] == "2026-11-19 07:00" and "بازگشایی" in n["reason_fa"]
-    f = DG.session_entry_block(T(2026, 11, 20, 22, 30), CFG)
+    f = DG.session_entry_block(T(2026, 11, 20, 23, 30), CFG)
     assert f["blocked"] and f["friday_window"] and f["close_tehran"] == "2026-11-21 00:30"
-    assert not DG.session_entry_block(T(2026, 11, 20, 22, 29), CFG)["blocked"]
+    assert f["block_start_tehran"] == "2026-11-20 23:30"
+    assert not DG.session_entry_block(T(2026, 11, 20, 23, 29), CFG)["blocked"]
+    assert not DG.session_entry_block(T(2026, 11, 20, 22, 30), CFG)["blocked"]
     sat = DG.session_entry_block(T(2026, 11, 21, 12, 0), CFG)
     assert sat["blocked"] and sat["reopen_tehran"] == "2026-11-23 07:00"
 
@@ -34,7 +36,7 @@ def test_entry_block_and_close_times():
 def test_close_reminder_never_closes():
     assert DG.close_reminder(T(2026, 11, 18, 23, 59), CFG) is None
     msg = DG.close_reminder(T(2026, 11, 19, 0, 0), CFG)
-    assert msg and "۰۰:۳۰" in msg and "بررسی کن" in msg
+    assert msg and "`00:30`" in msg and "بررسی کن" in msg
     assert DG.close_reminder(T(2026, 11, 19, 0, 30), CFG) is None
     import execution_policy as EP
     assert EP.AUTO_CLOSE_POSITIONS is False

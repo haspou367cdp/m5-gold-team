@@ -149,7 +149,7 @@ out = run("scheduled"); check("scheduled: signal sent once", len(out) == 1 and "
 sig = out[0] if out else ""
 check("single target (no TP2); 3 prices + the signal ID in <code>", sig.count("<code>") == 4 and "هدف ۲" not in sig)
 check("copy prices Latin '.' digits", "<code>3880.3</code>" in sig and "<code>3876.3</code>" in sig)
-check("rest of signal Persian digits", "۱٫۸" in sig and "1.8" not in sig.replace("<code>", "|"))
+check("rest of signal Persian digits", "نسبت" in sig and "۲٫" in sig and "1.8" not in sig.replace("<code>", "|").replace("</code>", "|"))
 check("every line RLM", all(l.startswith("\u200f") for l in sig.split("\n") if l.strip()))
 CLOCK[0] = datetime(2026, 11, 11, 14, 15, tzinfo=B.TEH)
 check("scheduled: duplicate not resent", run("scheduled") == [])
@@ -317,13 +317,13 @@ fresh(); BRIEF[0] = mk_brief()
 CLOCK[0] = datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH); out = run("scheduled")
 check("Friday 22:00 (before the cutoff): normal signal", len(out) == 1 and "فروش طلا" in out[0])
 fresh(); CLOCK[0] = datetime(2026, 11, 13, 23, 30, tzinfo=B.TEH); CALLS[0] = 0; out = run("scheduled")
-check("Friday 23:30: one short close reminder (flat by 00:30), no signal, no analysis", len(out) == 1 and "ورود جدید بسته است" in out[0] and "۰۰:۳۰" in out[0] and
-      "<code>" not in out[0] and len([l for l in out[0].split("\n") if l.strip()]) == 2 and CALLS[0] == 0 and state()["signals_sent"] == [])
+check("Friday 23:30: one short close reminder (flat by 00:30), no signal, no analysis", len(out) == 1 and "ورود جدید بسته است" in out[0] and "<code>00:30</code>" in out[0] and
+      "<code>23:30</code>" in out[0] and CALLS[0] == 0 and state()["signals_sent"] == [])
 CLOCK[0] = datetime(2026, 11, 13, 23, 45, tzinfo=B.TEH); a1 = run("scheduled")
 CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); a2 = run("scheduled")
 check("close reminder sent once (23:45 and Saturday 00:15 silent)", a1 == [] and a2 == [])
 fresh(); CLOCK[0] = datetime(2026, 7, 17, 23, 30, tzinfo=B.TEH); out = run("scheduled")
-check("summer Friday 23:30: reminder says flat by 00:30", len(out) == 1 and "۰۰:۳۰" in out[0])
+check("summer Friday 23:30: reminder says flat by 00:30", len(out) == 1 and "<code>00:30</code>" in out[0])
 fresh(); BRIEF[0] = mk_brief(session_entry={"blocked": True, "friday_window": True}, decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH); out = run("command", ["/scan"])
 check("Saturday 00:15 (entries closed, market open): /scan analysed -> «جمعه‌شب»", len(out) == 1 and "جمعه‌شب" in out[0])
@@ -360,10 +360,10 @@ check("weekday night 01:45 closed (reopen Thursday 07:00); weekday afternoon ope
 # daily 00:30 close: one reminder in the last 30 min (Wednesday session), no analysis; nothing is closed automatically
 fresh(); CLOCK[0] = datetime(2026, 11, 12, 0, 0, tzinfo=B.TEH); CALLS[0] = 0; r1 = run("scheduled")
 CLOCK[0] = datetime(2026, 11, 12, 0, 20, tzinfo=B.TEH); r2 = run("scheduled")
-check("daily close reminder at 00:00: once, mentions ۰۰:۳۰ and checking open positions, no analysis",
-      len(r1) == 1 and "۰۰:۳۰" in r1[0] and "بررسی کن" in r1[0] and r2 == [] and CALLS[0] == 0)
+check("daily close reminder at 00:00: once, mentions 00:30 and checking open positions, no analysis",
+      len(r1) == 1 and "<code>00:30</code>" in r1[0] and "بررسی کن" in r1[0] and r2 == [] and CALLS[0] == 0)
 CLOCK[0] = datetime(2026, 11, 13, 0, 5, tzinfo=B.TEH); CALLS[0] = 0; r3 = run("scheduled")
-check("daily close reminder: next session gets its own reminder", len(r3) == 1 and "۰۰:۳۰" in r3[0])
+check("daily close reminder: next session gets its own reminder", len(r3) == 1 and "<code>00:30</code>" in r3[0])
 # Asia window: live since 2026-11-20 (owner decision). Same gates as the rest of the session.
 check("Asia window 03:30-11:15 weekdays only", B.in_asia(datetime(2026, 11, 16, 3, 30, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 16, 3, 29, tzinfo=B.TEH)) and
       not B.in_asia(datetime(2026, 11, 16, 11, 15, tzinfo=B.TEH)) and B.in_asia(datetime(2026, 11, 16, 11, 0, tzinfo=B.TEH)) and not B.in_asia(datetime(2026, 11, 14, 9, 0, tzinfo=B.TEH)))
@@ -417,11 +417,12 @@ before = [dict(x) for x in lv["levels"]]
 snap = LVIEW.snapshot(lv, cfg_lv, now=datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH))
 check("snapshot does not mutate the full cluster list (signal inputs unchanged)", lv["levels"] == before)
 kinds_short = {k for row in snap["short"]["above"] + snap["short"]["below"] for k in row["kinds"]}
-check("short view drops M15/VWAP/EMA and keeps PDH/H4/H1/OR",
-      "M15 swing high" not in kinds_short and "VWAP" not in kinds_short and "EMA20 M15" not in kinds_short
-      and "PDH" in kinds_short and "H4 swing high" in kinds_short and "H1 swing low" in kinds_short and "London OR low" in kinds_short)
+check("short view drops M15/EMA/H4 and keeps PDH/H1/OR/VWAP",
+      "M15 swing high" not in kinds_short and "EMA20 M15" not in kinds_short and "H4 swing high" not in kinds_short
+      and "PDH" in kinds_short and "H1 swing low" in kinds_short and "London OR low" in kinds_short and "VWAP" in kinds_short)
+sv = LVIEW.short_view(lv, cfg_lv)
 check("prev-week levels are in the short view only (not injected into compute clusters)",
-      any("Prev week high" in (r["kinds"] or []) or r.get("label_fa") == "سقف هفته‌ی قبل" for r in snap["short"]["above"])
+      any("Prev week high" in (r["kinds"] or []) or "سقف هفته" in (r.get("label_fa") or "") for r in sv["set_b"])
       and all("Prev week" not in "".join(x.get("kinds") or []) for x in lv["levels"]))
 # H4: LH/LL + bearish EMA -> نزولی; H1: HH/HL + bullish EMA -> صعودی; disagree -> نامشخص
 check("trend: H4 down + H1 up => نامشخص (structure + EMA)",
@@ -465,11 +466,11 @@ check("mixed set B uses all three display tiers", tags == {"معمولی", "مه
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "last_close_20261113.json")
 lv_fix = json.load(open(FIX))
 snap_fix = LVIEW.snapshot(lv_fix, cfg, now=datetime(2026, 11, 14, 6, 50, tzinfo=B.TEH))
-tc = snap_fix.get("tier_counts") or {}
-shown_tags = [r["tag"] for r in snap_fix["short"]["above"] + snap_fix["short"]["below"]]
-check("last-close set B tiers are not all equal", len(set(tc) | set(shown_tags)) >= 2 and len(tc) >= 2)
-check("last-close set B has معمولی, مهم and خیلی مهم", set(tc) == {"معمولی", "مهم", "خیلی مهم"})
-check("last-close short view is not all خیلی مهم", len(set(shown_tags)) >= 2 and shown_tags.count("خیلی مهم") < 4)
+block_fix = snap_fix["block"]
+check("last-close card drops importance labels and M15 touch counts",
+      "خیلی مهم" not in block_fix and "مهم" not in block_fix and "معمولی" not in block_fix and "تماس M15" not in block_fix)
+check("last-close card shows ATR distance, zone width and DaryaGold as-of",
+      "ATR" in block_fix and "پهنه سطح" in block_fix and "دریاگلد" in block_fix)
 # trend + context on that same snapshot
 check("last-close block has M15 and M5 trend plus جمع‌بندی",
       "M15 " in snap_fix["block"] and "M5 " in snap_fix["block"] and snap_fix["block"].startswith("طلا") and "جمع‌بندی:" in snap_fix["block"])
@@ -512,15 +513,15 @@ check("fa_risk_lines now says ضرر", any("ضرر حد ضرر" in (x or "") or 
 
 j_after = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
 check("journal.csv untouched", j_before == j_after)
-# Friday flag follows the DST-aware session gate (winter cutoff 23:30, close 01:30; summer 22:30 / 00:30)
+# Friday flag: owner 2026-11-20, cutoff 23:30 Tehran, close 00:30 (no DST). Warning from 22:00.
 def flag_at(dt):
     CLOCK[0] = dt; return B.friday_flag()
 _c = CLOCK[0]
 check("Friday flag: none on Friday afternoon", flag_at(datetime(2026, 11, 13, 18, 0, tzinfo=B.TEH)) == [])
-check("Friday flag: warning 21:30 -> cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 11, 13, 21, 30, tzinfo=B.TEH))))
+check("Friday flag: warning 22:00 -> cutoff 23:30", "23:30" in "".join(flag_at(datetime(2026, 11, 13, 22, 0, tzinfo=B.TEH))))
 check("Friday flag: Saturday 00:15 still closing (00:30)", "00:30" in "".join(flag_at(datetime(2026, 11, 14, 0, 15, tzinfo=B.TEH))))
 check("Friday flag: none after the close", flag_at(datetime(2026, 11, 14, 0, 30, tzinfo=B.TEH)) == [])
-check("Friday flag: summer cutoff 22:30", "22:30" in "".join(flag_at(datetime(2026, 7, 17, 21, 30, tzinfo=B.TEH))))
+check("Friday flag: midsummer also 23:30 (DaryaGold, no DST)", "23:30" in "".join(flag_at(datetime(2026, 7, 17, 22, 15, tzinfo=B.TEH))))
 check("Friday flag: none on a Wednesday night", flag_at(datetime(2026, 11, 11, 22, 45, tzinfo=B.TEH)) == [])
 CLOCK[0] = _c
 

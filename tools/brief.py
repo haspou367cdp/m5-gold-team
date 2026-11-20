@@ -14,7 +14,7 @@ exit   : 0 ok | 2 stale / no-trade data gate (short brief written) | 3 no data a
 import argparse, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-sys.path.insert(0, "/workspace/m5-gold-team/tools")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from m5lib import ROOT, TOOLS, TEH, META_JSON, DATA, load_json, save_json, market_open, now_utc, month_starts_utc
 import pandas as pd
 import risk_gate as RG
@@ -22,6 +22,7 @@ import levels as LV, bias as BI, news_windows as nw, macro as MAC
 import regime as REG
 import broker_daryagold as DG
 import level_view as LVIEW
+import signal_guards as SG
 
 FA_B = {"bullish": "صعودی ⬆️", "bearish": "نزولی ⬇️", "neutral": "خنثی ↔️"}
 STALE_MIN = 10  # minutes, while the market is open
@@ -125,15 +126,25 @@ def _apply_broker_gates(decision, lv, b, cfg, session):
         if plan:
             spread = (b.get("spread") or {}).get("current")
             sizing = DG.size_trade(plan["entry"], plan["sl"], plan.get("tp"), plan["side"],
-                                   cfg, spread_usd=spread)
+                                   cfg, spread_usd=spread, order_type="LIMIT")
             if not sizing.get("ok"):
                 vetoes.append(sizing["reason_fa"])
             elif plan.get("tp") is not None:
-                # same cost rules as the final gate in bot.py (tools/risk_gate.py): worse fee scenario, market spread
-                rej, _, _ = RG.cost_checks(plan["side"], plan["entry"], plan["sl"], plan["tp"],
-                                           unit=sizing["size"]["key"], order_type="MARKET", spread_usd=spread,
-                                           min_net_rr=float(cfg.get("min_net_rr", 1.5)))
+                unit = sizing["size"]["key"]
+                rej, warn, mets = RG.cost_checks(plan["side"], plan["entry"], plan["sl"], plan["tp"],
+                                                 unit=unit, order_type="LIMIT", spread_usd=None,
+                                                 min_net_rr=float(cfg.get("min_net_rr", 1.5)))
                 vetoes += rej
+                inv = (b.get("invalidation") or {}).get("neutral_level")
+                g = SG.evaluate(plan["side"], plan["entry"], plan["sl"], plan["tp"],
+                                price=float(lv["price_bid"]), atr_m5=lv.get("atr_m5_14"),
+                                remaining_adr_usd=SG.remaining_adr(lv),
+                                structure=plan.get("structure") or (setup or {}).get("extreme") or (setup or {}).get("ref_price"),
+                                invalidation=inv, mapped_tp=True, unit=unit,
+                                net_rr=(mets or {}).get("net_rr") or sizing["size"].get("net_rr"))
+                vetoes += g["reasons_fa"]
+                if g["warnings_fa"]:
+                    plan["warnings_fa"] = list(g["warnings_fa"])
     out = dict(decision or {})
     if vetoes:
         if out.get("decision") in ("BUY", "SELL"):
@@ -232,7 +243,12 @@ def main():
     decision = REG.decide(lv, b, regime, quality=q)
     session = DG.session_entry_block(at or now, cfg)
     decision, plan, sizing, journal = _apply_broker_gates(decision, lv, b, cfg, session)
-    snap = LVIEW.snapshot(lv, cfg)
+    snap = LVIEW.snapshot(lv, cfg, context={
+        "source": lv.get("source") or (load_json(META_JSON, {}) or {}).get("source"),
+        "regime": regime,
+        "news_window": b.get("news_window"),
+        "invalidation": inv,
+    })
 
     h4t = (b.get("h4") or {}).get("trend", "neutral")
     lines = [

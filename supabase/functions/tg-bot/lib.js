@@ -155,7 +155,7 @@ export function statusMsg(s) {
     `🎯 آخرین سیگنال: ${sig ? sig.at.slice(-5) : "هنوز نه"}`,
     `📰 تقویم خبری: ${newsOk(s) ? "به‌روز ✅" : "قدیمی ⛔"}`,
     `📤 ارسال به گروه: ${groupEnabled(s) ? "وصل" : "قطع"}`,
-    "⏱ بررسی خودکار دوشنبه تا جمعه، ۰۷:۰۰ تا ۰۰:۳۰"].join("\n");
+    "⏱ بررسی خودکار دوشنبه تا جمعه، `07:00` تا `00:30`"].join("\n");
 }
 export const dayCap = (s) => (Number(s.day.start_equity) || Number(s.equity_toman)) * 0.2;
 const signed = (v) => (v > 0 ? "+" : "") + toman(v);
@@ -250,7 +250,7 @@ export function levelsFresh(snap, at = new Date(), limit = FRESH_MIN) {
 }
 export function levelsMsg(snap, at = new Date()) {
   const n = teh(at);
-  const lines = ["**سطوح**", `~~${faDate(at)} · ${n.hm}~~`, ""];
+  const lines = ["**سطوح**", `~~${faDate(at)} · ${n.hm} به وقت تهران~~`, ""];
   if (snap && !levelsFresh(snap, at)) {
     const age = levelsAgeMin(snap, at);
     if (age != null && age >= 0) {

@@ -152,13 +152,15 @@ def _spread_cost_usd(cfg, spread_usd=None):
     return float(cfg.get("typical_spread_usd") or 0.0)
 
 
-def evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=None):
-    """Risk/reward in toman for one unit size. Returns a dict (ok may still be False)."""
+def evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=None, order_type="MARKET"):
+    """Risk/reward in toman for one unit size. Returns a dict (ok may still be False).
+    LIMIT pays no spread; MARKET pays the typical/current spread once."""
     equity = float(cfg["equity_toman"])
     tpu = float(size["toman_per_usd"])
     fee = float(size["fee"])
     margin = float(size["margin"])
-    spread_u = _spread_cost_usd(cfg, spread_usd)
+    ot = str(order_type or "MARKET").upper()
+    spread_u = 0.0 if ot == "LIMIT" else _spread_cost_usd(cfg, spread_usd)
     spread_toman = spread_u * tpu
     risk_toman = sl_usd * tpu + fee + spread_toman
     reward_toman = tp_usd * tpu - fee - spread_toman if tp_usd is not None else None
@@ -208,11 +210,11 @@ def evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=None):
     }
 
 
-def size_trade(entry, sl, tp, side, cfg, spread_usd=None):
+def size_trade(entry, sl, tp, side, cfg, spread_usd=None, order_type="MARKET"):
     """Pick the largest unit (full, else half) that fits the risk budget.
 
-    Loss at SL includes fee and a conservative spread cost (typical or current),
-    even though a limit order itself has no entry spread.
+    MARKET loss at SL includes fee and a spread cost (typical or current).
+    LIMIT (the bot's signal type) includes the fee once and no spread.
     If even the half unit exceeds the budget, or SL < min_sl_usd, returns ok=False.
     """
     if entry is None or sl is None:
@@ -233,8 +235,9 @@ def size_trade(entry, sl, tp, side, cfg, spread_usd=None):
             ),
         }
     tried, chosen = [], None
+    ot = str(order_type or "MARKET").upper()
     for size in _sizes(cfg):
-        ev = evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=spread_usd)
+        ev = evaluate_size(size, sl_usd, tp_usd, cfg, spread_usd=spread_usd, order_type=ot)
         tried.append(ev)
         if ev["ok"] and chosen is None:
             chosen = ev
@@ -287,33 +290,40 @@ def plan_from_setup(setup, lv, cfg):
     ref = float(setup["ref_price"]) if setup.get("ref_price") is not None else price
     extreme = setup.get("extreme")
     entry = ref
-    pad = max(float(cfg.get("min_sl_usd") or 1.0), float(cfg.get("min_sl_beyond_structure_usd") or 0.5),
-              min(2.0, 0.35 * atr))
+    import signal_guards as SG
     if side == "SELL":
         anchor = max(ref, float(extreme) if extreme is not None else ref)
-        sl = max(anchor + pad, entry + float(cfg.get("min_sl_usd") or 1.0))
+        sl = SG.sl_price("SELL", entry, anchor, atr)
         targets = [p for p in _level_prices(lv, "support") if p < entry]
         targets.sort(reverse=True)
     else:
         anchor = min(ref, float(extreme) if extreme is not None else ref)
-        sl = min(anchor - pad, entry - float(cfg.get("min_sl_usd") or 1.0))
+        sl = SG.sl_price("BUY", entry, anchor, atr)
         targets = [p for p in _level_prices(lv, "resistance") if p > entry]
         targets.sort()
+    # Never shrink the stop to fit a closer target or a risk cap.
     sl_usd = abs(entry - sl)
     # smallest size sets the minimum TP distance that can still clear net R:R
     half = (cfg.get("sizes") or {}).get("half_unit") or {}
     ev_floor = evaluate_size(
-        {**half, "key": "half_unit"}, sl_usd, sl_usd * 10, cfg
-    )  # dummy wide TP to get risk only
+        {**half, "key": "half_unit"}, sl_usd, sl_usd * 10, cfg, order_type="LIMIT"
+    )  # dummy wide TP to get risk only (signals are limits)
     risk = ev_floor["risk_toman"]
     tpu = float(half.get("toman_per_usd") or 40000)
     fee = float(half.get("fee") or 14000)
-    spread_t = _spread_cost_usd(cfg) * tpu
     min_reward = float(cfg.get("min_net_rr") or 1.5) * risk
-    min_tp = (min_reward + fee + spread_t) / tpu if tpu else sl_usd * 2
+    min_tp = (min_reward + fee) / tpu if tpu else sl_usd * 2  # LIMIT: fee once, no spread
     tp = None
+    import signal_guards as SG
+    rem = SG.remaining_adr(lv)
+    cap = None
+    if atr:
+        cap = 3.0 * atr
+    if rem is not None:
+        cap = rem if cap is None else min(cap, rem)
     for p in targets:
-        if abs(p - entry) + 1e-9 >= min_tp:
+        d = abs(p - entry)
+        if d + 1e-9 >= min_tp and (cap is None or d <= cap + 1e-9):
             tp = p
             break
     return {
@@ -362,7 +372,7 @@ def session_cfg(cfg=None):
     s = cfg.get("session") or {}
     hours = s.get("no_new_entries_hours_before_friday_close")
     if hours is None:
-        hours = 2
+        hours = 1
     return {
         "tz": TEH,
         "days": tuple(int(d) for d in s.get("days", (0, 1, 2, 3, 4))),
@@ -474,8 +484,8 @@ def session_entry_block(now=None, cfg=None):
     close = cur[1] if is_open else next_session(t, cfg)[1]
     reopen = None if is_open else next_session(t, cfg)[0]
     if in_friday_window:
-        reason = (f"جمعه از {fstart_fa} ورود جدید ممنوع است و همه‌ی معامله‌ها باید پیش از {c_fa} بسته شوند. "
-                  "تصمیم: NO TRADE.")
+        reason = (f"جمعه از {fstart_fa} ورود جدید ممنوع است و سفارش‌های محدود در همان ساعت لغو می‌شوند. "
+                  f"معامله‌های باز باید پیش از {c_fa} بسته شوند. تصمیم: NO TRADE.")
     elif not is_open:
         reason = (f"بازار دریاگلد بسته است (دوشنبه تا جمعه {o_fa} تا {c_fa} تهران). "
                   f"بازگشایی {FA_WD[reopen.weekday()]} {fa_digits(reopen.strftime('%H:%M'))}. تصمیم: NO TRADE.")
@@ -509,8 +519,8 @@ def close_reminder(now=None, cfg=None):
     cur = current_session(t, cfg)
     if not cur or not (cur[1] - timedelta(minutes=sc["reminder_min"]) <= t < cur[1]):
         return None
-    c = fa_digits(cur[1].strftime("%H:%M"))
-    return f"**🔔 ساعت {c} بازار بسته می‌شود**\n~~وضعیت معامله‌ها و سفارش‌های باز را خودت بررسی کن~~"
+    c = cur[1].strftime("%H:%M")
+    return f"**🔔 ساعت `{c}` بازار بسته می‌شود**\n~~وضعیت معامله‌های باز را بررسی کن~~"
 
 
 def friday_close_block(now=None, cfg=None):
@@ -696,7 +706,7 @@ if __name__ == "__main__":
     assert session_entry_block(mon_pre, cfg)["blocked"]
     mon_open = datetime(2026, 11, 16, 3, 0, tzinfo=TEH)
     assert not session_entry_block(mon_open, cfg)["blocked"]
-    # US summer DST: Friday 17:00 NY = 00:30 Tehran Saturday; cutoff 22:30 Tehran Friday
+    # US summer DST: Friday 17:00 NY = 00:30 Tehran Saturday; cutoff 23:30 Tehran Friday (owner 2026-11-20)
     summer = session_entry_block(datetime(2026, 7, 17, 22, 30, tzinfo=TEH), cfg)
     assert summer["blocked"] and summer["friday_window"], summer
     assert summer["close_tehran"].endswith("00:30"), summer

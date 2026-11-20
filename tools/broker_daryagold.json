@@ -71,10 +71,10 @@
     ],
     "open": "07:00",
     "close": "00:30",
-    "no_new_entries_hours_before_friday_close": 2,
+    "no_new_entries_hours_before_friday_close": 1,
     "close_reminder_minutes_before": 30,
     "source": "USER_PROVIDED — NOT CURRENTLY VERIFIED",
-    "note": "Owner 2026-11-20: DaryaGold trades Mon-Fri 07:00 to 00:30 (next day) Tehran; Saturday and Sunday closed. Signals stop at 00:30; the bot only reminds the owner to check open positions (never closes anything). Friday: no new entries from 2 hours before the 00:30 close (22:30)."
+    "note": "Owner 2026-11-20: DaryaGold trades Mon-Fri 07:00 to 00:30 (next day) Tehran; Saturday and Sunday closed. Signals stop at 00:30; the bot only reminds the owner to check open positions (never closes anything). Friday: no new entries from 23:30 Tehran; pending limits auto-cancel at 23:30; market close 00:30."
   },
   "news_block_tiers": [
     "A",

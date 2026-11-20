@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone, time as dtime
 from zoneinfo import ZoneInfo
 import pandas as pd
 
-ROOT = "/workspace/m5-gold-team"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA = f"{ROOT}/data"
 TOOLS = f"{ROOT}/tools"
 NEWS_JSON = f"{DATA}/news_windows.json"

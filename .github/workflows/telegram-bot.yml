@@ -9,7 +9,7 @@ on:
   schedule:
     - cron: "30,45 3 * * 1-5"   # 07:00, 07:15 Tehran (DaryaGold opens 07:00)
     - cron: "*/15 4-7 * * 1-5"   # 07:30-11:15 Tehran every 15 min (07:00-11:15 log-only; 11:15 = pre-London brief)
-    - cron: "*/15 8-20 * * 1-5"  # 11:30-00:15 Tehran every 15 min (16:15 brief, Friday 22:30 cutoff, 00:00 close reminder)
+    - cron: "*/15 8-20 * * 1-5"  # 11:30-00:15 Tehran every 15 min (16:15 brief, Friday 23:30 cutoff, 00:00 close reminder)
   workflow_dispatch:
     inputs:
       mode:

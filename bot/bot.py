@@ -14,7 +14,7 @@ Signal-only research. Never places trades. Not financial advice."""
 import argparse, csv, html, json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta
 
-ROOT = "/workspace/m5-gold-team"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, f"{ROOT}/tools")
 from zoneinfo import ZoneInfo
 TEH = ZoneInfo("Asia/Tehran")
@@ -22,6 +22,7 @@ import broker_daryagold as DG
 import risk_gate as RG
 import shadow as SH
 import level_view as LVIEW
+import signal_guards as SG
 
 STATE_DIR = os.environ.get("STATE_DIR", f"{ROOT}/state")
 STATE_JSON = f"{STATE_DIR}/state.json"
@@ -290,14 +291,26 @@ def risk_check(b, state, cfg, news_ok):
     # session, news blackout, data freshness, net R:R (worse fee scenario) and stop-out: tools/risk_gate.py
     gate = None
     if plan and sizing and sizing.get("size") and plan.get("tp") is not None:
+        unit = sizing["size"].get("key") or "full_unit"
         gate = RG.evaluate(now_teh(), side, plan.get("entry"), plan.get("sl"), plan.get("tp"),
-                           unit=sizing["size"].get("key") or "full_unit", order_type="MARKET",
-                           spread_usd=(b.get("spread") or {}).get("current"),
+                           unit=unit, order_type="LIMIT", spread_usd=None,
                            data_ok=bool(q.get("ok")), data_age_min=q.get("age_minutes"),
                            session=b.get("session_entry"), news_window=b.get("news_window") if "news_window" in b else None,
                            news_ok=news_ok, cfg=cfg, min_net_rr=float(cfg.get("min_net_rr", 1.5)))
         reasons += gate["reasons_fa"]
-        sizing["gate"] = {"status": gate["status"], "warnings_fa": gate["warnings_fa"], "net_rr": gate["metrics"].get("net_rr")}
+        inv = ((b.get("invalidation") or {}) if isinstance(b.get("invalidation"), dict) else {}).get("neutral_level")
+        lv = (b.get("levels") or {})
+        atr = lv.get("atr_m5") or lv.get("atr_m5_14") or b.get("atr_m5")
+        g2 = SG.evaluate(side, plan.get("entry"), plan.get("sl"), plan.get("tp"),
+                         price=float(b["price_bid"]), atr_m5=atr,
+                         remaining_adr_usd=SG.remaining_adr(lv if lv.get("adr") or lv.get("structure") else b),
+                         structure=plan.get("structure") or plan.get("extreme") or plan.get("ref_price"),
+                         invalidation=inv, mapped_tp=plan.get("tp") is not None, unit=unit,
+                         net_rr=gate["metrics"].get("net_rr") or (sizing.get("size") or {}).get("net_rr"))
+        reasons += g2["reasons_fa"]
+        warnings = list(gate["warnings_fa"] or []) + list(g2["warnings_fa"] or [])
+        sizing["gate"] = {"status": "REJECTED" if g2["reasons_fa"] else gate["status"],
+                          "warnings_fa": warnings, "net_rr": gate["metrics"].get("net_rr")}
     else:   # no numeric plan: still report the market-condition reasons
         g = RG.evaluate(now_teh(), None, None, None, None, data_ok=bool(q.get("ok")), data_age_min=q.get("age_minutes"),
                         session=b.get("session_entry"), news_window=b.get("news_window") if "news_window" in b else None,
@@ -471,6 +484,8 @@ def short_reason(b, reasons):
     """One short, plain reason for a NO TRADE."""
     nw_ = b.get("news_window") or {}
     text = " ".join(reasons or [])
+    if any("مهلت" in (x or "") for x in (reasons or [])):
+        return "مهلت این سیگنال تمام شده است"
     if nw_.get("inside"):
         return f"پنجره‌ی خبری تا {_hm(nw_.get('end'))}"
     if nw_.get("soon_block") or ("دقیقه تا پنجره" in text):
@@ -547,7 +562,7 @@ def p1(bid):
     return f"{dg:.1f}"
 
 def friday_flag():
-    """Friday-close note: shown from 1.5 h before the Friday entry cutoff (22:30 Tehran) until the 00:30 close."""
+    """Friday-close note: shown from 1.5 h before the Friday entry cutoff (23:30 Tehran) until the 00:30 close."""
     t = now_teh()
     try:
         se = DG.session_entry_block(t, CFG)
@@ -556,9 +571,9 @@ def friday_flag():
     except Exception:
         return []
     if start - timedelta(minutes=90) <= t < start:
-        return [f"🏳️ از {start:%H:%M} ورود بسته است"]
+        return [f"🏳️ از {start:%H:%M} ورود بسته است؛ سفارش‌های محدود لغو می‌شوند"]
     if start <= t < close:
-        return [f"🏳️ ورود بسته است؛ همه‌چیز تا {close:%H:%M} بسته شود"]
+        return [f"🏳️ ورود بسته است؛ سفارش‌های محدود لغو شده‌اند · معامله‌های باز را تا {close:%H:%M} ببندید"]
     return []
 
 NY = ZoneInfo("America/New_York")
@@ -602,50 +617,72 @@ def levels_block(b, state=None):
         return snap["block"]
     return "داده‌ی سطوح در دسترس نیست"
 
+def enrich_snap(b, state):
+    """Copy the shared snapshot and stamp live news / Friday lines so every view prints the same block."""
+    snap = levels_snap(b, state)
+    if not snap:
+        return None
+    snap = dict(snap)
+    short = snap.get("short") or {}
+    snap["short"] = {"above": list(short.get("above") or []), "below": list(short.get("below") or [])}
+    flags = friday_flag()
+    if flags:
+        snap["friday_line"] = flags[0]
+    nw = (b or {}).get("news_window") or snap.get("news_window") or {}
+    if nw.get("inside") and nw.get("end"):
+        snap["news_line"] = f"خبر: پنجره‌ی جاری تا {str(nw.get('end'))[-5:]}"
+    elif nw.get("next_start"):
+        snap["news_line"] = f"خبر بعدی: {str(nw.get('next_start'))[-5:]}–{str(nw.get('next_end') or '')[-5:]}"
+    if (b or {}).get("source") and not snap.get("source"):
+        snap["source"] = b["source"]
+    if (b or {}).get("regime") and not snap.get("regime"):
+        snap["regime"] = b["regime"]
+    snap["block"] = LVIEW.format_block(snap)
+    return snap
+
 def levels_card(b, state, title="سطوح"):
     """Dedicated /levels message: the shared block, plus the age of the stored snapshot."""
     t = now_teh()
-    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
-    snap = levels_snap(b, state)
+    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M} به وقت تهران~~", ""]
+    snap = enrich_snap(b, state)
     if snap and not LVIEW.is_fresh(snap, t):
         age = LVIEW.age_minutes(snap, t)
         if age is not None and age >= 0:
-            mins = int(round(age))
-            L.append(f"سن داده  {mins} دقیقه")
-            L.append("")
-    L.append(levels_block(b, state))
+            L += [f"سن داده  {int(round(age))} دقیقه", ""]
+    L.append((snap or {}).get("block") or levels_block(b, state))
     return "\n".join(L)
 
 def short_brief(b, state, cfg, reasons=None, title=None):
-    """/scan without a signal: title, one-line reason, then the same levels block as /levels."""
+    """/scan without a signal: lead with the reason and its clear time, then the 2+2 zones."""
     if b.get("error") or b.get("price_bid") is None:
         return "**⏸ فعلاً معامله نه**\n~~داده‌ی قیمت در دسترس نیست~~"
     dec = b.get("decision") if isinstance(b.get("decision"), dict) else {"decision": b.get("decision")}
     rs = reasons if reasons else (dec.get("reasons_reject") or [])
-    return "\n".join(["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "",
-                      levels_block(b, state)])
+    snap = enrich_snap(b, state)
+    body = (snap or {}).get("block") or levels_block(b, state)
+    return "\n".join(["**⏸ فعلاً معامله نه**", f"~~{short_reason(b, rs)}~~", "", body])
 
 def market_summary(b, state, title):
-    """/brief and the pre-session briefs: the shared levels block, today's remaining news,
-    balance and today's loss cap. Never a signal."""
+    """/brief and the pre-session briefs: the shared levels block, remaining news,
+    balance and today's loss cap. Never a signal. No disclaimer."""
     t = now_teh()
-    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M}~~", ""]
+    L = [f"**{title}**", f"~~{fa_date(t)} · {t:%H:%M} به وقت تهران~~", ""]
     if b.get("error") or b.get("price_bid") is None:
         L.append("داده‌ی قیمت در دسترس نیست")
     else:
-        L.append(levels_block(b, state))
+        snap = enrich_snap(b, state)
+        L.append((snap or {}).get("block") or levels_block(b, state))
     now = t.strftime("%H:%M")
     wins = [(a, z) for a, z in _windows(b) if a >= now or z > now]
+    # The shared block already names the next (or current) window; list the rest if any remain after it.
     L.append("")
-    if wins:
+    if len(wins) > 1:
         L.append("🔔 خبرهای باقی‌مانده‌ی امروز")
         L += [f" {a} تا {z}" for a, z in wins]
-    else:
+    elif not wins:
         L.append("🔔 امروز خبر مهم دیگری ثبت نشده")
     L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} · سقف ضرر امروز {toman_short(day_cap(state, CFG))}"]
-    L += friday_flag()
     return "\n".join(L)
-
 
 def presession_brief(b, state, name):
     return market_summary(b, state, "☀️ لندن باز می‌شود" if name == "am" else "🌆 نیویورک باز می‌شود")
@@ -654,56 +691,60 @@ def brief_msg(b, state):
     return market_summary(b, state, "📊 خلاصه‌ی بازار")
 
 def signal_expiry(b, cfg, now=None):
-    """Signal validity: 30 min, cut at the next news block and at the daily close."""
+    """Signal validity: at most 30 min, cut at the next A/B news block, the daily close,
+    and the Friday 23:30 pending-cancel (owner 2026-11-20)."""
     now = now or now_teh()
-    exp = now + timedelta(minutes=30)
-    nw_ = b.get("news_window") or {}
-    if nw_.get("next_start"):
-        try:
-            ns = datetime.strptime(nw_["next_start"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
-            if now < ns < exp:
-                exp = ns
-        except ValueError:
-            pass
+    close = friday_cancel = None
     try:
-        close = datetime.strptime(DG.session_entry_block(now, cfg)["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
-        if now < close < exp:
-            exp = close   # signals stop at the daily close
+        se = DG.session_entry_block(now, cfg)
+        close = datetime.strptime(se["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+        bs = datetime.strptime(se["block_start_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+        if now < bs:
+            friday_cancel = bs
     except Exception:
         pass
+    exp = SG.signal_expiry(now, b.get("news_window") or {}, session_close=close)
+    if friday_cancel and now < friday_cancel < exp:
+        exp = friday_cancel
     return exp
 
-def signal_msg(b, plan, sizing, state, cfg, sample=False, sig_id=None):
-    """Clean signal card: prices in <code> for tap-to-copy."""
+def card_economics(plan, sizing, cfg):
+    """LIMIT risk/reward from the 1-decimal DaryaGold prices printed on the card (fee once, no spread)."""
+    s = (sizing or {}).get("size") or {}
+    unit = "1U" if s.get("key") == "full_unit" else "0.5U"
+    e, sl, tp = SG.display_prices(plan["entry"], plan["sl"], plan["tp"], cfg, DG.to_broker)
+    econ = SG.limit_economics(plan["side"], e, sl, tp, unit)
+    return e, sl, tp, econ, unit
+
+def signal_msg(b, plan, sizing, state, cfg, sample=False, sig_id=None, valid_until=None, now=None):
+    """Clean signal card: prices in <code> for tap-to-copy. One TP, no disclaimer."""
     s = sizing["size"]
-    now = now_teh()
+    now = now or now_teh()
     full = s.get("key") == "full_unit"
-    exp = signal_expiry(b, cfg, now)
+    exp = valid_until or signal_expiry(b, cfg, now)
     g = sizing.get("gate") or {}
+    e, sl, tp, econ, unit = card_economics(plan, sizing, cfg)
     icon, word = ("🟢", "خرید") if plan["side"] == "BUY" else ("🔴", "فروش")
-    sub = ("نمونه · " if sample else "") + f"سفارش محدود · اعتبار تا {exp:%H:%M}"
-    L = [f"**{icon} {word} طلا**", f"~~{sub}~~", "",
-         f"▸ ورود    `{p1(plan['entry'])}`",
-         f"▸ حد ضرر  `{p1(plan['sl'])}`",
-         f"▸ هدف     `{p1(plan['tp'])}`"]  # DaryaGold cannot partial-close: single target only
-    rr = g.get("net_rr") if g.get("net_rr") is not None else s["net_rr"]
-    L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(s['risk_toman'])} تومان · نسبت {float(rr):.1f}"]
+    sub = ("نمونه · " if sample else "") + f"سفارش محدود · اعتبار تا {exp:%H:%M} به وقت تهران"
+    L = [f"**{icon} {word} طلا**", f"~~{sub}~~"]
+    if sig_id:
+        L += [f"شناسه `{sig_id}`"]
+    L += ["", f"▸ ورود    `{e}`", f"▸ حد ضرر  `{sl}`", f"▸ هدف     `{tp}`"]
+    rr = econ["net_rr"]
+    L += ["", f"{'یک واحد' if full else 'نیم واحد'} · ریسک {toman_short(econ['risk_toman'])} تومان · نسبت {float(rr):.1f}"]
     L += [f"⚠️ {w}" for w in g.get("warnings_fa") or []]
     L += friday_flag()
-    if sig_id:
-        L += [f"شناسه `{sig_id}`"]   # Latin, tap-to-copy; used by /entered /tp /sl /closed
     return "\n".join(L)
 
 def signal_record(b, plan, sizing, cfg, sig_id, now):
     """Fields the Edge Function stores in public.signals (prices = DaryaGold prices exactly as on the card)."""
-    s = sizing["size"]
-    g = sizing.get("gate") or {}
-    rr = g.get("net_rr") if g.get("net_rr") is not None else s.get("net_rr")
+    e, sl, tp, econ, unit = card_economics(plan, sizing, cfg)
     return {"id": sig_id, "sent_at": now.isoformat(timespec="seconds"), "session_date": DG.session_date(now, cfg),
-            "side": plan["side"], "unit": "1U" if s.get("key") == "full_unit" else "0.5U",
-            "entry": float(p1(plan["entry"])), "sl": float(p1(plan["sl"])), "tp": float(p1(plan["tp"])),
+            "side": plan["side"], "unit": unit,
+            "entry": float(e), "sl": float(sl), "tp": float(tp),
             "valid_until": signal_expiry(b, cfg, now).isoformat(timespec="seconds"),
-            "net_rr": round(float(rr), 2) if rr is not None else None, "risk_toman": int(round(float(s.get("risk_toman") or 0)))}
+            "net_rr": round(float(econ["net_rr"]), 2) if econ.get("net_rr") is not None else None,
+            "risk_toman": int(round(float(econ["risk_toman"])))}
 
 def _track_bars():
     """1-minute bid bars from the local cache (written by brief.py's fetch). Hook mocked in tests."""
@@ -777,7 +818,7 @@ def sample_signal(b, cfg, state):
     side = "SELL" if b.get("bias") == "bearish" else "BUY"
     sgn = -1 if side == "SELL" else 1
     entry = round(bid - sgn * 0.5, 2); sl = round(entry - sgn * 1.6, 2); tp = round(entry + sgn * 4.0, 2)
-    sz = DG.size_trade(entry, sl, tp, side, cfg, spread_usd=0.25)
+    sz = DG.size_trade(entry, sl, tp, side, cfg, order_type="LIMIT")
     if not sz.get("ok") or float(sz["size"]["net_rr"]) < 1.5:
         return None
     return signal_msg(b, {"side": side, "entry": entry, "sl": sl, "tp": tp}, sz, state, cfg, sample=True)
@@ -849,7 +890,7 @@ def closed_line(t, cfg):
     return f"🔒 بازار بسته است؛ بازگشایی {FA_WEEKDAY[r.weekday()]} {r:%H:%M}"
 
 def friday_reminder(t, cfg):
-    """Close reminder text while the Friday entry cutoff is active (22:30-00:30 Tehran), else None."""
+    """Close reminder text while the Friday entry cutoff is active (23:30-00:30 Tehran), else None."""
     try:
         se = DG.session_entry_block(t, cfg)
     except Exception:
@@ -857,7 +898,8 @@ def friday_reminder(t, cfg):
     if not (se.get("friday_window") and se.get("market_open")):
         return None
     close = datetime.strptime(se["close_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
-    return f"**🏳️ جمعه: ورود جدید بسته است**\n~~همه‌ی معامله‌ها و سفارش‌ها را تا {close:%H:%M} ببندید~~"
+    start = datetime.strptime(se["block_start_tehran"], "%Y-%m-%d %H:%M").replace(tzinfo=TEH)
+    return (f"**🏳️ جمعه: ورود جدید بسته است**\n~~سفارش‌های محدود در `{start:%H:%M}` لغو می‌شوند · معامله‌های باز را تا `{close:%H:%M}` ببندید~~")
 
 def close_reminder(t, cfg):
     """Daily close reminder (last 30 min before 00:30). Only a message; nothing is ever closed automatically."""
@@ -911,18 +953,32 @@ def main():
         return brief
 
     def emit_signal(b, plan, sizing, on_request=False, group_only=False):
-        """Send a signal at most once (dedup key), and record it so the 1-position lock applies.
-        group_only (a group member's /scan): an already-sent signal is repeated in the group only, never to the owner again."""
+        """Send a signal at most once (dedup key). An expired signal is never shown or re-armed.
+        group_only (a group member's /scan): a still-valid already-sent signal is repeated in the group only."""
         t = now_teh()
         key = f"{t:%Y-%m-%d}|{plan['side']}|{round(plan['entry'] * 2) / 2}|{round(plan['sl'] * 2) / 2}"
+        prev = next((x for x in state["signals_sent"] if x["key"] == key and x.get("id")), None)
+        if prev and SG.is_expired(prev.get("valid_until"), t):
+            print("expired signal not re-armed:", prev.get("id"), prev.get("valid_until"))
+            return "expired"
         if key in [x["key"] for x in state["signals_sent"]] and not on_request:
             print("signal already sent:", key)
             return False
-        prev = next((x for x in state["signals_sent"] if x["key"] == key and x.get("id")), None)
-        if group_only and key in [x["key"] for x in state["signals_sent"]]:
-            return group_answer("signal", signal_msg(b, plan, sizing, state, cfg, sig_id=prev["id"] if prev else None))
+        vu = None
+        if prev and prev.get("valid_until"):
+            try:
+                vu = datetime.fromisoformat(prev["valid_until"])
+            except ValueError:
+                vu = None
+        msg_kw = dict(sig_id=prev["id"] if prev else None, valid_until=vu)
+        if group_only and prev:
+            return group_answer("signal", signal_msg(b, plan, sizing, state, cfg, **msg_kw))
         rec = prev or signal_record(b, plan, sizing, cfg, next_signal_id(state, t), t)
-        ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg, sig_id=rec["id"]), state, markup=signal_keyboard(rec["id"]))
+        if not prev:
+            msg_kw["sig_id"] = rec["id"]
+            if rec.get("valid_until"):
+                msg_kw["valid_until"] = datetime.fromisoformat(rec["valid_until"])
+        ok = send_public("signal", signal_msg(b, plan, sizing, state, cfg, **msg_kw), state, markup=signal_keyboard(rec["id"]))
         if ok and not prev and key not in [x["key"] for x in state["signals_sent"]]:
             state["signals_sent"].append({"key": key, "at": t.strftime("%Y-%m-%d %H:%M"), **rec})
         return ok
@@ -957,7 +1013,9 @@ def main():
             b = get_brief()
             ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
             if ok:
-                emit_signal(b, plan, sizing, on_request=True, group_only=g_only)
+                sent = emit_signal(b, plan, sizing, on_request=True, group_only=g_only)
+                if sent == "expired":
+                    answer("scan", short_brief(b, state, cfg, reasons=["مهلت این سیگنال تمام شده است."]), g_only)
             else:
                 answer("scan", short_brief(b, state, cfg, reasons=why), g_only)
 
@@ -990,7 +1048,9 @@ def main():
         b = get_brief()
         ok, plan, sizing, why = risk_check(b, state, cfg, news_ok)
         if ok:
-            emit_signal(b, plan, sizing)
+            sent = emit_signal(b, plan, sizing)
+            if sent == "expired":
+                print("no signal: مهلت سیگنال قبلی تمام شده است")
         else:
             print("no signal:", " | ".join(why)[:300])
         shadow_step(state, b, cfg, news_ok, t, record=not ok)

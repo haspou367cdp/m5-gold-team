@@ -156,7 +156,7 @@ await tgSend("/loss 100000"); await tgSend("/loss 100000"); r = await tgSend("/l
 check("3 losses -> daily stop notice", r.out[0].includes("توقف روزانه"));
 DB.row.state.day = { date: teh().date, losses: 0, loss_toman: 0, wins: 0, win_toman: 0, records: [] };
 await tgSend("/loss 300000"); r = await tgSend("/loss 120000"); check("20% net loss -> daily stop notice", r.out[0].includes("توقف روزانه"));
-r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("۰۷:۰۰ تا ۰۰:۳۰"));
+r = await tgSend("/status"); check("/status card", r.out[0].includes("وضعیت") && r.out[0].includes("۲ ضرر") && r.out[0].includes("<code>07:00</code>") && r.out[0].includes("<code>00:30</code>"));
 r = await tgSend("/foo"); check("unknown -> hint", r.out[0].includes("/help"));
 const s0 = normalize({ day: { date: "2000-01-01", losses: 3 }, equity_toman: 5 });
 check("Tehran-midnight reset", s0.day.losses === 0 && s0.day.date === teh().date && s0.equity_toman === 5);

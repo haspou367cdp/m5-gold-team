@@ -46,9 +46,9 @@ def test_session_closed_and_weekend():
     for t in (datetime(2026, 11, 18, 3, 0, tzinfo=TEH), datetime(2026, 11, 21, 12, 0, tzinfo=TEH)):
         g = ev(now=t, session=None)
         assert g["status"] == RG.NO_TRADE and "بسته است" in g["reasons_fa"][0]
-    fri = ev(now=datetime(2026, 11, 20, 22, 45, tzinfo=TEH), session=None)
+    fri = ev(now=datetime(2026, 11, 20, 23, 45, tzinfo=TEH), session=None)
     assert fri["status"] == RG.NO_TRADE and "جمعه" in fri["reasons_fa"][0]
-    assert ev(now=datetime(2026, 11, 20, 22, 15, tzinfo=TEH), session=None)["status"] == RG.APPROVED
+    assert ev(now=datetime(2026, 11, 20, 23, 15, tzinfo=TEH), session=None)["status"] == RG.APPROVED
 
 
 def test_news_blackout():
