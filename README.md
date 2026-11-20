@@ -2,7 +2,7 @@ Research toolkit and Telegram decision aid. No backtested edge. Nothing here pla
 
 # Z A R V A •|• BTV — M5 gold assistant for DaryaGold (XAUUSD)
 
-Telegram bot @ZarvaGoldBot («Z A R V A •|• BTV», formerly Xauscalper) for the group «• Z A R V A •» (formerly BAROBAX).
+Telegram bot @Xauscalperibot («Z A R V A •|• BTV», formerly Xauscalper) for the group «• Z A R V A •» (formerly BAROBAX).
 
 **Start here: [HANDOFF.md](HANDOFF.md)** — goal, history and decisions, architecture, commands, cost model, price bases,
 research results, what is deployed and what is pending, security rules, and how to test and deploy.

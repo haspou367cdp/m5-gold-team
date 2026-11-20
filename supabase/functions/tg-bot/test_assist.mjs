@@ -63,7 +63,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (url.includes("api.telegram.org")) {
     const b = JSON.parse(init.body);
     if (url.endsWith("/sendMessage")) { SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } }); }
-    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "ZarvaGoldBot" } });
+    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "Xauscalperibot" } });
     if (/\/(setMyCommands|deleteMyCommands|answerCallbackQuery)$/.test(url)) { TGCALLS.push([url.split("/").pop(), b]); return J({ ok: true }); }
     return J({ ok: true });
   }
@@ -246,7 +246,7 @@ check("member /setup: group-safe card in the group (no toman), logged as group",
   SETUPS.length > before && SETUPS.slice(before).every((x) => x.origin === "group"));
 out = await group("/setup");
 check("group cooldown: a repeat within 60 s is ignored", out.length === 0);
-out = await group("/trend@ZarvaGoldBot");
+out = await group("/trend@Xauscalperibot");
 check("member /trend: group reply", out.length === 1 && String(out[0].chat_id) === GID && out[0].text.includes("روند"));
 out = await group("/trend@OtherBot");
 check("/trend addressed to another bot: ignored", out.length === 0);

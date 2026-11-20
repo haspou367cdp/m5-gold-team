@@ -46,7 +46,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/answerCallbackQuery")) { (DB.answers = DB.answers || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/editMessageReplyMarkup")) { (DB.edits = DB.edits || []).push(b); return J({ ok: true }); }
-    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "ZarvaGoldBot" } });
+    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "Xauscalperibot" } });
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
   }
   const tm = url.match(/\/rest\/v1\/(signals|journal)(\?.*)?$/);
@@ -341,7 +341,7 @@ check("member /levels in the group: group copy only, no buttons, never to the ow
 r = await G("/levels");
 check("group repeat within 60 s is ignored silently", r.out.length === 0);
 CLOCK = U("2026-11-11T10:31:01Z");
-r = await G("/levels@ZarvaGoldBot");
+r = await G("/levels@Xauscalperibot");
 check("/levels@BotName answers after the cooldown", r.out.length === 1 && r.chats[0] === GID);
 CLOCK = U("2026-11-11T10:33:00Z");
 r = await G("/levels@OtherBot");

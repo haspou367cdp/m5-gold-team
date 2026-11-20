@@ -10,8 +10,8 @@ It gives levels, trend, ready-made setups and plain-language alerts on request. 
 logs in to DaryaGold, and since 2026-11-20 it sends **no automatic trade signals** (research showed no edge, see §6).
 A TradingView indicator (ZARVA Map, formerly Xauscalper Map) shows the same levels, trend and setups on the phone chart.
 The audience includes complete beginners in the Telegram group «• Z A R V A •» (formerly BAROBAX), so every message must be plain Persian.
-Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@ZarvaGoldBot), group «• Z A R V A •». IDs are unchanged
-(bot 45639251 owner chat, group -1001958445009). `lib.js` `BOT_NAME` / `GROUP_NAME` hold the display names.
+Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@Xauscalperibot), group «• Z A R V A •». IDs and the username are unchanged
+(owner chat 45639251, group -1001958445009, username @Xauscalperibot). `lib.js` `BOT_NAME` / `GROUP_NAME` hold the display names.
 
 ## 2. History and decisions
 | Date | What happened / decided |
@@ -123,14 +123,15 @@ Deployed (2026-11-21 01:58 Tehran):
   they still say «Xauscalper» / «Xauscalper Map». Updated texts: `docs/group_guide_fa.md`, `tradingview/map_howto_fa.md`,
   regenerated `tradingview/xauscalper_map*.pine`. Not reposted (needs the owner's go-ahead).
 
-**Telegram outage (open, outside our code):** since ~2026-11-20 evening every authenticated Bot API call for this bot
-(getMe, getWebhookInfo, setWebhook, sendMessage) hangs from Supabase and from GitHub runners, while a wrong token gets 401
-at once. So commands get no reply. Checks: branch `name-probe` (push → read-only getMe + getWebhookInfo, 15 s timeouts;
-last run 2026-11-21 01:45 Tehran: all timed out). When getMe answers again: run
-`gh workflow run telegram-bot.yml --ref main -f mode=setup` (re-sets webhook, menus, descriptions), confirm
-`webhook_url_ok: true`, then send a command from the owner chat and look for `POST /tg 200` in the Edge Function logs.
-If it never recovers, the owner can check the bot in @BotFather (or revoke/regenerate the token and update the
-`TELEGRAM_BOT_TOKEN` GitHub secret, then run the setup workflow, which stores it in Vault).
+**Telegram outage (resolved 2026-11-21 ~02:00 Tehran, outside our code):** from ~2026-11-20 evening every authenticated
+Bot API call for this bot hung (from Supabase and GitHub runners) while a wrong token got 401 at once, so commands got no
+reply. At 01:59 Tehran the setup workflow got through: webhook OK, menus and descriptions set, and Telegram delivered the
+queued updates (POST /tg 200, no errors; the group's queued /setup /trend /levels /brief were answered by the bot).
+getMe/getWebhookInfo answer in 0.4 s (pending 0, no error). If it happens again: branch `name-probe` (push → read-only
+getMe, getWebhookInfo, names, descriptions, menus); when getMe answers, run
+`gh workflow run telegram-bot.yml --ref main -f mode=setup` and check `webhook_url_ok: true` and `POST /tg 200` in the logs.
+If it never recovers: check the bot in @BotFather, or regenerate the token, update the `TELEGRAM_BOT_TOKEN` GitHub
+secret and run the setup workflow (it stores the token in Vault).
 
 Pending / owner questions:
 1. Monday open: config, bot and indicator use **07:00** (owner 2026-11-20 «Mon–Fri 07:00–00:30»); an earlier note
