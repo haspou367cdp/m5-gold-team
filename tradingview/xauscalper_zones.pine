@@ -1,0 +1,427 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Xauscalper Zones · XAUUSD — مکمل بات تلگرامی Xauscalper (تیم M5 Gold Scalp)
+// منطق: روند H4/H1/M15/M5 با EMA20/EMA50، سطوح بات (PDH/PDL، PWH/PWL، آسیا، لندن، OR لندن، بازگشایی NY،
+// VWAP روز، رُند 50/00)، پهنه ±max(0.25×ATR M5، 1$)، ورود ناحیه‌ای هم‌جهت H1 و M15، یک TP پیش از سطح بعدی،
+// R:R خالص با مدل هزینه‌ی داریاگلد، و فیلترهای ریسک M5-Risk.
+// بهترین نمایش: چارت M5 (یا M1/M3) طلای OANDA:XAUUSD یا مشابه.
+//@version=6
+indicator("Xauscalper Zones · XAUUSD", shorttitle = "XSZ", overlay = true, max_lines_count = 300, max_labels_count = 300, max_boxes_count = 60)
+
+// ───────────────────────── ورودی‌ها ─────────────────────────
+const string GT = "روند"
+string tfH4    = input.timeframe("240", "تایم‌فریم بالا ۱", group = GT)
+string tfH1    = input.timeframe("60",  "تایم‌فریم بالا ۲ (H1)", group = GT)
+string tfM15   = input.timeframe("15",  "تایم‌فریم میانی (M15)", group = GT)
+string tfM5    = input.timeframe("5",   "تایم‌فریم پایه (M5)", group = GT)
+int    emaFast = input.int(20, "EMA سریع", minval = 2, group = GT)
+int    emaSlow = input.int(50, "EMA کند", minval = 3, group = GT)
+bool   needPx  = input.bool(true, "قیمت هم آن سوی EMA کند باشد", group = GT)
+
+const string GL = "سطوح و پهنه"
+string tzTeh    = input.string("Asia/Tehran", "منطقه‌ی زمانی", group = GL)
+string sessAsia = input.session("0330-1130", "سشن آسیا (تهران)", group = GL)
+int    orMins   = input.int(30, "رنج بازگشایی لندن (دقیقه)", minval = 5, maxval = 120, group = GL)
+int    atrLen   = input.int(14, "طول ATR", minval = 2, group = GL)
+float  zoneK    = input.float(0.25, "ضریب پهنه × ATR M5", step = 0.05, group = GL)
+float  zoneMin  = input.float(1.0, "حداقل نیم‌پهنا ($)", step = 0.1, group = GL)
+float  roundStp = input.float(50.0, "گام عدد رُند ($)", step = 10, group = GL)
+bool   useVwap  = input.bool(true, "VWAP روز", group = GL)
+bool   useRound = input.bool(true, "اعداد رُند", group = GL)
+bool   useWeek  = input.bool(true, "سقف/کف هفته‌ی قبل", group = GL)
+int    nShow    = input.int(2, "تعداد پهنه بالا و پایین", minval = 1, maxval = 4, group = GL)
+float  dgOff    = input.float(0.3, "اختلاف قیمت داریاگلد با چارت ($)", step = 0.05, tooltip = "قیمت داریاگلد = قیمت چارت + این عدد. با /calibrate بات هماهنگ کنید.", group = GL)
+
+const string GS = "ستاپ ورود ناحیه‌ای"
+string entryT  = input.string("لیمیت", "نوع ورود", options = ["لیمیت", "مارکت"], group = GS)
+string unitT   = input.string("1 واحد", "حجم", options = ["1 واحد", "0.5 واحد"], group = GS)
+float  slBufA  = input.float(0.5, "فاصله‌ی SL پشت پهنه: حداقل ($)", step = 0.1, group = GS)
+float  slBufK  = input.float(0.3, "فاصله‌ی SL پشت پهنه: × ATR", step = 0.05, group = GS)
+float  slMinA  = input.float(1.0, "حداقل SL ($)", step = 0.1, group = GS)
+float  slMinK  = input.float(0.6, "حداقل SL × ATR", step = 0.05, group = GS)
+float  roomK   = input.float(2.0, "فاصله تا سطح بعدی ≥ × SL", step = 0.1, group = GS)
+float  tpBufA  = input.float(0.3, "TP پیش از سطح: حداقل ($)", step = 0.05, group = GS)
+float  tpBufK  = input.float(0.1, "TP پیش از سطح: × ATR", step = 0.05, group = GS)
+float  tpCapK  = input.float(3.0, "سقف فاصله‌ی TP × ATR", step = 0.5, group = GS)
+float  rrMin   = input.float(1.5, "حداقل R:R خالص", step = 0.1, group = GS)
+float  rrMax   = input.float(8.0, "سقف R:R خالص (بالاتر = رد)", step = 0.5, group = GS)
+float  feeT    = input.float(14000, "کارمزد هر معامله (تومان، یک بار)", step = 1000, group = GS)
+float  sprdUsd = input.float(0.25, "اسپرد مارکت ($)", step = 0.05, group = GS)
+int    expBars = input.int(6, "انقضای سفارش (کندل)", minval = 1, maxval = 48, group = GS)
+int    coolBar = input.int(6, "فاصله‌ی دو نشانه‌ی هم‌جهت (کندل)", minval = 1, group = GS)
+
+const string GF = "فیلترهای ریسک"
+int    adrLen  = input.int(20, "طول ADR (روز)", minval = 5, group = GF)
+float  adrMax  = input.float(100, "سقف ADR مصرف‌شده (%)", step = 5, group = GF)
+float  volK    = input.float(2.0, "جهش نوسان: ATR > × میانه", step = 0.1, group = GF)
+int    medLen  = input.int(1440, "طول میانه‌ی ATR (کندل M5)", minval = 100, maxval = 4000, group = GF)
+float  bufMax  = input.float(5.0, "سقف SL + ATR ($) — استاپ‌اوت حدود 10$", step = 0.5, group = GF)
+int    openHM  = input.int(700, "باز شدن داریاگلد (HHMM تهران)", group = GF)
+int    closeHM = input.int(30, "بسته شدن (HHMM تهران، بامداد روز بعد)", group = GF)
+int    friHM   = input.int(2330, "جمعه: ورود جدید ممنوع از (HHMM)", group = GF)
+
+const string GN = "پنجره‌های خبری (دستی، وقت تهران)"
+bool n1on = input.bool(false, "خبر ۱", inline = "n1", group = GN)
+int  n1s  = input.time(timestamp("2026-11-25T16:45:00+03:30"), "از", inline = "n1", group = GN)
+int  n1e  = input.time(timestamp("2026-11-25T17:30:00+03:30"), "تا", inline = "n1", group = GN)
+bool n2on = input.bool(false, "خبر ۲", inline = "n2", group = GN)
+int  n2s  = input.time(timestamp("2026-11-24T12:15:00+03:30"), "از", inline = "n2", group = GN)
+int  n2e  = input.time(timestamp("2026-11-24T12:45:00+03:30"), "تا", inline = "n2", group = GN)
+bool n3on = input.bool(false, "خبر ۳", inline = "n3", group = GN)
+int  n3s  = input.time(timestamp("2026-11-27T11:00:00+03:30"), "از", inline = "n3", group = GN)
+int  n3e  = input.time(timestamp("2026-11-27T11:45:00+03:30"), "تا", inline = "n3", group = GN)
+
+const string GD = "نمایش"
+bool showTbl = input.bool(true, "جدول اطلاعات", group = GD)
+bool showBlk = input.bool(true, "نشانه‌های مسدود (خاکستری)", group = GD)
+bool showZn  = input.bool(true, "پهنه‌ها", group = GD)
+string tblPos = input.string("بالا راست", "جای جدول", options = ["بالا راست", "بالا چپ", "پایین راست", "پایین چپ"], group = GD)
+
+// ───────────────────────── روند چندتایم‌فریمی (بدون lookahead، بدون repaint) ─────────────────────────
+f_trend(int o) =>
+    float e1 = ta.ema(close, emaFast)
+    float e2 = ta.ema(close, emaSlow)
+    bool up = e1[o] > e2[o] and (not needPx or close[o] > e2[o])
+    bool dn = e1[o] < e2[o] and (not needPx or close[o] < e2[o])
+    up ? 1 : dn ? -1 : 0
+
+f_atr(int o) =>
+    float a = ta.atr(atrLen)
+    a[o]
+
+f_atrMed(int o) =>
+    float a = ta.atr(atrLen)
+    float m = ta.median(a, medLen)
+    m[o]
+
+// الگوی بدون repaint: روی تاریخچه آخرین کندل بسته‌شده، در زمان واقعی هم همان
+int   rawH4  = request.security(syminfo.tickerid, tfH4,  f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+int   rawH1  = request.security(syminfo.tickerid, tfH1,  f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+int   rawM15 = request.security(syminfo.tickerid, tfM15, f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+int   rawM5  = request.security(syminfo.tickerid, tfM5,  f_trend(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+float rawAtr = request.security(syminfo.tickerid, tfM5,  f_atr(barstate.isrealtime ? 1 : 0),   lookahead = barmerge.lookahead_off)
+float rawMed = request.security(syminfo.tickerid, tfM5,  f_atrMed(barstate.isrealtime ? 1 : 0), lookahead = barmerge.lookahead_off)
+
+int   tH4   = nz(barstate.isrealtime ? rawH4  : rawH4[1])
+int   tH1   = nz(barstate.isrealtime ? rawH1  : rawH1[1])
+int   tM15  = nz(barstate.isrealtime ? rawM15 : rawM15[1])
+int   tM5   = nz(barstate.isrealtime ? rawM5  : rawM5[1])
+float atr5  = barstate.isrealtime ? rawAtr : rawAtr[1]
+float atrMd = barstate.isrealtime ? rawMed : rawMed[1]
+
+int hSum = tH4 + tH1
+int bias = hSum > 0 ? 1 : hSum < 0 ? -1 : 0
+string biasTx = bias == 1 ? "صعودی" : bias == -1 ? "نزولی" : "خنثی"
+string ltfTx = bias == 0 ? "—" : (tM15 == bias and tM5 != -bias) ? "هم‌جهت" : (tM15 == -bias or tM5 == -bias) ? "اصلاحی" : "نامشخص"
+f_arrow(int t) => t == 1 ? "▲" : t == -1 ? "▼" : "■"
+
+// ───────────────────────── روز، هفته، ADR ─────────────────────────
+var float dH = na
+var float dL = na
+var float pdh = na
+var float pdl = na
+var array<float> ranges = array.new<float>()
+if timeframe.change("D")
+    if not na(dH)
+        pdh := dH
+        pdl := dL
+        ranges.push(dH - dL)
+        if ranges.size() > adrLen
+            ranges.shift()
+    dH := high
+    dL := low
+else
+    dH := na(dH) ? high : math.max(dH, high)
+    dL := na(dL) ? low : math.min(dL, low)
+float adr = ranges.size() >= 5 ? ranges.avg() : na
+float adrUsed = na(adr) or adr == 0 ? na : (dH - dL) / adr * 100
+
+var float wH = na
+var float wL = na
+var float pwh = na
+var float pwl = na
+if timeframe.change("W")
+    if not na(wH)
+        pwh := wH
+        pwl := wL
+    wH := high
+    wL := low
+else
+    wH := na(wH) ? high : math.max(wH, high)
+    wL := na(wL) ? low : math.min(wL, low)
+
+// ───────────────────────── سشن‌ها (تعریف بات؛ لندن و NY با DST درست) ─────────────────────────
+int lonMin = hour(time, "Europe/London") * 60 + minute(time, "Europe/London")
+int nyMin  = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+bool inAsia = not na(time(timeframe.period, sessAsia, tzTeh))
+bool inLon  = lonMin >= 420 and lonMin < 1320 and nyMin < 510        // 07:00 لندن تا 08:30 نیویورک
+bool inLOR  = lonMin >= 420 and lonMin < 420 + orMins
+bool inNY   = nyMin >= 510 and nyMin < 1020                          // 08:30 تا 17:00 نیویورک
+
+var float asH = na
+var float asL = na
+if inAsia and not inAsia[1]
+    asH := high
+    asL := low
+else if inAsia
+    asH := math.max(asH, high)
+    asL := math.min(asL, low)
+
+var float lnH = na
+var float lnL = na
+if inLon and not inLon[1]
+    lnH := high
+    lnL := low
+else if inLon
+    lnH := math.max(lnH, high)
+    lnL := math.min(lnL, low)
+
+var float orH = na
+var float orL = na
+if inLOR and not inLOR[1]
+    orH := high
+    orL := low
+else if inLOR
+    orH := math.max(orH, high)
+    orL := math.min(orL, low)
+
+var float nyOpen = na
+if inNY and not inNY[1]
+    nyOpen := open
+
+float vwapRaw = ta.vwap(hlc3, timeframe.change("D"))
+float vwapD = useVwap ? vwapRaw : na
+
+// ───────────────────────── جمع‌آوری و ادغام سطوح ─────────────────────────
+float hw = na(atr5) ? zoneMin : math.max(zoneK * atr5, zoneMin)
+
+f_add(array<float> p, array<string> t, float v, string tag) =>
+    if not na(v)
+        p.push(v)
+        t.push(tag)
+    0
+
+array<float>  lvP = array.new<float>()
+array<string> lvT = array.new<string>()
+f_add(lvP, lvT, pdh, "PDH")
+f_add(lvP, lvT, pdl, "PDL")
+if useWeek
+    f_add(lvP, lvT, pwh, "PWH")
+    f_add(lvP, lvT, pwl, "PWL")
+f_add(lvP, lvT, asH, "سقف آسیا")
+f_add(lvP, lvT, asL, "کف آسیا")
+f_add(lvP, lvT, lnH, "سقف لندن")
+f_add(lvP, lvT, lnL, "کف لندن")
+f_add(lvP, lvT, orH, "سقف OR لندن")
+f_add(lvP, lvT, orL, "کف OR لندن")
+f_add(lvP, lvT, nyOpen, "بازگشایی NY")
+f_add(lvP, lvT, vwapD, "VWAP روز")
+if useRound
+    float rb = math.floor(close / roundStp) * roundStp
+    for k = -1 to 2
+        float rv = rb + k * roundStp
+        f_add(lvP, lvT, rv, "رُند " + str.tostring(rv, "#"))
+
+array<float>  zLo = array.new<float>()
+array<float>  zHi = array.new<float>()
+array<float>  zMn = array.new<float>()   // پایین‌ترین سطح عضو
+array<float>  zMx = array.new<float>()   // بالاترین سطح عضو
+array<string> zTg = array.new<string>()
+int nLv = lvP.size()
+if nLv > 0
+    array<int> idx = lvP.sort_indices(order.ascending)
+    for i = 0 to nLv - 1
+        int j = idx.get(i)
+        float p = lvP.get(j)
+        string tg = lvT.get(j)
+        int nz_ = zLo.size()
+        if nz_ > 0 and p - hw <= zHi.get(nz_ - 1)
+            zHi.set(nz_ - 1, p + hw)
+            zMx.set(nz_ - 1, p)
+            string old = zTg.get(nz_ - 1)
+            if not str.contains(old, tg)
+                zTg.set(nz_ - 1, old + " + " + tg)
+        else
+            zLo.push(p - hw)
+            zHi.push(p + hw)
+            zMn.push(p)
+            zMx.push(p)
+            zTg.push(tg)
+int nZ = zLo.size()
+
+// ───────────────────────── زمان کاری داریاگلد و خبر ─────────────────────────
+int dow = dayofweek(time_close, tzTeh)
+int hm  = hour(time_close, tzTeh) * 100 + minute(time_close, tzTeh)
+bool isWk   = dow >= dayofweek.monday and dow <= dayofweek.friday
+bool afterMid = dow >= dayofweek.tuesday and dow <= dayofweek.saturday and hm < closeHM
+bool mktOpen = (isWk and hm >= openHM) or afterMid
+bool friCut = (dow == dayofweek.friday and hm >= friHM) or (dow == dayofweek.saturday and hm < closeHM)
+f_news(bool on, int s, int e) => on and time_close > s and time < e
+bool newsBlk = f_news(n1on, n1s, n1e) or f_news(n2on, n2s, n2e) or f_news(n3on, n3s, n3e)
+bool adrBlk = not na(adrUsed) and adrUsed > adrMax
+bool volBlk = not na(atr5) and not na(atrMd) and atr5 > volK * atrMd
+
+string baseWhy = not mktOpen ? "بیرون از ساعت داریاگلد" : friCut ? "جمعه پس از " + str.tostring(friHM) : newsBlk ? "پنجره‌ی خبری" : volBlk ? "جهش نوسان" : adrBlk ? "ADR بیش از " + str.tostring(adrMax, "#") + "٪" : ""
+
+// ───────────────────────── ستاپ ورود ناحیه‌ای ─────────────────────────
+float tpu = unitT == "1 واحد" ? 80000.0 : 40000.0
+float sCost = entryT == "مارکت" ? sprdUsd : 0.0
+f_rr(float tpD, float slD) =>
+    float rew = tpD * tpu - feeT - sCost * tpu
+    float rsk = slD * tpu + feeT + sCost * tpu
+    rsk > 0 ? rew / rsk : na
+
+// خرید
+int kL = -1
+int kS = -1
+if nZ > 0 and not na(atr5)
+    for i = nZ - 1 to 0
+        if kL < 0 and zLo.get(i) <= close and low <= zHi.get(i) and close >= zLo.get(i)
+            kL := i
+    for i = 0 to nZ - 1
+        if kS < 0 and zHi.get(i) >= close and high >= zLo.get(i) and close <= zHi.get(i)
+            kS := i
+
+float lE = na
+float lSL = na
+float lTP = na
+float lRR = na
+string lWhy = ""
+bool lRaw = false
+float sE = na
+float sSL = na
+float sTP = na
+float sRR = na
+string sWhy = ""
+bool sRaw = false
+bool dirL = tH1 == 1 and tM15 == 1
+bool dirS = tH1 == -1 and tM15 == -1
+
+if dirL and kL >= 0 and kL < nZ - 1
+    lE := entryT == "لیمیت" ? math.min(close, zHi.get(kL)) : close
+    float d = lE - (zLo.get(kL) - math.max(slBufA, slBufK * atr5))
+    d := math.max(d, math.max(slMinA, slMinK * atr5))
+    lSL := lE - d
+    float nxt = zMn.get(kL + 1)
+    lTP := nxt - math.max(tpBufA, tpBufK * atr5)
+    float tpD = lTP - lE
+    if nxt - lE >= roomK * d and tpD > 0
+        lRaw := true
+        lRR := f_rr(tpD, d)
+        lWhy := baseWhy != "" ? baseWhy : d + atr5 > bufMax ? "SL+ATR بیش از " + str.tostring(bufMax, "0.#") + "$" : tpD > tpCapK * atr5 ? "TP دورتر از " + str.tostring(tpCapK, "0.#") + "×ATR" : na(lRR) or lRR < rrMin ? "R:R کمتر از " + str.tostring(rrMin, "0.#") : lRR > rrMax ? "R:R غیرواقعی" : ""
+
+if dirS and kS > 0
+    sE := entryT == "لیمیت" ? math.max(close, zLo.get(kS)) : close
+    float d = (zHi.get(kS) + math.max(slBufA, slBufK * atr5)) - sE
+    d := math.max(d, math.max(slMinA, slMinK * atr5))
+    sSL := sE + d
+    float nxt = zMx.get(kS - 1)
+    sTP := nxt + math.max(tpBufA, tpBufK * atr5)
+    float tpD = sE - sTP
+    if sE - nxt >= roomK * d and tpD > 0
+        sRaw := true
+        sRR := f_rr(tpD, d)
+        sWhy := baseWhy != "" ? baseWhy : d + atr5 > bufMax ? "SL+ATR بیش از " + str.tostring(bufMax, "0.#") + "$" : tpD > tpCapK * atr5 ? "TP دورتر از " + str.tostring(tpCapK, "0.#") + "×ATR" : na(sRR) or sRR < rrMin ? "R:R کمتر از " + str.tostring(rrMin, "0.#") : sRR > rrMax ? "R:R غیرواقعی" : ""
+
+var int lastL = na
+var int lastS = na
+bool coolL = na(lastL) or bar_index - lastL > coolBar
+bool coolS = na(lastS) or bar_index - lastS > coolBar
+// فقط اولین کندلِ هر ستاپ (نه تکرار روی کندل‌های بعدی همان لمس)
+bool newL = lRaw and (not lRaw[1] or kL != kL[1])
+bool newS = sRaw and (not sRaw[1] or kS != kS[1])
+bool longOK  = barstate.isconfirmed and lRaw and lWhy == "" and coolL and (newL or lWhy[1] != "")
+bool shortOK = barstate.isconfirmed and sRaw and sWhy == "" and coolS and (newS or sWhy[1] != "")
+bool longBlk  = barstate.isconfirmed and mktOpen and newL and lWhy != "" and coolL
+bool shortBlk = barstate.isconfirmed and mktOpen and newS and sWhy != "" and coolS
+
+f_px(float p) => str.tostring(p + dgOff, "0.00")
+
+f_draw(int dir, float e, float sl, float tp, float rr) =>
+    color c = dir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0)
+    int x2 = bar_index + expBars
+    line.new(bar_index, e, x2, e, color = c, width = 2)
+    line.new(bar_index, sl, x2, sl, color = color.new(color.red, 0), style = line.style_dashed)
+    line.new(bar_index, tp, x2, tp, color = color.new(color.green, 0), style = line.style_dashed)
+    string t = (dir == 1 ? "▲ خرید " : "▼ فروش ") + entryT + "\nورود " + f_px(e) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp) + "\nR:R " + str.tostring(rr, "0.00")
+    label.new(bar_index, dir == 1 ? low : high, t, style = dir == 1 ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.small)
+
+if longOK
+    lastL := bar_index
+    f_draw(1, lE, lSL, lTP, lRR)
+    alert("XSZ خرید " + entryT + " | ورود " + f_px(lE) + " | SL " + f_px(lSL) + " | TP " + f_px(lTP) + " | R:R " + str.tostring(lRR, "0.00"), alert.freq_once_per_bar_close)
+if shortOK
+    lastS := bar_index
+    f_draw(-1, sE, sSL, sTP, sRR)
+    alert("XSZ فروش " + entryT + " | ورود " + f_px(sE) + " | SL " + f_px(sSL) + " | TP " + f_px(sTP) + " | R:R " + str.tostring(sRR, "0.00"), alert.freq_once_per_bar_close)
+if showBlk and longBlk
+    lastL := bar_index
+    label.new(bar_index, low, "⛔ خرید\n" + lWhy, style = label.style_label_up, color = color.new(color.gray, 30), textcolor = color.white, size = size.tiny)
+if showBlk and shortBlk
+    lastS := bar_index
+    label.new(bar_index, high, "⛔ فروش\n" + sWhy, style = label.style_label_down, color = color.new(color.gray, 30), textcolor = color.white, size = size.tiny)
+
+alertcondition(longOK,  "XSZ ستاپ خرید", "XSZ: ستاپ خرید ناحیه‌ای روی {{ticker}} در {{close}}")
+alertcondition(shortOK, "XSZ ستاپ فروش", "XSZ: ستاپ فروش ناحیه‌ای روی {{ticker}} در {{close}}")
+
+// ───────────────────────── پهنه‌ها روی چارت (فقط آخرین کندل) ─────────────────────────
+var array<box> boxes = array.new<box>()
+if barstate.islast
+    while boxes.size() > 0
+        box.delete(boxes.pop())
+    if showZn and nZ > 0
+        int belowTot = 0
+        for i = 0 to nZ - 1
+            if zHi.get(i) < close
+                belowTot += 1
+        int belowSeen = 0
+        int aboveSeen = 0
+        for i = 0 to nZ - 1
+            bool above = zLo.get(i) > close
+            bool below = zHi.get(i) < close
+            bool inside = not above and not below
+            bool pick = inside
+            if above
+                pick := aboveSeen < nShow
+                aboveSeen += 1
+            if below
+                belowSeen += 1
+                pick := belowTot - belowSeen < nShow   // فقط nShow تای نزدیک‌تر
+            if pick
+                color bc = inside ? color.new(color.yellow, 80) : above ? color.new(color.red, 85) : color.new(color.teal, 85)
+                string lvTx = zMn.get(i) == zMx.get(i) ? f_px(zMn.get(i)) : f_px(zMn.get(i)) + "–" + f_px(zMx.get(i))
+                boxes.push(box.new(bar_index - 40, zHi.get(i), bar_index + 12, zLo.get(i), border_color = color.new(bc, 40), bgcolor = bc, text = zTg.get(i) + " · " + lvTx, text_size = size.small, text_color = color.new(color.gray, 0), text_halign = text.align_right))
+
+// ───────────────────────── جدول فارسی ─────────────────────────
+f_pos(string s) => s == "بالا چپ" ? position.top_left : s == "پایین راست" ? position.bottom_right : s == "پایین چپ" ? position.bottom_left : position.top_right
+var table tb = table.new(f_pos(tblPos), 2, 12, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.new(color.gray, 70))
+f_row(int r, string k, string v, color vc) =>
+    table.cell(tb, 1, r, k, text_color = color.silver, text_size = size.small, text_halign = text.align_right)
+    table.cell(tb, 0, r, v, text_color = vc, text_size = size.small, text_halign = text.align_left)
+
+if barstate.islast and showTbl
+    color bc = bias == 1 ? color.lime : bias == -1 ? color.red : color.silver
+    f_row(0, "سوگیری", biasTx + " · " + ltfTx, bc)
+    f_row(1, "H4 H1 M15 M5", f_arrow(tH4) + " " + f_arrow(tH1) + " " + f_arrow(tM15) + " " + f_arrow(tM5), color.white)
+    f_row(2, "ATR M5", na(atr5) ? "—" : str.tostring(atr5, "0.00") + "$" + (na(atrMd) ? "" : " (میانه " + str.tostring(atrMd, "0.00") + ")"), volBlk ? color.orange : color.white)
+    f_row(3, "ADR مصرف‌شده", na(adrUsed) ? "—" : str.tostring(adrUsed, "#") + "٪ از " + str.tostring(adr, "0.0") + "$", adrBlk ? color.orange : color.white)
+    f_row(4, "نیم‌پهنا", "±" + str.tostring(hw, "0.00") + "$", color.white)
+    // نزدیک‌ترین سطوح
+    int r = 5
+    int cnt = 0
+    for i = 0 to (nZ > 0 ? nZ - 1 : 0)
+        if nZ > 0 and cnt < 2 and zMn.get(i) > close
+            float lv = zMn.get(i)
+            f_row(r, "بالا " + str.tostring(cnt + 1), f_px(lv) + " (+" + str.tostring(lv - close, "0.0") + "$) " + zTg.get(i), color.new(color.red, 20))
+            r += 1
+            cnt += 1
+    cnt := 0
+    for i = (nZ > 0 ? nZ - 1 : 0) to 0
+        if nZ > 0 and cnt < 2 and zMx.get(i) < close
+            float lv = zMx.get(i)
+            f_row(r, "پایین " + str.tostring(cnt + 1), f_px(lv) + " (−" + str.tostring(close - lv, "0.0") + "$) " + zTg.get(i), color.new(color.teal, 0))
+            r += 1
+            cnt += 1
+    string rs = baseWhy != "" ? "مسدود: " + baseWhy : "مجاز"
+    f_row(r, "وضعیت ریسک", rs, baseWhy != "" ? color.orange : color.lime)
+    r += 1
+    f_row(r, "قیمت داریاگلد", f_px(close) + " [" + str.tostring(close, "0.00") + "]", color.white)
