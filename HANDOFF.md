@@ -125,6 +125,106 @@ Deployed (2026-11-21 01:58 Tehran):
   first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
 - `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
   brief, plain ladder) are live from the next GitHub Actions run.
+- Group guide updated in place (owner t247u, 2026-11-21): 2981 and 2982 (guide text from `docs/group_guide_fa.md`)
+  edited at 03:12 Tehran; 2979 and 2980 (indicator files → `ZARVA_Map.pine`, `ZARVA_Map_en.pine`, new captions)
+  replaced at 03:25 Tehran. No new group messages were created. The one-off `guide-edit` branch/workflow is deleted.
+  Caution: the first attempt (02:30 Tehran) timed out on editMessageMedia and then on a fallback sendDocument; if
+  Telegram processed that late, one extra «ZARVA_Map.pine» document may sit in the group — check and delete it by hand.
+- Read-only health probe stays on branch `name-probe` (push → getMe, getWebhookInfo, names, descriptions, menus).
+
+**Telegram outage** (owner t245u «دستورها کار نمی‌کنه»): from ~Nov 20 evening every authenticated Bot API call for this bot hangs (invalid tokens get 401 at once), so no command replies. Not caused by our code; `tg()` now has a 20 s timeout. See §8. |
+| 2026-11-21 | **Final audit** (owner t244u, t246u, branch `final-audit`): new names; ONE price basis DaryaGold = mid + 0.02 (levels too, old snapshots rebased); stricter SL rule (SL distance + M5 ATR ≤ $9); phone-friendly `/levels` ladder, `/brief`, setup cards, `/trend`; menu descriptions + bot description/short description; indicator renamed to ZARVA Map with the same basis and SL rule. tg-bot build `2026-11-21-assistant-v5.1-onebasis`. |
+
+## 3. Architecture
+```
+Telegram ──webhook──▶ Supabase Edge Function tg-bot (Deno, verify_jwt=false)
+                         │  /tg     Telegram updates (secret_token header checked)
+                         │  /tick   pg_cron every 2 min (x-report-key header = webhook secret from Vault)
+                         │  /state, /admin/setup   GitHub Actions (OIDC token, main branch only)
+                         │  /health public, read-only (build, Tehran time, market_closed)
+                         ▼
+                  Postgres (RLS on, no policies; service role only)
+                    bot_state (one jsonb row: settings, levels snapshot, queue, sent alerts, menu_version)
+                    setups (every shown setup, tracked silently), price_observations (/calibrate),
+                    signals, journal (legacy, read-only now)
+                  Vault: telegram_bot_token, gh_dispatch_token, tg_webhook_secret
+
+pg_cron ──dispatch──▶ GitHub Actions .github/workflows/telegram-bot.yml (runs bot/bot.py from **main**)
+                         levels snapshot (tools/level_view.py), /brief, queued /levels, briefs 07:00 / 11:15 / 16:15,
+                         news calendar (ForexFactory feed), Friday and close reminders
+```
+- Edge Function code: `supabase/functions/tg-bot/` — `app.js` (routes, tick, Telegram I/O), `lib.js` (commands, menus,
+  `/levels` card, help), `assist.js` (market data from Dukascopy, trend, setups, `/e`, alerts), `calib.js` (/calibrate).
+- Market data in the Edge Function: Dukascopy 1-minute bid/ask, aggregated to M5/M15/H1/H4. Trend per TF = confirmed
+  swings + EMA20/50; the big direction = H4 and H1 agreeing.
+- Python side: `bot/bot.py` + `tools/` (levels, news, brief). **Wording changes in Python go live only after merging to
+  `main`**, because the workflow checks out `main`. Edge Function changes go live on deploy.
+- Cron jobs (pg_cron, UTC): `m5-tick */2 3-20 * * 1-5`, `m5-early */15 4-7 * * 1-5`, `m5-scan */15 8-20 * * 1-5`,
+  `m5-asia-shadow 30,45 3 * * 1-5`, `m5-cron-log-cleanup 30 3 * * *`. The old `m5-report` jobs are unscheduled.
+- Telegram menus, the bot description and short description (fa + default) are set by `menuCalls()` once per `MENU_VERSION` on the next `/tick` (`state.menu_version`), or by
+  `/admin/setup set_commands`.
+
+## 4. Commands (tg-bot build 2026-11-21-assistant-v5.3-nyhours)
+Owner private chat (45639251), menu order: `/setup` `/e` `/trend` `/levels` `/brief` `/status` `/balance` `/offset`
+`/calibrate` `/groupoff` `/groupon` `/help`.
+Group «⬩ Z A R V A ⬩» (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
+variant has no toman or balance; respects `/groupoff`).
+Hidden aliases: `/signal` and `/scan` → `/setup`; `/start` → `/help`.
+Removed for good (answer «دستور ناشناخته»): `/trade /loss /win /undo /shadow /entered /tp /sl /closed /journal /pnl`,
+the `/report` endpoint, the old inline buttons, `ledger.js`.
+
+- `/setup`: (phone card: 📍 ورود / 🛑 حد ضرر / 🎯 حد سود / ⏳ معتبر تا / 💡 why) up to 2 buy + 2 sell setups from the levels snapshot and the live price: entry range (≤ $1.5), SL, TP1, TP2,
+  credibility 0–100 (⚠ under 40), valid until (45 min, cut at news / Friday 23:30 / close), plain "why" line. Owner card has
+  toman for 1 and 0.5 unit after the fee (best and worst edge). A setup is rejected when SL distance + M5 ATR(14) > $9 or
+  net R:R < 0.6 (with the fee). Every shown setup is logged to `setups` and resolved silently.
+- `/e [buy|sell] <price>`: SL/TP1/TP2 for an entry; side optional (taken from the big direction).
+- `/trend`, `/levels`, `/brief`: see `docs/bot_messages_samples_fa.md` (before/after samples of every message type).
+- Alerts (owner only, from `/tick`): level touch (only within **$1 of the level price**, once per level per day; says how
+  far price went, the gap and where it is now: bounced / at the level / crossed / crossed and came back), M15/H1 trend
+  change, volatility high/low, major US news ~10 min ahead.
+- Wording rules (enforced by tests): «دریاگلد», «ضرر» (never «زیان»), never «قوی» for levels, no disclaimers, formal
+  imperative, ZWNJ, prices in Latin digits inside code for tap-to-copy, other digits Persian.
+
+## 5. Cost model and price bases
+- 1 unit = 80,000 toman per $1, 0.5 unit = 40,000; fee 14,000 toman once per trade; spread margin $0.25 (a buy fills at
+  the ask); margins 1,000,000 / 500,000; stop-out at 80% loss of equity.
+- **ONE price basis since 2026-11-21 (owner t244u): DaryaGold = Dukascopy mid + `dg_offset` (default 0.02)** for levels,
+  the live price, setups, `/e`, alerts and the indicator. Levels are built on bid bars and shifted by half the typical
+  feed spread: level = bid + 0.175 + 0.02 = bid + 0.195 (`assist.levelOffset`, Python `broker_daryagold.set_mid_offset`,
+  fallback 0.195 in `bot.py`). Old snapshots carry `snap.offset` (0.30 = old bid basis) and are moved by `rebaseSnap`.
+  `/offset <x>` sets the one offset; `/calibrate <DaryaGold price>` measures it against the mid ("dukascopy_mid").
+  Before 2026-11-21: levels = bid + 0.30, live = mid + 0.02 (about 0.1 apart).
+
+## 6. Research results (no edge)
+- Phase 4 (`backtest/phase4/REPORT.md`): live engines under the DaryaGold cost model — IS −0.31R per fill (112 fills,
+  t −2.4), OOS −0.28R (135 fills, t −2.3), OOS net −7.71M toman; losses concentrated 11:15–16:15 Tehran.
+- v2 engines failed out-of-sample (2026-11-13).
+- Freqtrade research (branch `freqtrade-research`, commit 32c6f01, `freqtrade/results/RESULTS.md`): **S2 momentum short
+  is the only weak candidate** — IS 30 trades PF 1.34; OOS 16 trades, 43.8% win, PF 1.13, +355,680 toman, 62nd percentile
+  vs random. Not significant; not deployed.
+- Conclusion: no backtested edge. The bot is a decision aid, not a signal service.
+
+## 7. TradingView indicator (ZARVA Map, formerly Xauscalper Map)
+- Merged into `main` from branch `tv-decision-map` (commits 90625ad, e4d55cb). The older Xauscalper Zones indicator
+  (`tradingview/xauscalper_zones*.pine`, `tradingview/src/`) came along with the merge and is superseded by the Map.
+- Source `tradingview/map/template.pine` + `tradingview/map/build.py` → `tradingview/xauscalper_map.pine` (Persian) and
+  `xauscalper_map_en.pine` (identical logic, only texts differ). Copies on the box: `/workspace/xauscalper_map.pine`,
+  `/workspace/xauscalper_map_en.pine`. Spec `docs/decision_map_spec.md`; phone how-to `tradingview/map_howto_fa.md`.
+- Features: phone mode, trend strip (5/15/1H/4H + big direction + short-term state), market light, room-to-trade,
+  best setup with entry band, SL, TP1/TP2 with toman, credibility and countdown. One basis: mid + 0.02 (bid chart + 0.175 + 0.02);
+  same SL rule (risk + ATR ≤ 9). Display title «ZARVA Map · XAUUSD» (short ZRV); file names kept (`xauscalper_map*.pine`).
+  Free TradingView plan: 2 `request.security` calls.
+- Sun/Mon 00:00–00:30 (checked 2026-11-21): `f_limit` and `f_clock` already treat 00:00–00:30 as the previous trading
+  day's tail (Saturday = Friday tail until 00:30 with entries closed after Friday 23:30; Sunday/Monday = closed), same as
+  the bot's `entryLimit`.
+
+## 8. Deployed vs pending
+Deployed (2026-11-21 01:58 Tehran):
+- tg-bot **v29** (build `2026-11-21-assistant-v5.3-nyhours`; hours follow New York time incl. DST, alerts from 07:00 Tehran): ZARVA names, one price basis, SL + ATR ≤ $9, phone cards,
+  20 s `tg()` timeout. `MENU_VERSION` `2026-11-21-t246u-b` (menus + bot description/short description) is applied by the
+  first `/tick` after deploy (the tick cron runs Mon–Fri only) or by the setup workflow (`mode=setup`).
+- `main` contains everything (branch `final-audit` fast-forwarded). Python changes (0.195 level basis, news lines in the
+  brief, plain ladder) are live from the next GitHub Actions run.
 - Group guide (owner t247u: edit in place): messages 2979/2980 (indicator fa/en, editMessageMedia → `ZARVA_Map.pine`,
   `ZARVA_Map_en.pine`) and 2981/2982 (guide text, editMessageText from `docs/group_guide_fa.md`). One-off workflow on
   branch `guide-edit` (`post/edit.py`): it waits for Telegram's getMe (the Bot API was hanging again from ~02:35 Tehran),
@@ -133,7 +233,7 @@ Deployed (2026-11-21 01:58 Tehran):
   Caution: the first attempt (02:30 Tehran) timed out on editMessageMedia and on the fallback sendDocument; if Telegram
   processed that late, an extra «ZARVA_Map.pine» document may appear in the group — check and delete it by hand.
 
-**Telegram outage (resolved 2026-11-21 ~02:00 Tehran, outside our code):** from ~2026-11-20 evening every authenticated
+**Telegram outages (2026-11-20 evening → 02:00, again 02:35 → ~03:10 Tehran, outside our code):** from ~2026-11-20 evening every authenticated
 Bot API call for this bot hung (from Supabase and GitHub runners) while a wrong token got 401 at once, so commands got no
 reply. At 01:59 Tehran the setup workflow got through: webhook OK, menus and descriptions set, and Telegram delivered the
 queued updates (POST /tg 200, no errors; the group's queued /setup /trend /levels /brief were answered by the bot).
@@ -148,7 +248,7 @@ Pending / owner questions:
    The owner's message said "close Friday 17:00 NY, break 17:00–18:00 NY", but the required winter result
    (00:30 close / 01:30 open Tehran) means close 16:00 NY and reopen 17:00 NY; that is what is implemented.
    The pg_cron/GitHub cron schedules are in UTC and already cover both seasons.
-2. Confirm the group guide edit result (see above) once Telegram answers again.
+2. Look in the group once for a possible extra «ZARVA_Map.pine» document from the 02:30 attempt (see above).
 
 ## 9. Security rules
 - Never print, commit or log tokens. Secrets live in Supabase Vault and GitHub secrets only.
