@@ -59,13 +59,13 @@ int    closeHM = input.int(30, "@I_CLOSE@", minval = 0, maxval = 459, group = GF
 int    friHM   = input.int(2330, "@I_FRI@", minval = 0, maxval = 2359, group = GF)
 
 const string GN = "@G_NEWS@"
-bool n1on = input.bool(false, "@I_NEWS@ 1", inline = "n1", group = GN)
+bool n1on = input.bool(false, "@I_NEWS1@", inline = "n1", group = GN)
 int  n1s  = input.time(timestamp("2026-11-25T16:45:00+03:30"), "@I_FROM@", inline = "n1", group = GN)
 int  n1e  = input.time(timestamp("2026-11-25T17:30:00+03:30"), "@I_TO@", inline = "n1", group = GN)
-bool n2on = input.bool(false, "@I_NEWS@ 2", inline = "n2", group = GN)
+bool n2on = input.bool(false, "@I_NEWS2@", inline = "n2", group = GN)
 int  n2s  = input.time(timestamp("2026-11-24T12:15:00+03:30"), "@I_FROM@", inline = "n2", group = GN)
 int  n2e  = input.time(timestamp("2026-11-24T12:45:00+03:30"), "@I_TO@", inline = "n2", group = GN)
-bool n3on = input.bool(false, "@I_NEWS@ 3", inline = "n3", group = GN)
+bool n3on = input.bool(false, "@I_NEWS3@", inline = "n3", group = GN)
 int  n3s  = input.time(timestamp("2026-11-27T11:00:00+03:30"), "@I_FROM@", inline = "n3", group = GN)
 int  n3e  = input.time(timestamp("2026-11-27T11:45:00+03:30"), "@I_TO@", inline = "n3", group = GN)
 
