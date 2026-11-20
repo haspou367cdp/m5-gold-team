@@ -95,10 +95,10 @@ A bare label of just "CPI" or a lone "FOMC" without minutes/decision is **not** 
 - **Exchange / real volume** and a real volume-profile (POC / VAH / VAL). Tick volume is a proxy only and is labelled as such on every VWAP and relative-volume line.
 - **Live official cash 2Y** and **live real yield / breakevens**. FRED DGS2, DFII10, T5YIE and T10YIE are **daily and lagged**. Yahoo `2YY=F` is **2-Year Yield Futures**, not the cash Treasury; it is labelled as a futures proxy. Yahoo `^IRX` is the 13-week bill and is not used as a 2Y stand-in.
 - **A statistical edge.** Prior backtests of direction / levels did not show one after costs. The two new engines are unvalidated and must be tested separately out of sample (`preregistration_engines.md`). The brief always says so.
-- **Broker-identical quotes and spreads.** DaryaGold is shown as Dukascopy bid + 0.3 (calibrated 2026-11-13 15:37 Tehran, uncertainty ±0.5). The brief prints both. Live broker spread may still differ.
+- **Broker-identical quotes and spreads.** DaryaGold is shown as Dukascopy mid + 0.02 (one basis since 2026-11-21; levels from bid bars = bid + 0.195; was bid + 0.3 calibrated 2026-11-13). The brief prints both. Live broker spread may still differ.
 
 ## Limitations
-- Dukascopy prices are **bid**, a liquidity-provider feed. DaryaGold display uses bid + 0.3 (uncertainty ±0.5); spreads may still differ. Tick volume, not real volume (VWAP is approximate).
+- Dukascopy prices are **bid**, a liquidity-provider feed. DaryaGold display uses mid + 0.02 (levels: bid + 0.195); spreads may still differ. Tick volume, not real volume (VWAP is approximate).
 - The Dukascopy endpoint is an unofficial public chart feed (no SLA). If it fails, the Yahoo `GC=F` fallback is futures (basis vs spot, can be several $), has no spread and is delayed ~10 min.
 - `/workspace/data/gold_1m` (old shared feed) is stale since 2026-11-06 — not used.
 - Level strengths and verdict thresholds are heuristics, not backtested, and are not shown in the brief. News windows are only as good as what M5-News enters; tier keywords can mis-tag an unusual label.

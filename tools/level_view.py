@@ -42,8 +42,8 @@ KIND_FA = {   # plain words for a beginner (same wording as the Edge Function's 
     "London high": "سقف ظهر امروز", "London low": "کف ظهر امروز",
     "NY high": "سقف عصر", "NY low": "کف عصر",
     "Prev NY high": "سقف عصر دیروز", "Prev NY low": "کف عصر دیروز",
-    "H1 swing high": "جایی که قیمت اخیراً از آن برگشته", "H1 swing low": "جایی که قیمت اخیراً از آن برگشته",
-    "H4 swing high": "جایی که قیمت در روزهای اخیر از آن برگشته", "H4 swing low": "جایی که قیمت در روزهای اخیر از آن برگشته",
+    "H1 swing high": "نقطه‌ی برگشت اخیر", "H1 swing low": "نقطه‌ی برگشت اخیر",
+    "H4 swing high": "نقطه‌ی برگشت روزهای اخیر", "H4 swing low": "نقطه‌ی برگشت روزهای اخیر",
     "Round $100": "عدد رُند", "Round $50": "عدد رُند",
     "London OR high": "سقف شروع ظهر", "London OR low": "کف شروع ظهر",
     "NY OR high": "سقف شروع عصر", "NY OR low": "کف شروع عصر",
@@ -52,16 +52,14 @@ KIND_FA = {   # plain words for a beginner (same wording as the Edge Function's 
     "Month high": "سقف این ماه", "Month low": "کف این ماه",
     "Prev month high": "سقف ماه قبل", "Prev month low": "کف ماه قبل",
 }
-# Stable label order when several sources coincide.
+# Most telling names first; at most two per level so a phone line does not wrap (= assist.js KIND_RANK, owner t246u).
 _KIND_ORDER = [
-    "PDH", "PDL", "Week high", "Week low", "Prev week high", "Prev week low",
-    "Asia high", "Asia low", "London high", "London low", "NY high", "NY low",
-    "Prev NY high", "Prev NY low",
-    "London OR high", "London OR low", "NY OR high", "NY OR low",
-    "H1 swing high", "H1 swing low", "Equal high", "Equal low", "VWAP",
-    "Round $100", "Round $50",
-    "Month high", "Month low", "Prev month high", "Prev month low",
+    "Prev month high", "Prev month low", "Month high", "Month low", "Prev week high", "Prev week low", "Week high", "Week low",
+    "PDH", "PDL", "Asia high", "Asia low", "London high", "London low", "NY high", "NY low", "Prev NY high", "Prev NY low",
+    "Equal high", "Equal low", "London OR high", "London OR low", "NY OR high", "NY OR low", "VWAP",
+    "H1 swing high", "H1 swing low", "H4 swing high", "H4 swing low",
 ]
+_OR_OF = {"London OR high": "London high", "London OR low": "London low", "NY OR high": "NY high", "NY OR low": "NY low"}
 MONTH_KINDS = frozenset({"Month high", "Month low", "Prev month high", "Prev month low"})
 
 # Display-only weights. Same figures as levels.W for set B kinds; previous-week H/L
@@ -115,18 +113,23 @@ def _usd(v):
     return s or "0"
 
 
-def label_fa(kinds, price_dg=None):
+def _kind_rank(k):
+    if k.startswith("Round"):
+        return 20.5
+    return _KIND_ORDER.index(k) + 1 if k in _KIND_ORDER else 99
+
+
+def label_fa(kinds, price_dg=None, limit=2):
+    kinds = [k for k in kinds if not (k in _OR_OF and _OR_OF[k] in kinds)]
     seen, out = set(), []
-    for k in sorted(kinds, key=lambda x: _KIND_ORDER.index(x) if x in _KIND_ORDER else 99):
+    for k in sorted(kinds, key=_kind_rank):
         lab = KIND_FA.get(k)
-        if k in ("Round $100", "Round $50") and price_dg is not None:
+        if k.startswith("Round") and price_dg is not None:
             lab = f"عدد رُند {int(round(float(price_dg) / 50.0) * 50)}"
         if lab and lab not in seen:
             seen.add(lab)
             out.append(lab)
-    if len(out) > 2:
-        return "، ".join(out[:-1]) + " و " + out[-1]
-    return " و ".join(out)
+    return " و ".join(out[:limit])
 
 
 def display_score(item):
@@ -251,6 +254,18 @@ def plain_trend_line(h4, h1, m15, m5):
     if h4 == "خنثی" and h1 == "خنثی":
         return "بازار فعلاً جهت مشخصی ندارد و بیشتر در یک محدوده بالا و پایین می‌رود."
     return f"روند ۴ ساعته {h4} و ۱ ساعته {h1} است و با هم نمی‌خوانند؛ پس جهت بزرگ بازار فعلاً روشن نیست."
+
+
+_ARROW = {"صعودی": "⬆️", "نزولی": "⬇️", "خنثی": "➖", "نامشخص": "❔"}
+
+
+def trend_head(h4, h1):
+    """Short phone headline (= assist.js trendHead): «⬇️ جهت کلی: نزولی (رو به پایین)»."""
+    higher = _htf_bias(h4, h1)
+    o = higher or ("خنثی" if h4 == "خنثی" and h1 == "خنثی" else "نامشخص")
+    word = {"خنثی": "بدون جهت"}.get(o, o)
+    what = {"صعودی": "رو به بالا", "نزولی": "رو به پایین", "خنثی": "بالا و پایین در یک محدوده"}.get(o, "۴ و ۱ ساعته با هم نمی‌خوانند")
+    return f"{_ARROW[o]} جهت کلی: {word} ({what})"
 
 
 def trend_of(lv):
@@ -452,42 +467,41 @@ def _as_of_hm(snap):
 
 
 def format_block(snap):
-    """Shared body for every market card, in plain Persian for a beginner: price and time, what a level
-    is, one trend sentence, news / Friday notes, 2 levels above + 2 below with the dollar distance and a
-    plain origin, and how far price usually moves in 5 minutes. No jargon (ATR, H1, OR, swing), no
-    importance labels, no disclaimer."""
+    """Shared body for every market card, phone layout in plain Persian (owner t240u-t246u; = lib.js levelsMsg):
+    trend headline, news / Friday notes, a price ladder (levels above far -> near, the current price, levels below
+    near -> far) with dollar distances and at most two plain origins per level, then what a level is and how far
+    price usually moves in 5 minutes. No jargon (ATR, H1, OR, swing, zone), no importance labels, no disclaimer."""
     if not snap or snap.get("price_dg") is None:
         return "داده‌ی سطوح در دسترس نیست"
     lines = []
-    head = f"قیمت دریاگلد: `{_px(snap['price_dg'])}`"
-    hm = _as_of_hm(snap)
-    if hm:
-        head += f"  ·  ساعت {hm} به وقت تهران"
-    lines.append(head)
-    lines.append("~~سطح یعنی قیمتی که بازار قبلاً آنجا ایستاده یا برگشته است؛ نزدیک این قیمت‌ها احتمال توقف یا برگشت قیمت بیشتر است.~~")
     tr = snap.get("trend") or {}
     if tr:
         g = lambda tf: (tr.get(tf) or {}).get("trend") or "خنثی"
-        lines += ["", "روند: " + plain_trend_line(g("H4"), g("H1"), g("M15"), g("M5"))]
+        lines.append(trend_head(g("H4"), g("H1")))
     notes = [x for x in (snap.get("news_line"), snap.get("friday_line")) if x]
     if notes:
         lines += [""] + notes
     short = snap.get("short") or {}
-    for title, hint, rows, up in (("**⬆️ بالای قیمت**", "~~اگر قیمت بالا برود، ممکن است اینجا متوقف شود یا برگردد~~", short.get("above") or [], True),
-                                  ("**⬇️ زیر قیمت**", "~~اگر قیمت پایین بیاید، ممکن است اینجا متوقف شود یا برگردد~~", short.get("below") or [], False)):
-        lines += ["", title, hint]
-        if not rows:
-            lines.append("—")
-            continue
-        for r in rows:
-            d = abs(float(r.get("distance") or 0))
+    P = float(snap["price_dg"])
+
+    def rows(items, up):
+        out = []
+        for r in sorted(items, key=lambda x: -float(x["price_dg"])):
+            d = abs(float(r["price_dg"]) - P)
             lab = label_fa(r.get("kinds") or [], r.get("price_dg")) or r.get("label_fa")
-            lines.append(f"▸ `{_px(r['price_dg'])}`، {d:.1f} دلار {'بالاتر' if up else 'پایین‌تر'}")
+            out.append(f"{'🔺' if up else '🔻'} `{_px(r['price_dg'])}` · {d:.1f} دلار {'بالاتر' if up else 'پایین‌تر'}")
             if lab:
-                lines.append(f"   {lab}")
+                out.append(f"~~      {lab}~~")
+        return out or ["—"]
+
+    lines += ["", "**⬆️ بالای قیمت**"] + rows(short.get("above") or [], True)
+    hm = _as_of_hm(snap)
+    lines += ["", f"**💰 قیمت الان: `{_px(P)}`**" + (f" ~~(ساعت {hm})~~" if hm else ""), ""]
+    lines += ["**⬇️ زیر قیمت**"] + rows(short.get("below") or [], False)
+    lines += ["", "~~سطح = قیمتی که بازار قبلاً آنجا ایستاده یا برگشته؛ نزدیک سطح‌ها قیمت ممکن است بایستد یا برگردد.~~"]
     ctx = context_line(snap)
     if ctx:
-        lines += ["", f"~~{ctx}~~"]
+        lines.append(f"~~{ctx}~~")
     return "\n".join(lines)
 
 
@@ -506,7 +520,7 @@ def snapshot(lv, cfg, now=None, context=None):
         "invalidation": ctx.get("invalidation"),
         "price_bid": float(lv["price_bid"]),
         "price_dg": short["price_dg"],
-        "offset": float(cfg.get("price_offset_usd") or DG.offset_usd(cfg) or 0.3),
+        "offset": float(cfg.get("price_offset_usd") or DG.offset_usd(cfg) or 0.195),
         "atr_h1": lv.get("atr_h1_14"),
         "atr_h4": lv.get("atr_h4_14"),
         "atr_m5": lv.get("atr_m5_14"),

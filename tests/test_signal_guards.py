@@ -25,8 +25,8 @@ CFG = DG.load_config()
 
 # The card the owner saw around 18:30 Tehran on 2026-11-20.
 ENTRY_DG, SL_DG, TP_DG = 3595.4, 3597.2, 3566.4
-# bid-space equivalents at a +0.3 offset
-ENTRY, SL, TP = 3595.1, 3596.9, 3566.1
+# bid-space equivalents (that card used bid + 0.3; the single basis since 2026-11-21 is bid + 0.195)
+ENTRY, SL, TP = 3595.2, 3597.0, 3566.2
 PRICE = 3576.3   # ~3576.6 DaryaGold
 ATR9 = 9.0
 INV = 3590.37    # M15 neutralisation from that session's brief
@@ -158,7 +158,7 @@ def test_format_block_drops_importance_and_touch_count():
     assert "تماس M15" not in block and "قوی" not in block and "زیان" not in block
     # plain wording for beginners: dollar distance and plain origin, no ATR / OR / regime / zone jargon
     assert "3.7 دلار پایین‌تر" in block and "کف شروع عصر" in block
-    assert "دریاگلد" in block and "18:30 به وقت تهران" in block
+    assert "قیمت الان" in block and "ساعت 18:30" in block and block.startswith("⬇️ جهت کلی")
     assert not any(x in block for x in ("ATR", "OR ", "رژیم", "پهنه", "M5", "H1", "H4"))
     assert "ورود" not in block and "حد ضرر" not in block and "هدف" not in block
 

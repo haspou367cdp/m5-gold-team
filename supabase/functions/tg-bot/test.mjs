@@ -41,11 +41,12 @@ globalThis.fetch = async (url, init = {}) => {
       SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } });
     }
     if (url.endsWith("/setMyCommands")) { (DB.menus = DB.menus || []).push(b); DB.menu = b.commands; return J({ ok: true }); }
+    if (url.endsWith("/setMyDescription") || url.endsWith("/setMyShortDescription")) { (DB.desc = DB.desc || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/deleteMyCommands")) { (DB.menuDeleted = DB.menuDeleted || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/setWebhook")) { DB.hook = b; return J({ ok: true }); }
     if (url.endsWith("/answerCallbackQuery")) { (DB.answers = DB.answers || []).push(b); return J({ ok: true }); }
     if (url.endsWith("/editMessageReplyMarkup")) { (DB.edits = DB.edits || []).push(b); return J({ ok: true }); }
-    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "XauscalperBot" } });
+    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "ZarvaGoldBot" } });
     if (url.endsWith("/getWebhookInfo")) return J({ ok: true, result: { url: DB.hook && DB.hook.url, pending_update_count: 0 } });
   }
   const tm = url.match(/\/rest\/v1\/(signals|journal)(\?.*)?$/);
@@ -127,6 +128,8 @@ check("setup menus: owner chat = 12 commands, groups/default = setup·trend·lev
     return own && grp && def && own.commands.length === 12 && names(grp) === "setup,trend,levels,brief" && names(def) === names(grp) &&
       !own.commands.some((c) => ["scan", "signal", "trade", "journal", "shadow", "loss", "win", "undo", "pnl", "tp", "sl", "closed", "entered"].includes(c.command)) &&
       own.commands.every((c) => (c.command === "help" || (HELP.includes(`/${c.command}`) && HELP.includes(c.description))) && !/\d/.test(c.description)); })());
+check("setup: bot description and short description (default + fa) name the bot and the group", (DB.desc || []).length === 4 &&
+  DB.desc.every((x) => (x.description || x.short_description || "").includes("Z A R V A")));
 check("setup: secrets stored, webhook set, announced once", o.telegram_token === "stored" && o.gh_token === "stored" &&
   o.webhook_url_ok && o.announced && SENT.length === 1 && SENT[0].text.includes("فوری جواب") &&
   st().equity_toman === 2085600 && DB.hook.max_connections === 1 &&
@@ -144,7 +147,7 @@ check("wrong secret_token -> 403", (await tgSend("/help", 45639251, "nope")).sta
 const v0 = DB.row.version;
 check("other chat ignored", (await tgSend("/balance 1", 999)).out.length === 0 && DB.row.version === v0);
 let r = await tgSend("/help"); check("/help instant card", r.out.length === 1 && r.out[0].includes("راهنما") && r.out[0].startsWith("\u200f") &&
-  r.out[0].includes("\u200f\u200e<code>/e sell 3531.80</code>\u200e  حد ضرر و حد سود برای یک ورود") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
+  r.out[0].includes("\u200f\u200e<code>/e sell 3531.80</code>\u200e  حد ضرر و سود برای قیمت ورود") && r.out[0].includes("۱۱:۱۵ و ۱۶:۱۵") &&
   !/زیان|۱۱:۳۰/.test(r.out[0]) && r.out[0].split("\n").every((l) => !l.trim() || l.startsWith("\u200f")));
 r = await tgSend("/balance ۲٬۰۸۵٬۶۰۰"); check("/balance Persian digits", st().equity_toman === 2085600 && r.out[0].includes("۲٬۰۸۵٬۶۰۰"));
 for (const bad of ["/balance", "/balance -5", "/balance nan"]) {
@@ -241,7 +244,7 @@ check("/health on Saturday: market_closed + closed line, no Telegram call", h.ok
 CLOCK = U("2026-11-11T10:30:00Z"); h = await (await app(new Request(FN + "/health"))).json();
 check("/health on a weekday: market open", h.market_closed === false && !h.closed_line);
 // ---- /offset (owner chat only)
-r = await tgSend("/offset"); check("/offset shows the default 0.3", r.out[0].includes("۰٫۳") && r.out[0].includes("<code>/offset 0.4</code>"));
+r = await tgSend("/offset"); check("/offset shows the single basis: mid + default 0.02", r.out[0].includes("۰٫۰۲") && r.out[0].includes("میانه") && r.out[0].includes("<code>/offset 0.05</code>"));
 r = await tgSend("/offset ۰٫۴"); check("/offset ۰٫۴ (Persian digits) sets 0.4", st().dg_offset === 0.4 && r.out[0].includes("ثبت شد") && r.out[0].includes("۰٫۴"));
 for (const bad of ["/offset abc", "/offset 9", "/offset 0.4 0.5x"]) { r = await tgSend(bad); check(`/offset rejects '${bad}'`, st().dg_offset === 0.4 && r.out[0].includes("ثبت نشد")); }
 r = await tgSend("/offset -0.2"); check("/offset accepts a negative offset", st().dg_offset === -0.2);
@@ -267,11 +270,11 @@ async function tgUpdate(update) {
     body: JSON.stringify({ update_id: uid++, ...update }) }), jw);
   return { status: r.status, out: SENT.map((x) => x.text), chats: SENT.map((x) => String(x.chat_id)) };
 }
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/status" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/status" } });
 check("owner /status in the group is ignored", r.out.length === 0 && DB.row.version === vG);
 r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup" }, text: "TEST2" } });
 check("plain group message is ignored", r.out.length === 0);
-r = await tgUpdate({ channel_post: { chat: { id: Number(GID), type: "channel", title: "BAROBAX" }, text: "/levels" } });
+r = await tgUpdate({ channel_post: { chat: { id: Number(GID), type: "channel", title: "• Z A R V A •" }, text: "/levels" } });
 check("channel_post updates are ignored", r.out.length === 0 && DB.row.version === vG);
 DISPATCHED.length = 0; DB.row.state.last_dispatch = 0; DB.row.state.pending_cmds = [];
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
@@ -295,7 +298,7 @@ check("Saturday /levels snapshot is mirrored", r.out.length === 2 && r.chats[1] 
 r = await tgSend("/brief");
 check("Saturday /brief closed line is mirrored", r.out.length === 2 && r.chats[1] === GID && r.out[0] === r.out[1] && r.out[0].includes("بازار بسته است"));
 DB.row.state.group_cmd_at = {};
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 777 }, text: "/brief" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 777 }, text: "/brief" } });
 check("Saturday: member /brief in the group gets the closed line in the group only", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("بازار بسته است"));
 check("publicReply leaves /levels untouched and drops data errors", publicReply("/levels", "سطوح") === "سطوح" && publicReply("/setup", "داده‌ی قیمت در دسترس نیست") === null);
 CLOCK = U("2026-11-11T10:30:00Z");
@@ -318,7 +321,7 @@ DISPATCHED.length = 0;
 r = await tgSend("/levels");
 check("/levels is not mirrored while group sending is off", r.out.length === 1 && r.chats[0] === "45639251" && r.out[0].includes("سطوح") && DISPATCHED.length === 0);
 const geOff = st().group_enabled;
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/groupon" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/groupon" } });
 check("/groupon in the group is ignored", r.out.length === 0 && st().group_enabled === geOff);
 r = await tgSend("/groupon", 999);
 check("/groupon from another chat is ignored", r.out.length === 0 && st().group_enabled === false);
@@ -332,13 +335,13 @@ check("/levels is mirrored again after /groupon", r.out.length === 2 && r.chats[
 CLOCK = U("2026-11-11T10:30:00Z");
 DB.row.state.levels = { computed_at_tehran: "2026-11-11 13:50:00", block: LVBLOCK };
 DB.row.state.group_cmd_at = {}; DB.row.state.pending_cmds = []; DB.row.state.last_dispatch = 0; DISPATCHED.length = 0;
-const G = (text, from = 777, id = Number(GID)) => tgUpdate({ message: { chat: { id, type: "supergroup", title: "BAROBAX" }, from: { id: from }, text } });
+const G = (text, from = 777, id = Number(GID)) => tgUpdate({ message: { chat: { id, type: "supergroup", title: "• Z A R V A •" }, from: { id: from }, text } });
 r = await G("/levels");
 check("member /levels in the group: group copy only, no buttons, never to the owner", r.out.length === 1 && r.chats[0] === GID && r.out[0].includes("سطوح") && !r.out[0].includes("تومان") && !SENT[0].reply_markup);
 r = await G("/levels");
 check("group repeat within 60 s is ignored silently", r.out.length === 0);
 CLOCK = U("2026-11-11T10:31:01Z");
-r = await G("/levels@XauscalperBot");
+r = await G("/levels@ZarvaGoldBot");
 check("/levels@BotName answers after the cooldown", r.out.length === 1 && r.chats[0] === GID);
 CLOCK = U("2026-11-11T10:33:00Z");
 r = await G("/levels@OtherBot");
@@ -377,11 +380,12 @@ const T0 = Date.parse("2026-11-20T12:37:44Z");
 check("parseDuka + pickFeed: latest bar at or before now, ask matched, age from bar end",
   (() => { const b = parseDuka("_cb([[" + (T0 - 104000) + ",1,1,1,3569.5,1],[" + (T0 - 44000) + ",1,1,1,3569.78,1]]);"), a = parseDuka("_cb([[" + (T0 - 44000) + ",1,1,1,3570.32,1]]);");
     const f = pickFeed(b, a, T0); return f.feed_bid === 3569.78 && f.feed_ask === 3570.32 && f.age_s === 0; })());
-const mk = (n, basis, hAgo = 1, ref = "dukascopy_bid", ses = "london") => Array.from({ length: n }, (_, i) => ({ observed_at: new Date(T0 - (hAgo + i) * 3.6e6).toISOString(), basis_usd: basis + (i % 2 ? 0.02 : -0.02), reference: ref, session: ses, status: "NORMAL_ALIGNMENT" }));
+const mk = (n, basis, hAgo = 1, ref = "dukascopy_mid", ses = "london") => Array.from({ length: n }, (_, i) => ({ observed_at: new Date(T0 - (hAgo + i) * 3.6e6).toISOString(), basis_usd: basis + (i % 2 ? 0.02 : -0.02), reference: ref, session: ses, status: "NORMAL_ALIGNMENT" }));
 let bs = basisStats(mk(4, 0.1), T0);
 check("stats: 4 samples -> not calibrated (keep current offset)", !bs.calibrated && bs.offset === null && bs.count === 4 && bs.why.includes("few"));
 bs = basisStats([...mk(5, 0.1), ...mk(3, -0.09, 1, "oanda_m1_close")], T0);
 check("stats: 5 recent Dukascopy samples -> calibrated at the median; other references ignored", bs.calibrated && bs.offset === 0.08 && bs.count === 5 && bs.other_reference_samples === 3 && bs.std < 0.05 && bs.by_session.london.count === 5);
+check("stats: older bid-referenced samples are moved to the mid basis (- half spread)", Math.abs(basisStats(mk(5, 0.3, 1, "dukascopy_bid"), T0).offset - 0.105) < 0.011);
 check("stats: newest sample older than 72 h -> not calibrated", !basisStats(mk(6, 0.1, 80), T0).calibrated);
 check("stats: samples outside 7 days ignored", basisStats(mk(6, 0.1, 24 * 8), T0).count === 0);
 check("stats: wide spread -> not calibrated", !basisStats([...mk(3, 0.1), ...mk(3, 1.6, 4)], T0).calibrated);
@@ -391,12 +395,12 @@ CLOCK = new Date(T0); OBS.length = 0;
 DUKA.B = [[T0 - 44000, 1, 1, 1, 3569.55, 1]]; DUKA.A = [[T0 - 44000, 1, 1, 1, 3569.9, 1]];
 st().dg_offset = null; st().dg_offset_source = null;
 r = await tgSend("/calibrate 3569.85");
-check("/calibrate stores the price with the live feed (basis +0.3, normal), private reply, not calibrated yet",
-  r.out.length === 1 && r.chats[0] === "45639251" && OBS.length === 1 && OBS[0].basis_usd === 0.3 && OBS[0].reference === "dukascopy_bid" &&
+check("/calibrate stores the price against the live mid (basis +0.125, normal), private reply, not calibrated yet",
+  r.out.length === 1 && r.chats[0] === "45639251" && OBS.length === 1 && Math.abs(OBS[0].basis_usd - 0.125) < 0.006 && OBS[0].reference === "dukascopy_mid" && Math.abs(OBS[0].feed_ref - 3569.725) < 0.006 &&
   OBS[0].source === "telegram_calibrate" && OBS[0].status === "NORMAL_ALIGNMENT" && OBS[0].session === "london" && OBS[0].feed_ask === 3569.9 &&
   r.out[0].includes("<code>3569.85</code>") && r.out[0].includes("کالیبره نشده") && st().calibration.status === "not_calibrated" && st().dg_offset == null);
 for (const p of ["3569.95", "3569.95", "3569.85", "3569.95"]) await tgSend("/calibrate " + p);
-check("/calibrate: 5th sample -> offset = median (0.4), source calibrate", OBS.length === 5 && st().calibration.status === "calibrated" && st().dg_offset === 0.4 && st().dg_offset_source === "calibrate");
+check("/calibrate: 5th sample -> offset = median vs the mid (0.225), source calibrate", OBS.length === 5 && st().calibration.status === "calibrated" && Math.abs(st().dg_offset - 0.225) < 0.006 && st().dg_offset_source === "calibrate");
 r = await tgSend("/calibrate");
 check("/calibrate without a price: help + stats, nothing stored", r.out.length === 1 && OBS.length === 5 && r.out[0].includes("کالیبره"));
 DUKA_DOWN = true; r = await tgSend("/calibrate 3569.9"); DUKA_DOWN = false;
@@ -406,7 +410,7 @@ check("stale feed bar (10 min) -> DATA_UNAVAILABLE", OBS[6].status === "DATA_UNA
 DUKA.B = [[T0 - 44000, 1, 1, 1, 3569.55, 1]];
 r = await tgSend("/calibrate 35");
 check("/calibrate junk -> format hint, nothing stored", r.out[0].includes("ثبت نشد") && OBS.length === 7);
-r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "BAROBAX" }, from: { id: 45639251 }, text: "/calibrate 3569.85" } });
+r = await tgUpdate({ message: { chat: { id: Number(GID), type: "supergroup", title: "• Z A R V A •" }, from: { id: 45639251 }, text: "/calibrate 3569.85" } });
 check("/calibrate in the group is ignored (private only)", r.out.length === 0 && OBS.length === 7);
 r = await tgSend("/calibrate 3569.85", 999);
 check("/calibrate from another chat is ignored", r.out.length === 0 && OBS.length === 7);

@@ -12,6 +12,14 @@ import bot as B, broker_daryagold as DG
 # the production setting AUTO_SIGNALS = False is tested at the end of this file.
 B.AUTO_SIGNALS = True
 import level_view as LVIEW
+# The legacy signal fixtures below were written for DaryaGold = bid + 0.30. Since 2026-11-21 the single basis is
+# Dukascopy mid + dg_offset (bid offset = 0.175 + dg_offset), so the tests pin dg_offset 0.125 (= bid + 0.30) unless
+# a test sets its own offset. The production default (0.02 -> bid + 0.195) is checked in the offset tests.
+_load_config = DG.load_config
+def _test_config(*a, **k):
+    c = _load_config(*a, **k)
+    return c if os.environ.get("DG_OFFSET_USD") not in (None, "") else DG.set_mid_offset(c, 0.125)
+DG.load_config = _test_config
 
 JOURNAL = f"{B.ROOT}/journal.csv"
 j_before = open(JOURNAL, "rb").read() if os.path.exists(JOURNAL) else None
@@ -99,7 +107,7 @@ def run(mode="scheduled", cmds=()):
     if cmds:
         s = json.load(open(B.STATE_JSON)) if os.path.exists(B.STATE_JSON) else {}
         for c in cmds:
-            c, origin = (c, None) if isinstance(c, str) else c     # ("/scan", "group") = asked in the BAROBAX group
+            c, origin = (c, None) if isinstance(c, str) else c     # ("/scan", "group") = asked in the «• Z A R V A •» group
             s.setdefault("pending_cmds", []).append({"id": NEXT_ID[0], "cmd": c, **({"origin": origin} if origin else {})}); NEXT_ID[0] += 1
         os.makedirs(B.STATE_DIR, exist_ok=True); json.dump(s, open(B.STATE_JSON, "w"))
     sys.argv = ["bot.py", "--mode", mode]; B.main()
@@ -167,7 +175,7 @@ BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 CLOCK[0] = datetime(2026, 11, 11, 15, 0, tzinfo=B.TEH)
 check("scheduled NO TRADE is silent", run("scheduled") == [])
 out = run("command", ["/scan"]); check("/scan NO TRADE card", len(out) == 1 and "فعلاً ستاپی نیست" in out[0])
-out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "قیمت دریاگلد" in out[0])
+out = run("command", ["/brief"]); check("/brief card", len(out) == 1 and "قیمت الان" in out[0])
 
 # ---- (f) pre-session briefs once per day
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); a = run("scheduled")
@@ -184,7 +192,7 @@ check("Saturday: scheduled run silent", run("scheduled") == [])
 r = B.render("**x** <script> & `1.5` 2.5"); check("HTML escaped", "&lt;script&gt;" in r and "&amp;" in r and "<code>1.5</code>" in r and "۲٫۵" in r)
 CLOCK[0] = datetime(2026, 11, 12, 12, 0, tzinfo=B.TEH)
 FAIL_HTML[0] = True; out = run("command", ["/brief"]); FAIL_HTML[0] = False
-check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "قیمت دریاگلد" in out[0])
+check("HTML failure -> plain-text fallback without tags", len(out) == 1 and "<" not in out[0] and "قیمت الان" in out[0])
 SENT.clear(); SENT_TO.clear(); B.send("\n".join(["خط آزمایشی " + str(i) for i in range(600)]))
 check("long message split <=4096 on line breaks", len(SENT) >= 2 and all(len(x) <= 4096 for x in SENT) and all(x.split("\n")[-1].startswith("\u200fخط") for x in SENT))
 
@@ -199,23 +207,23 @@ BRIEF[0] = mk_brief(entry=3887.545, sl=3889.2, tp=3882.0, atr_m5=1.6,
 out = run("command", ["/brief"]); br = out[0] if out else ""
 check("/brief: market summary title, never a signal (even with a BUY/SELL brief)", "خلاصه‌ی بازار" in br and "فروش طلا" not in br)
 check("/brief: shared levels block with Latin tap-to-copy prices", "<code>3895.3</code>" in br and "<code>3880.5</code>" in br and "۳۸۸۸٫۴" not in br)
-check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "روند ۴ ساعته نزولی و ۱ ساعته خنثی است" in br and "روشن نیست" in br)
+check("/brief: H4/H1 trend from the snapshot (disagree -> نامشخص)", "جهت کلی: نامشخص" in br and "با هم نمی‌خوانند" in br)
 check("/brief: no day-candle hilo and no glued-level skip line", "سقف روز" not in br and "مقاومت نزدیک" not in br and "حمایت نزدیک" not in br)
 check("/brief: all remaining news today (incl. ongoing), none passed or tomorrow", all(x in br for x in ["۱۸:۴۰ تا ۱۹:۰۵", "۱۹:۳۰", "۲۰:۱۵", "۲۲:۰۰"]) and "۱۶:۴۵" not in br and "۰۳:۱۵" not in br)
 check("/brief: balance line (no daily loss cap: the journal is gone)", "موجودی ۲٫۹۵ میلیون تومان" in br and "سقف ضرر" not in br)
 check("/brief: no 'strong'/قوی, no زیان", not any(w in br for w in ["قوی", "strong", "زیان"]))
-check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز و جایی که قیمت در روزهای اخیر از آن برگشته" in br and "جایی که قیمت اخیراً از آن برگشته" in br)
+check("/brief is the stored block (labels + nearest = top of /levels)", "سقف دیروز و نقطه‌ی برگشت روزهای اخیر" in br and "نقطه‌ی برگشت اخیر" in br)
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]}, news_window={"inside": True, "action": "block", "end": "2026-11-11 19:05"},
                     levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 18:50:00"))
 out = run("command", ["/scan"]); sc = out[0] if out else ""
-check("/scan no trade: title + one reason + the same levels block", "فعلاً ستاپی نیست" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "قیمت دریاگلد" in sc and
-      BRIEF[0]["levels"]["block"].split("\n")[0].startswith("قیمت دریاگلد") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
+check("/scan no trade: title + one reason + the same levels block", "فعلاً ستاپی نیست" in sc and "پنجره‌ی خبری تا ۱۹:۰۵" in sc and "قیمت الان" in sc and
+      BRIEF[0]["levels"]["block"].split("\n")[0].startswith("❔ جهت کلی") and "موجودی" not in sc and "<code>3895.3</code>" in sc)
 check("/scan and /brief share nearest prices", "<code>3895.3</code>" in sc and "<code>3870.3</code>" in sc)
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH); st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]},
                     levels=mk_levels(price_bid=3880.0, computed_at="2026-11-11 16:15:00"))
 out = run("scheduled"); pre = out[0] if out else ""
-check("pre-session brief uses the same levels block as /levels", len(out) == 1 and "نیویورک" in pre and "<code>3895.3</code>" in pre and "۴ ساعته نزولی" in pre and "سقف روز" not in pre)
+check("pre-session brief uses the same levels block as /levels", len(out) == 1 and "نیویورک" in pre and "<code>3895.3</code>" in pre and "جهت کلی" in pre and "سقف روز" not in pre)
 
 # identical block across /brief /scan /levels /pre-session
 CLOCK[0] = datetime(2026, 11, 11, 18, 50, tzinfo=B.TEH)
@@ -229,7 +237,7 @@ st = state(); st["presession_sent"] = {}; json.dump(st, open(B.STATE_JSON, "w"))
 CLOCK[0] = datetime(2026, 11, 11, 16, 15, tzinfo=B.TEH)
 pre2 = run("scheduled")[0]
 def has_block(card, s=snap):
-    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "روند ۴ ساعته نزولی و ۱ ساعته خنثی است", "سقف دیروز و جایی که قیمت در روزهای اخیر از آن برگشته"))
+    return all(x in card for x in ("<code>3895.3</code>", "<code>3880.5</code>", "جهت کلی: نامشخص", "سقف دیروز و نقطه‌ی برگشت روزهای اخیر"))
 check("same levels+trend in /brief, /scan, /levels and the pre-session brief",
       has_block(br2) and has_block(sc2) and has_block(lv2) and has_block(pre2))
 check("/levels card title and no حساب footer", "سطوح" in lv2 and "موجودی" not in lv2)
@@ -347,7 +355,7 @@ snap = mk_levels(price_bid=3880.0, computed_at="2026-11-13 17:30:00")
 st = state(); st["levels"] = snap; json.dump(st, open(B.STATE_JSON, "w")); CALLS[0] = 0
 out = run("command", ["/levels"])
 check("Saturday /levels with a stored snapshot: served with age, no analysis",
-      len(out) == 1 and CALLS[0] == 0 and "دقیقه پیش است" in out[0] and "<code>3895.3</code>" in out[0] and "۴ ساعته نزولی" in out[0] and "بازار بسته است" not in out[0])
+      len(out) == 1 and CALLS[0] == 0 and "دقیقه پیش است" in out[0] and "<code>3895.3</code>" in out[0] and "جهت کلی" in out[0] and "بازار بسته است" not in out[0])
 
 for when in [datetime(2026, 11, 14, 11, 15, tzinfo=B.TEH), datetime(2026, 11, 15, 16, 15, tzinfo=B.TEH), datetime(2026, 11, 14, 3, 30, tzinfo=B.TEH)]:
     CLOCK[0] = when; CALLS[0] = 0
@@ -390,12 +398,15 @@ check("11:15: signal + London brief as before", len(out) == 2 and any("فروش 
 fresh(); CLOCK[0] = datetime(2026, 11, 16, 9, 0, tzinfo=B.TEH); out = run("command", ["/scan"])
 check("/scan on request in Asia still answers (only scheduled runs are silent)", len(out) == 1)
 # dg_offset from bot_state
-fresh(dg_offset=0.5); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); out = run("scheduled")
-check("dg_offset 0.5 from state: signal prices = bid + 0.5", len(out) == 1 and "<code>3880.5</code>" in out[0] and "<code>3876.5</code>" in out[0])
-check("dg_offset passed to brief.py (env) and load_config honours it", os.environ.get("DG_OFFSET_USD") == "0.5" and DG.load_config()["price_offset_usd"] == 0.5)
+fresh(dg_offset=0.325); BRIEF[0] = mk_brief(); CLOCK[0] = datetime(2026, 11, 16, 14, 0, tzinfo=B.TEH); out = run("scheduled")
+check("dg_offset 0.325 from state (mid basis): signal prices = bid + 0.175 + 0.325", len(out) == 1 and "<code>3880.5</code>" in out[0] and "<code>3876.5</code>" in out[0])
+check("dg_offset passed to brief.py (env) and load_config honours it", os.environ.get("DG_OFFSET_USD") == "0.325" and DG.load_config()["price_offset_usd"] == 0.5)
+_env = os.environ.pop("DG_OFFSET_USD", None); _c0 = _load_config()
+if _env is not None: os.environ["DG_OFFSET_USD"] = _env
+check("production default basis: Dukascopy mid + 0.02 = bid + 0.195", _c0["price_offset_usd"] == 0.195 and _c0["mid_offset_usd"] == 0.02)
 fresh(dg_offset="bad"); B.CFG = cfg = DG.load_config(); os.environ.pop("DG_OFFSET_USD", None); cfg2 = B.apply_offset({"dg_offset": 9}, DG.load_config())
-check("invalid dg_offset ignored (default 0.3 stays)", cfg2["price_offset_usd"] == 0.3 and B.apply_offset({"dg_offset": "x"}, DG.load_config())["price_offset_usd"] == 0.3)
-fresh(dg_offset=0.4); CLOCK[0] = datetime(2026, 11, 16, 9, 30, tzinfo=B.TEH); run("scheduled")
+check("invalid dg_offset ignored (default stays)", cfg2["price_offset_usd"] == 0.3 and B.apply_offset({"dg_offset": "x"}, DG.load_config())["price_offset_usd"] == 0.3)
+fresh(dg_offset=0.225); CLOCK[0] = datetime(2026, 11, 16, 9, 30, tzinfo=B.TEH); run("scheduled")
 check("09:30 live signal uses the offset in use (0.4): stored DaryaGold entry 3880.4", state()["signals_sent"][-1]["entry"] == 3880.4)
 os.environ.pop("DG_OFFSET_USD", None); B.CFG = cfg = DG.load_config()
 check("last_price stored for the /trade check", state()["last_price"] == {"bid": 3880.0, "at": "2026-11-16 09:30"})
@@ -473,10 +484,10 @@ block_fix = snap_fix["block"]
 check("last-close card drops importance labels and M15 touch counts",
       "خیلی مهم" not in block_fix and "مهم" not in block_fix and "معمولی" not in block_fix and "تماس M15" not in block_fix)
 check("last-close card: plain dollar distances, DaryaGold price, no ATR/zone jargon",
-      "دلار بالاتر" in block_fix and "دلار پایین‌تر" in block_fix and "قیمت دریاگلد" in block_fix and "ATR" not in block_fix and "پهنه" not in block_fix)
+      "دلار بالاتر" in block_fix and "دلار پایین‌تر" in block_fix and "قیمت الان" in block_fix and "ATR" not in block_fix and "پهنه" not in block_fix)
 # trend + context on that same snapshot
 check("last-close block: one plain trend sentence, no M15/M5/H1 codes",
-      snap_fix["block"].startswith("قیمت دریاگلد") and "روند: " in snap_fix["block"] and not any(x in snap_fix["block"] for x in ("M15", "M5 ", "H1", "H4", "جمع‌بندی")))
+      "جهت کلی: " in snap_fix["block"].split("\n")[0] and not any(x in snap_fix["block"] for x in ("M15", "M5 ", "H1", "H4", "جمع‌بندی")))
 check("last-close context line: ATR and tight room",
       "در هر ۵ دقیقه حدود 4 دلار" in snap_fix["block"] and "تا سطح بعدی" in snap_fix["block"] and "جا کم است" in snap_fix["block"])
 # نامشخص → volatility only
@@ -687,7 +698,7 @@ st_t = {"signals_sent": [dict(_rec), {"key": "legacy"}, dict(_rec, id="S-2026111
 n = B.track_signals(st_t, datetime(2026, 11, 16, 14, 45, tzinfo=B.TEH), cfg_t)
 check("track_signals updates only signals with an ID that are not final", n == 1 and st_t["signals_sent"][0]["track"]["outcome"] == "tp")
 
-# ---- group read-only commands (t189u): a request from the BAROBAX group is answered in the group only
+# ---- group read-only commands (t189u): a request from the «• Z A R V A •» group is answered in the group only
 with_group(); CLOCK[0] = datetime(2026, 11, 11, 14, 0, tzinfo=B.TEH)
 BRIEF[0] = mk_brief(decision={"decision": "NO TRADE", "reasons_reject": ["x"]})
 out = run("command", [("/brief", "group")])

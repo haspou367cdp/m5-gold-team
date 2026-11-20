@@ -1,4 +1,4 @@
-# HANDOFF — Xauscalper (M5 gold assistant for DaryaGold)
+# HANDOFF — Z A R V A •|• BTV (M5 gold assistant for DaryaGold; formerly Xauscalper)
 
 Last updated 2026-11-21 (Tehran). Read this first if you are a developer or an AI agent picking the project up.
 Owner: pouhasaa (Asia/Tehran). All dates below are Tehran dates.
@@ -8,8 +8,10 @@ A Persian Telegram assistant for scalping XAUUSD on **DaryaGold** (an Iranian co
 P&L and fees in toman, no partial close, Mon–Fri 07:00–00:30 Tehran, no new entries Friday after 23:30).
 It gives levels, trend, ready-made setups and plain-language alerts on request. It **never places orders**, never
 logs in to DaryaGold, and since 2026-11-20 it sends **no automatic trade signals** (research showed no edge, see §6).
-A TradingView indicator (Xauscalper Map) shows the same levels, trend and setups on the phone chart.
-The audience includes complete beginners in the BAROBAX Telegram group, so every message must be plain Persian.
+A TradingView indicator (ZARVA Map, formerly Xauscalper Map) shows the same levels, trend and setups on the phone chart.
+The audience includes complete beginners in the Telegram group «• Z A R V A •» (formerly BAROBAX), so every message must be plain Persian.
+Names (2026-11-21, owner t244u): bot «Z A R V A •|• BTV» (@ZarvaGoldBot), group «• Z A R V A •». IDs are unchanged
+(bot 45639251 owner chat, group -1001958445009). `lib.js` `BOT_NAME` / `GROUP_NAME` hold the display names.
 
 ## 2. History and decisions
 | Date | What happened / decided |
@@ -24,8 +26,8 @@ The audience includes complete beginners in the BAROBAX Telegram group, so every
 | 2026-11-20 | **Plain Persian for beginners** (owner t240u–t243u): every message rewritten; level-touch alert only within $1 of the level, with how far price went, the gap and where it is now; plain `/levels` card; same wording on the indicator labels. tg-bot **v25** (commit c86c529), indicator commit e4d55cb. |
 | 2026-11-21 00:04 | **Group post** (owner t238u): Xauscalper Map fa (msg 2979) and en (2980) files plus the plain group guide (2981–2982) posted to BAROBAX via a one-off workflow on branch `group-guide-post` (workflow deleted afterwards). |
 | 2026-11-21 | `bot-assistant-v2` (fast-forward) and `tv-decision-map` (merge commit) merged into `main`; the Python plain wording is live from the next GitHub Actions run. |
-
-Price-basis decision is **still open** (see §5): do not change it without the owner's approval.
+| 2026-11-21 | **Telegram outage** (owner t245u «دستورها کار نمی‌کنه»): from ~Nov 20 evening every authenticated Bot API call for this bot hangs (invalid tokens get 401 at once), so no command replies. Not caused by our code; `tg()` now has a 20 s timeout. See §8. |
+| 2026-11-21 | **Final audit** (owner t244u, t246u, branch `final-audit`): new names; ONE price basis DaryaGold = mid + 0.02 (levels too, old snapshots rebased); stricter SL rule (SL distance + M5 ATR ≤ $9); phone-friendly `/levels` ladder, `/brief`, setup cards, `/trend`; menu descriptions + bot description/short description; indicator renamed to ZARVA Map with the same basis and SL rule. tg-bot build `2026-11-21-assistant-v5-onebasis`. |
 
 ## 3. Architecture
 ```
@@ -53,21 +55,22 @@ pg_cron ──dispatch──▶ GitHub Actions .github/workflows/telegram-bot.ym
   `main`**, because the workflow checks out `main`. Edge Function changes go live on deploy.
 - Cron jobs (pg_cron, UTC): `m5-tick */2 3-20 * * 1-5`, `m5-early */15 4-7 * * 1-5`, `m5-scan */15 8-20 * * 1-5`,
   `m5-asia-shadow 30,45 3 * * 1-5`, `m5-cron-log-cleanup 30 3 * * *`. The old `m5-report` jobs are unscheduled.
-- Telegram menus are set by `menuCalls()` once per `MENU_VERSION` on the next `/tick` (`state.menu_version`), or by
+- Telegram menus, the bot description and short description (fa + default) are set by `menuCalls()` once per `MENU_VERSION` on the next `/tick` (`state.menu_version`), or by
   `/admin/setup set_commands`.
 
-## 4. Commands (tg-bot v25)
+## 4. Commands (tg-bot build 2026-11-21-assistant-v5-onebasis)
 Owner private chat (45639251), menu order: `/setup` `/e` `/trend` `/levels` `/brief` `/status` `/balance` `/offset`
 `/calibrate` `/groupoff` `/groupon` `/help`.
-BAROBAX group (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
+Group «• Z A R V A •» (-1001958445009) and default scope: `/setup` `/trend` `/levels` `/brief` (60 s cooldown per command, group
 variant has no toman or balance; respects `/groupoff`).
 Hidden aliases: `/signal` and `/scan` → `/setup`; `/start` → `/help`.
 Removed for good (answer «دستور ناشناخته»): `/trade /loss /win /undo /shadow /entered /tp /sl /closed /journal /pnl`,
 the `/report` endpoint, the old inline buttons, `ledger.js`.
 
-- `/setup`: up to 2 buy + 2 sell setups from the levels snapshot and the live price: entry range (≤ $1.5), SL, TP1, TP2,
+- `/setup`: (phone card: 📍 ورود / 🛑 حد ضرر / 🎯 حد سود / ⏳ معتبر تا / 💡 why) up to 2 buy + 2 sell setups from the levels snapshot and the live price: entry range (≤ $1.5), SL, TP1, TP2,
   credibility 0–100 (⚠ under 40), valid until (45 min, cut at news / Friday 23:30 / close), plain "why" line. Owner card has
-  toman for 1 and 0.5 unit after the fee (best and worst edge). Every shown setup is logged to `setups` and resolved silently.
+  toman for 1 and 0.5 unit after the fee (best and worst edge). A setup is rejected when SL distance + M5 ATR(14) > $9 or
+  net R:R < 0.6 (with the fee). Every shown setup is logged to `setups` and resolved silently.
 - `/e [buy|sell] <price>`: SL/TP1/TP2 for an entry; side optional (taken from the big direction).
 - `/trend`, `/levels`, `/brief`: see `docs/bot_messages_samples_fa.md` (before/after samples of every message type).
 - Alerts (owner only, from `/tick`): level touch (only within **$1 of the level price**, once per level per day; says how
@@ -79,10 +82,12 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
 ## 5. Cost model and price bases
 - 1 unit = 80,000 toman per $1, 0.5 unit = 40,000; fee 14,000 toman once per trade; spread margin $0.25 (a buy fills at
   the ask); margins 1,000,000 / 500,000; stop-out at 80% loss of equity.
-- **Two price bases are live (unification pending owner approval):**
-  - levels snapshot (Python) = Dukascopy **bid + `dg_offset` (0.30)**;
-  - live DaryaGold price (Edge Function: setups, `/e`, alerts) = **mid + `dg_mid_offset` (0.02)**.
-  `/offset` and `/calibrate` maintain them. Do not unify without approval.
+- **ONE price basis since 2026-11-21 (owner t244u): DaryaGold = Dukascopy mid + `dg_offset` (default 0.02)** for levels,
+  the live price, setups, `/e`, alerts and the indicator. Levels are built on bid bars and shifted by half the typical
+  feed spread: level = bid + 0.175 + 0.02 = bid + 0.195 (`assist.levelOffset`, Python `broker_daryagold.set_mid_offset`,
+  fallback 0.195 in `bot.py`). Old snapshots carry `snap.offset` (0.30 = old bid basis) and are moved by `rebaseSnap`.
+  `/offset <x>` sets the one offset; `/calibrate <DaryaGold price>` measures it against the mid ("dukascopy_mid").
+  Before 2026-11-21: levels = bid + 0.30, live = mid + 0.02 (about 0.1 apart).
 
 ## 6. Research results (no edge)
 - Phase 4 (`backtest/phase4/REPORT.md`): live engines under the DaryaGold cost model — IS −0.31R per fill (112 fills,
@@ -93,18 +98,19 @@ the `/report` endpoint, the old inline buttons, `ledger.js`.
   vs random. Not significant; not deployed.
 - Conclusion: no backtested edge. The bot is a decision aid, not a signal service.
 
-## 7. TradingView indicator (Xauscalper Map)
+## 7. TradingView indicator (ZARVA Map, formerly Xauscalper Map)
 - Merged into `main` from branch `tv-decision-map` (commits 90625ad, e4d55cb). The older Xauscalper Zones indicator
   (`tradingview/xauscalper_zones*.pine`, `tradingview/src/`) came along with the merge and is superseded by the Map.
 - Source `tradingview/map/template.pine` + `tradingview/map/build.py` → `tradingview/xauscalper_map.pine` (Persian) and
   `xauscalper_map_en.pine` (identical logic, only texts differ). Copies on the box: `/workspace/xauscalper_map.pine`,
   `/workspace/xauscalper_map_en.pine`. Spec `docs/decision_map_spec.md`; phone how-to `tradingview/map_howto_fa.md`.
 - Features: phone mode, trend strip (5/15/1H/4H + big direction + short-term state), market light, room-to-trade,
-  best setup with entry band, SL, TP1/TP2 with toman, credibility and countdown. Levels = bid + 0.30, live price = mid + 0.02.
+  best setup with entry band, SL, TP1/TP2 with toman, credibility and countdown. One basis: mid + 0.02 (bid chart + 0.175 + 0.02);
+  same SL rule (risk + ATR ≤ 9). Display title «ZARVA Map · XAUUSD» (short ZRV); file names kept (`xauscalper_map*.pine`).
   Free TradingView plan: 2 `request.security` calls.
-- Known quirk: the indicator's `entryLimit` treats Sun/Mon 00:00–00:30 like other days (the bot fixed this in v24:
-  00:00–00:30 belongs to the previous trading day — Saturday = Friday tail, Sunday/Monday = no session).
-  Port the fix to the Pine template when the indicator is next touched.
+- Sun/Mon 00:00–00:30 (checked 2026-11-21): `f_limit` and `f_clock` already treat 00:00–00:30 as the previous trading
+  day's tail (Saturday = Friday tail until 00:30 with entries closed after Friday 23:30; Sunday/Monday = closed), same as
+  the bot's `entryLimit`.
 
 ## 8. Deployed vs pending
 Deployed:

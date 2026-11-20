@@ -6,7 +6,9 @@
 // The trend rule is a port of tools/level_view.py (EMA20/50 + confirmed 3-bar fractal swings), so /trend, the
 // /levels block and the TradingView indicator read the same way. The live price is fetched at command time.
 //
-// Price frame: DaryaGold (chart) price = Dukascopy mid + dg_mid_offset (bot_state.state.dg_mid_offset, default 0.02).
+// Price frame (owner t244u, 2026-11-21: ONE basis everywhere): DaryaGold (chart) price = Dukascopy mid + dg_offset
+// (bot_state.state.dg_offset, default 0.02, set by /offset or the /calibrate median). Levels are built on bid bars in the
+// GitHub run and stored with the bid offset they used (snap.offset); rebaseSnap() moves them to the current basis.
 // Orders: a buy fills at the ask (= chart + spread), a sell at the chart price. So buy entries, sell stop-losses and
 // sell take-profits are moved up by SPREAD to trigger when the chart price reaches the intended level.
 // Money: 1 unit = 80,000 toman per $1, 0.5 unit = 40,000; the 14,000 toman fee is charged once per trade.
@@ -15,8 +17,9 @@ export const RATE = { 1: 80000, 0.5: 40000 };
 export const FEE = 14000;
 export const SPREAD = 0.25;
 export const DEFAULT_MID_OFFSET = 0.02;
+export const FEED_HALF_SPREAD = 0.175;   // typical Dukascopy XAU/USD spread 0.35 / 2: bid -> mid when no live ask is known
 export const SETUP_VALID_MIN = 45;
-export const MAX_SL_USD = 9;          // beyond this a 1-unit stop-out (80% of 1M margin = $10) is too close
+export const MAX_SL_USD = 9;          // owner t244u: block when SL distance + M5 ATR > $9 (1-unit stop-out = $10)
 export const TF_MS = { M5: 3e5, M15: 9e5, H1: 3.6e6, H4: 1.44e7 };
 const LOOK_MS = { H4: 20 * 864e5, H1: 8 * 864e5, M15: 2 * 864e5, M5: 864e5 };   // = tools/levels.py swings lookback
 export const TFS = ["M5", "M15", "H1", "H4"];
@@ -34,18 +37,25 @@ const KIND_PLAIN = {
   "London high": "سقف ظهر امروز", "London low": "کف ظهر امروز",
   "NY high": "سقف عصر", "NY low": "کف عصر", "Prev NY high": "سقف عصر دیروز", "Prev NY low": "کف عصر دیروز",
   "London OR high": "سقف شروع ظهر", "London OR low": "کف شروع ظهر", "NY OR high": "سقف شروع عصر", "NY OR low": "کف شروع عصر",
-  "H1 swing high": "جایی که قیمت اخیراً از آن برگشته", "H1 swing low": "جایی که قیمت اخیراً از آن برگشته",
+  "H1 swing high": "نقطه‌ی برگشت اخیر", "H1 swing low": "نقطه‌ی برگشت اخیر",
   "Equal high": "دو سقف هم‌اندازه", "Equal low": "دو کف هم‌اندازه", VWAP: "میانگین قیمت امروز",
   "Month high": "سقف این ماه", "Month low": "کف این ماه", "Prev month high": "سقف ماه قبل", "Prev month low": "کف ماه قبل",
 };
-export function plainLabel(L) {
+// Most telling names first; at most two per level so a phone line does not wrap (owner t246u).
+const KIND_RANK = ["Prev month high", "Prev month low", "Month high", "Month low", "Prev week high", "Prev week low", "Week high", "Week low",
+  "PDH", "PDL", "Asia high", "Asia low", "London high", "London low", "NY high", "NY low", "Prev NY high", "Prev NY low",
+  "Equal high", "Equal low", "London OR high", "London OR low", "NY OR high", "NY OR low", "VWAP", "H1 swing high", "H1 swing low"];
+const OR_OF = { "London OR high": "London high", "London OR low": "London low", "NY OR high": "NY high", "NY OR low": "NY low" };
+export function plainLabel(L, max = 2) {
+  const kinds = ((L && L.kinds) || []).filter((k, _, all) => !(OR_OF[k] && all.includes(OR_OF[k])));
+  const rank = (k) => (/^Round/.test(k) ? 20.5 : (KIND_RANK.indexOf(k) + 1 || 99));
   const out = [];
-  for (const k of (L && L.kinds) || []) {
+  for (const k of [...kinds].sort((x, y) => rank(x) - rank(y))) {
     const t = /^Round/.test(k) ? `عدد رُند ${Math.round(Number(L.price) / 50) * 50}` : KIND_PLAIN[k];
     if (t && !out.includes(t)) out.push(t);
   }
   if (!out.length && L && L.label) return String(L.label);
-  return out.length > 2 ? out.slice(0, -1).join("، ") + " و " + out.at(-1) : out.join(" و ");
+  return out.slice(0, max).join(" و ");
 }
 const UP = "صعودی", DOWN = "نزولی", FLAT = "خنثی", UNKNOWN = "نامشخص";
 
@@ -58,8 +68,21 @@ const DIG = { "۰": 0, "۱": 1, "۲": 2, "۳": 3, "۴": 4, "۵": 5, "۶": 6, "۷
 const latin = (t) => String(t).replace(/[۰-۹٠-٩٫]/g, (c) => String(DIG[c]));
 
 export function midOffsetOf(s) {
-  const v = Number(s && s.dg_mid_offset);
-  return s && s.dg_mid_offset !== null && s.dg_mid_offset !== "" && Number.isFinite(v) && Math.abs(v) <= 5 ? v : DEFAULT_MID_OFFSET;
+  const v = Number(s && s.dg_offset);
+  return s && s.dg_offset !== null && s.dg_offset !== undefined && s.dg_offset !== "" && Number.isFinite(v) && Math.abs(v) <= 5 ? v : DEFAULT_MID_OFFSET;
+}
+// Bid -> DaryaGold offset for levels (fixed typical half-spread so /levels, /setup and alerts show identical level prices)
+export const levelOffset = (s) => Math.round((FEED_HALF_SPREAD + midOffsetOf(s)) * 1e4) / 1e4;
+// Levels snapshot moved to the current DaryaGold basis: bid level + bidOff (live: spread/2 + offset; else 0.175 + offset).
+export function rebaseSnap(snap, bidOff) {
+  if (!snap || !snap.short || !Number.isFinite(Number(bidOff))) return snap;
+  const was = Number.isFinite(Number(snap.offset)) ? Number(snap.offset) : 0.3;   // snapshots before 2026-11-21: bid + 0.3
+  const d = Number(bidOff) - was;
+  if (Math.abs(d) < 1e-6) return snap;
+  const mv = (x) => ({ ...x, ...(Number.isFinite(Number(x.price_dg)) ? { price_dg: r2(Number(x.price_dg) + d) } : {}),
+    ...(Array.isArray(x.zone_dg) ? { zone_dg: x.zone_dg.map((z) => r2(Number(z) + d)) } : {}) });
+  return { ...snap, offset: Number(bidOff), ...(Number.isFinite(Number(snap.price_dg)) ? { price_dg: r2(Number(snap.price_dg) + d) } : {}),
+    short: { above: (snap.short.above || []).map(mv), below: (snap.short.below || []).map(mv) } };
 }
 
 // ---------------- Tehran clock helpers ----------------
@@ -193,14 +216,22 @@ export function trendSummary(t) {
   else line = `روند ۴ ساعته ${h4} و ۱ ساعته ${h1} است و با هم نمی‌خوانند؛ پس جهت بزرگ بازار فعلاً روشن نیست.`;
   return { overall, higher, line };
 }
+// Short headline for phone cards: arrow + one word (+ what it means), e.g. «⬇️ جهت کلی: نزولی (رو به پایین)»
+const WORD = { "صعودی": "صعودی", "نزولی": "نزولی", "خنثی": "بدون جهت", "نامشخص": "نامشخص" };
+export function trendHead(t) {
+  const sm = trendSummary(t), o = sm.overall;
+  const what = o === UP ? "رو به بالا" : o === DOWN ? "رو به پایین" : o === FLAT ? "بالا و پایین در یک محدوده" : "۴ و ۱ ساعته با هم نمی‌خوانند";
+  return `${ARROW[o] || "❔"} جهت کلی: ${WORD[o] || o} (${what})`;
+}
 export function trendMsg(t, { quote = null, dataAt = null, at, stale = false } = {}) {
   const sm = trendSummary(t);
-  const L = ["**📊 روند طلا**", `~~${hmOf(at)} به وقت تهران` + (quote ? ` · قیمت دریاگلد \`${px(quote.dg)}\`` : "") + "~~", "",
-    sm.line, "", "**جزئیات** ~~(⬆️ صعودی · ⬇️ نزولی · ➖ بدون جهت)~~"];
-  for (const tf of ["H4", "H1", "M15", "M5"]) L.push(`${ARROW[t[tf] || FLAT]} ${TF_FA[tf]}: ${t[tf] || FLAT}`);
-  L.push("~~۴ ساعته و ۱ ساعته جهت بزرگ بازار را نشان می‌دهند؛ ۱۵ و ۵ دقیقه‌ای حرکت کوتاه‌مدت را.~~");
+  const L = ["**📊 روند طلا**", `~~${hmOf(at)} به وقت تهران~~`];
+  if (quote) L.push(`💰 قیمت الان: \`${px(quote.dg)}\``);
+  L.push("", `**${trendHead(t)}**`, sm.line, "");
+  for (const tf of ["H4", "H1", "M15", "M5"]) L.push(`${ARROW[t[tf] || FLAT]} ${TF_FA[tf]}: ${WORD[t[tf] || FLAT] || t[tf]}`);
+  L.push("", "~~۴ و ۱ ساعته = جهت بزرگ بازار~~", "~~۱۵ و ۵ دقیقه‌ای = حرکت کوتاه‌مدت~~");
   if (stale) L.push("", `~~قیمت زنده در دسترس نبود؛ این روند مربوط به ساعت ${dataAt ? hmOf(dataAt) : "آخرین بررسی"} است~~`);
-  else if (dataAt) L.push(`~~آخرین قیمت: ${hmOf(dataAt)} به وقت تهران~~`);
+  else if (dataAt) L.push(`~~آخرین قیمت: ${hmOf(dataAt)}~~`);
   return L.join("\n");
 }
 
@@ -281,9 +312,9 @@ function targets(levels, dir, from, skip, atr5) {
 
 // ---------------- credibility score (0-100) ----------------
 export const WEIGHTS = { trend: 25, fill: 15, level: 15, room: 10, rr: 15, adr: 8, session: 7, hunt: 5 };
-const POS = { trend: "هم‌جهت با روند بزرگ بازار است", fill: "قیمت به بازه‌ی ورود نزدیک است", level: "این سطح هنوز کم امتحان شده", room: "تا سطح بعدی جای کافی برای سود هست",
+const POS = { trend: "با روند بیشتر بازه‌های زمانی هم‌جهت است", fill: "قیمت به بازه‌ی ورود نزدیک است", level: "این سطح هنوز کم امتحان شده", room: "تا سطح بعدی جای کافی برای سود هست",
   rr: "سود احتمالی نسبت به ضرر خوب است", adr: "قیمت امروز هنوز جای حرکت دارد", session: "ساعت پرتحرک و دور از خبر است", hunt: "حد ضرر جای شلوغی نیست" };
-const NEG = { trend: "خلاف روند بزرگ بازار است", fill: "قیمت هنوز از بازه‌ی ورود دور است", level: "این سطح چند بار امتحان شده و ممکن است دیگر نگه ندارد", room: "تا سطح بعدی جای کمی برای سود هست",
+const NEG = { trend: "خلاف روند بیشتر بازه‌های زمانی است", fill: "قیمت هنوز از بازه‌ی ورود دور است", level: "این سطح چند بار امتحان شده و ممکن است دیگر نگه ندارد", room: "تا سطح بعدی جای کمی برای سود هست",
   rr: "سود احتمالی نسبت به ضرر کم است", adr: "قیمت امروز بیشتر از معمول حرکت کرده", session: "نزدیک خبر یا در ساعت کم‌تحرک است", hunt: "حد ضرر نزدیک جایی است که حد ضرر خیلی‌ها هست" };
 export function scoreSetup(f) {
   const total = Math.round(Object.entries(WEIGHTS).reduce((a, [k, w]) => a + w * clamp(f[k] ?? 0.5), 0));
@@ -362,7 +393,7 @@ function candidate(ctx, L, dir) {
   const inside = dir < 0 ? chartP >= lo : chartP <= hi;
   let reject = null;
   if (dir < 0 ? P + SPREAD >= sl : P <= sl) reject = "قیمت از سطح رد شده است";
-  else if (risk > MAX_SL_USD) reject = "حد ضرر باید بیش از ۹ دلار دور باشد که زیاد است";
+  else if (risk + atr5 > MAX_SL_USD) reject = "حد ضرر به‌اضافه‌ی نوسان معمول قیمت بیش از ۹ دلار می‌شود که زیاد است";
   else if (dist > 4 * atr5) reject = "قیمت از سطح مناسب خیلی دور است";
   else if ((t1.tp - mid) * dir <= 0 || room < Math.max(1, 0.5 * Math.abs(sl - mid))) reject = "تا سطح بعدی جای کافی برای سود نیست";
   const rr = (Math.abs(t1.tp - mid) * RATE[1] - FEE) / (Math.abs(sl - mid) * RATE[1] + FEE);
@@ -407,37 +438,40 @@ function moneyLines(c, price, group) {
   if (group) return [];
   const a = netToman(c.dir, c.best, price, 1), b = netToman(c.dir, c.worst, price, 1);
   const a5 = netToman(c.dir, c.best, price, 0.5), b5 = netToman(c.dir, c.worst, price, 0.5);
-  return [`   یک واحد ${tomanFa(a)} تا ${tomanFa(b)} · نیم واحد ${tomanFa(a5)} تا ${tomanFa(b5)}`];
+  return [`~~   ۱ واحد: ${tomanFa(a)} تا ${tomanFa(b)}~~`, `~~   ½ واحد: ${tomanFa(a5)} تا ${tomanFa(b5)}~~`];
 }
-function setupBlock(c, i, untilMs, group, P) {
-  const lv = c.level, word = SIDE_FA[c.side];
-  const where = c.inside ? `قیمت همین الان در بازه‌ی \`${px(c.lo)}\` تا \`${px(c.hi)}\` است؛ می‌توانید ${word} بگذارید`
-    : `اگر قیمت ${c.dir < 0 ? "بالا" : "پایین"} بیاید و به \`${px(c.lo)}\` تا \`${px(c.hi)}\` برسد، آنجا ${word} بگذارید`;
-  const L = [`**${ICON[c.side]} ${word} ${i}** · اعتبار ${c.score} از ۱۰۰${c.score < 40 ? " ⚠" : ""}`,
-    c.inside ? `${where}.` : `${where} (${c.halfFa} بازه ${c.halfWhy}).`,
-    `~~این بازه کنار سطح \`${p1(lv.price)}\` است${plainLabel(lv) ? ` (${plainLabel(lv)})` : ""}؛ قیمت نزدیک سطح‌ها ممکن است برگردد.~~`,
-    `🛑 حد ضرر \`${px(c.sl)}\`: اگر قیمت به اینجا برسد، معامله با ضرر بسته می‌شود.`, ...moneyLines(c, c.sl, group),
-    `🎯 حد سود ۱ \`${px(c.tp1)}\`: هدف نزدیک‌تر.`, ...moneyLines(c, c.tp1, group),
-    `🎯 حد سود ۲ \`${px(c.tp2)}\`: هدف دورتر؛ سود بیشتر، ولی دیرتر یا کمتر می‌رسد.`, ...moneyLines(c, c.tp2, group),
-    `⏳ تا ${hmOf(untilMs)} معتبر است. اگر پیش از ورود، قیمت به \`${px(c.invalid)}\` برسد، این ستاپ را کنار بگذارید.`,
-    `چرا اعتبار ${c.score}: ${c.reason}.`];
-  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ این ستاپ پرخطر است.");
+// Phone layout (owner t246u): one fact per short line; prices Latin (copyable), labels plain.
+function setupBlock(c, i, untilMs, group) {
+  const lv = c.level, word = SIDE_FA[c.side], lab = plainLabel(lv);
+  const L = [`**${ICON[c.side]} ${word} ${i} · اعتبار ${c.score} از ۱۰۰${c.score < 40 ? " ⚠" : ""}**`,
+    `📍 ورود: \`${px(c.lo)}\` تا \`${px(c.hi)}\``,
+    c.inside ? `   قیمت همین الان در این بازه است.` : `   وقتی قیمت ${c.dir < 0 ? "بالا" : "پایین"} بیاید و به این بازه برسد.`,
+    `🛑 حد ضرر: \`${px(c.sl)}\``, ...moneyLines(c, c.sl, group),
+    `🎯 حد سود ۱: \`${px(c.tp1)}\` ~~(نزدیک‌تر)~~`, ...moneyLines(c, c.tp1, group),
+    `🎯 حد سود ۲: \`${px(c.tp2)}\` ~~(دورتر)~~`, ...moneyLines(c, c.tp2, group),
+    `⏳ معتبر تا ${hmOf(untilMs)}`,
+    `~~اگر پیش از ورود قیمت به \`${px(c.invalid)}\` رسید، این ستاپ را کنار بگذارید.~~`,
+    `💡 ${c.reason}.`,
+    `~~کنار سطح \`${p1(lv.price)}\`${lab ? ` (${lab})` : ""}~~`];
+  if (c.score < 40) L.push("⚠ اعتبار زیر ۴۰ است؛ پرخطر است.");
   return L.join("\n");
 }
 const WHY_UNTIL = { time: "", news: " (پیش از خبر)", friday: " (پایان ورود جمعه)", close: " (بسته‌شدن دریاگلد)" };
 export function setupMsg(res, ctx, v, { group = false, snapNote = null } = {}) {
-  const sm = trendSummary(ctx.trend);
-  const head = ["**🎯 ستاپ‌ها**", `~~${hmOf(ctx.nowMs)} به وقت تهران · قیمت دریاگلد \`${px(ctx.quote.dg)}\` · معتبر تا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""}~~`,
-    "~~ستاپ یعنی یک نقشه‌ی آماده: کجا وارد شوید، کجا با ضرر خارج شوید و کجا سود بگیرید. اعتبار از ۰ تا ۱۰۰ است؛ هرچه بیشتر، بهتر.~~",
-    "", `روند: ${sm.line}`];
+  const head = ["**🎯 ستاپ‌ها**", `~~${hmOf(ctx.nowMs)} به وقت تهران · معتبر تا ${hmOf(v.untilMs)}${WHY_UNTIL[v.why] || ""}~~`,
+    `💰 قیمت الان: \`${px(ctx.quote.dg)}\``, trendHead(ctx.trend), "",
+    "~~ستاپ = نقشه‌ی آماده: کجا وارد شوید، حد ضرر و حد سود کجاست. اعتبار ۰ تا ۱۰۰؛ هرچه بیشتر، بهتر.~~"];
   if (snapNote) head.push(`~~${snapNote}~~`);
   const L = [head.join("\n")];
-  if (!group && (res.SELL.length || res.BUY.length)) L.push("~~مبلغ‌ها به تومان و بعد از کسر کارمزد است؛ عدد اول برای بهترین و عدد دوم برای بدترین نقطه‌ی بازه‌ی ورود.~~");
   for (const k of ["SELL", "BUY"]) {
-    if (res[k].length) res[k].forEach((c, i) => L.push(setupBlock(c, i + 1, v.untilMs, group, ctx.quote.dg)));
-    else L.push(`${ICON[k]} فعلاً ${SIDE_FA[k]} منطقی نیست، چون ${res.why[k]}.`);
+    if (res[k].length) res[k].forEach((c, i) => L.push(setupBlock(c, i + 1, v.untilMs, group)));
+    else L.push(`${ICON[k]} ${SIDE_FA[k]}: فعلاً منطقی نیست\n~~چون ${res.why[k]}.~~`);
   }
-  if (res.SELL.length || res.BUY.length) L.push("~~حد سود ۱ و ۲ دو انتخاب‌اند. دریاگلد بستن بخشی ندارد، پس هنگام ورود فقط یکی را بگذارید.~~");
+  if (res.SELL.length || res.BUY.length) {
+    const foot = ["~~حد سود ۱ و ۲ دو انتخاب‌اند؛ دریاگلد بستن بخشی ندارد، پس فقط یکی را بگذارید.~~"];
+    if (!group) foot.push("~~مبلغ‌ها به تومان، بعد از کارمزد؛ عدد اول برای بهترین و دوم برای بدترین نقطه‌ی بازه‌ی ورود.~~");
+    L.push(foot.join("\n"));
+  }
   return L.join("\n\n");
 }
 export function noSetupMsg(v, nowMs) {
@@ -472,29 +506,28 @@ export function planEntry(ctx, dir, E) {
   const behind = levels.filter((x) => (dir < 0 ? x.hi >= E : x.lo <= E))
     .sort((a, b) => (dir < 0 ? a.hi - b.hi : b.lo - a.lo))[0];
   let sl = behind ? placeSL(dir, dir < 0 ? behind.hi : behind.lo, E, atr5) : null, slLevel = behind || null;
-  if (sl === null || Math.abs(sl - E) > MAX_SL_USD) {
+  if (sl === null || Math.abs(sl - E) + atr5 > MAX_SL_USD) {   // same limit as /setup: SL distance + M5 ATR <= $9
     sl = placeSL(dir, E + dir * -Math.max(1, 0.6 * atr5), E, atr5); slLevel = null;
   }
   const inZone = levels.find((x) => E >= x.lo && E <= x.hi);
   const { t1, t2 } = targets(levels, dir, E, inZone, atr5);
   let tp1 = t1.tp, tp2 = t2.tp;
   if ((tp1 - E) * dir < 0.5) { tp1 = r2(E + dir * Math.max(1.5, atr5)); tp2 = r2(tp1 + dir * Math.max(1.5, atr5)); }
-  return { dir, entry: E, sl, tp1, tp2, slLevel, tp1Level: (tp1 === t1.tp ? t1.level : null), tp2Level: (tp2 === t2.tp ? t2.level : null) };
+  return { dir, entry: E, sl, tp1, tp2, slLevel, wide: Math.abs(sl - E) + atr5 > MAX_SL_USD, tp1Level: (tp1 === t1.tp ? t1.level : null), tp2Level: (tp2 === t2.tp ? t2.level : null) };
 }
 export function entryMsg(p, { quote, nowMs, dirWhy = null }) {
-  const m = (price) => `   یک واحد ${tomanFa(netToman(p.dir, p.entry, price, 1))} · نیم واحد ${tomanFa(netToman(p.dir, p.entry, price, 0.5))}`;
+  const m = (price) => [`~~   ۱ واحد: ${tomanFa(netToman(p.dir, p.entry, price, 1))}~~`, `~~   ½ واحد: ${tomanFa(netToman(p.dir, p.entry, price, 0.5))}~~`];
   const word = p.dir > 0 ? "خرید" : "فروش";
-  const L = [`**📐 ${word} از \`${px(p.entry)}\`**`,
-    `~~${hmOf(nowMs)} به وقت تهران` + (quote ? ` · قیمت دریاگلد الان \`${px(quote.dg)}\`` : "") + "~~"];
-  if (dirWhy) L.push(`جهت را ننوشتید؛ ${word} در نظر گرفته شد، چون ${dirWhy}.`);
-  L.push("", `🛑 حد ضرر \`${px(p.sl)}\`: اگر قیمت به اینجا برسد، با ضرر خارج شوید.`, m(p.sl),
-    `🎯 حد سود ۱ \`${px(p.tp1)}\`: هدف نزدیک‌تر.`, m(p.tp1),
-    `🎯 حد سود ۲ \`${px(p.tp2)}\`: هدف دورتر؛ سود بیشتر، ولی دیرتر یا کمتر می‌رسد.`, m(p.tp2), "");
-  const why = [];
-  why.push(p.slLevel ? `حد ضرر کمی ${p.dir < 0 ? "بالای" : "زیر"} سطح \`${p1(p.slLevel.price)}\` است تا اگر قیمت فقط به سطح سر زد، معامله بسته نشود.`
-    : "در فاصله‌ی ۹ دلاری سطحی نبود؛ حد ضرر بر اساس اندازه‌ی معمول حرکت قیمت گذاشته شده.");
-  if (p.tp1Level) why.push(`حد سود ۱ کمی قبل از سطح \`${p1(p.tp1Level.price)}\` است، چون قیمت ممکن است آنجا برگردد.`);
-  L.push(...why.map((w) => `~~${w}~~`), "~~مبلغ‌ها به تومان و بعد از کسر کارمزد است. دریاگلد بستن بخشی ندارد، پس فقط یکی از دو حد سود را بگذارید.~~");
+  const L = [`**📐 ${word} از \`${px(p.entry)}\`**`, `~~${hmOf(nowMs)} به وقت تهران~~`];
+  if (quote) L.push(`💰 قیمت الان: \`${px(quote.dg)}\``);
+  if (dirWhy) L.push(`~~جهت را ننوشتید؛ ${word} در نظر گرفته شد، چون ${dirWhy}.~~`);
+  L.push("", `🛑 حد ضرر: \`${px(p.sl)}\``, ...m(p.sl), `🎯 حد سود ۱: \`${px(p.tp1)}\` ~~(نزدیک‌تر)~~`, ...m(p.tp1),
+    `🎯 حد سود ۲: \`${px(p.tp2)}\` ~~(دورتر)~~`, ...m(p.tp2), "");
+  L.push(p.slLevel ? `💡 حد ضرر کمی ${p.dir < 0 ? "بالای" : "زیر"} سطح \`${p1(p.slLevel.price)}\` است تا اگر قیمت فقط به سطح سر زد، معامله بسته نشود.`
+    : "💡 نزدیک قیمت ورود سطح مناسبی نبود؛ حد ضرر بر اساس اندازه‌ی معمول حرکت قیمت گذاشته شد.");
+  if (p.tp1Level) L.push(`💡 حد سود ۱ کمی قبل از سطح \`${p1(p.tp1Level.price)}\` است، چون قیمت ممکن است آنجا برگردد.`);
+  if (p.wide) L.push("⚠ فاصله‌ی حد ضرر به‌اضافه‌ی نوسان معمول قیمت بیش از ۹ دلار است؛ این ورود پرخطر است.");
+  L.push("", "~~مبلغ‌ها به تومان، بعد از کارمزد. دریاگلد بستن بخشی ندارد؛ فقط یکی از دو حد سود را بگذارید.~~");
   if (quote && Math.abs(p.entry - quote.dg) > 30) L.push("", "⚠ قیمت ورود بیش از ۳۰ دلار با قیمت فعلی فاصله دارد؛ عدد را دوباره بررسی کنید.");
   return L.join("\n");
 }

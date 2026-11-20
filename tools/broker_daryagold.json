@@ -37,10 +37,10 @@
   "min_sl_usd": 1.0,
   "min_sl_beyond_structure_usd": 0.5,
   "liquidation_pct": 80,
-  "price_offset_usd": 0.3,
-  "price_offset_uncertainty_usd": 0.5,
+  "price_offset_usd": 0.195,
+  "price_offset_uncertainty_usd": 0.3,
   "calibrated_at": "2026-11-13 15:37 Asia/Tehran",
-  "price_offset_note": "DaryaGold minus Dukascopy bid. Calibrated 2026-11-13 15:37 Tehran from the DaryaGold 1m chart: lows 3886.6 vs bid 3886.28, highs 3897.6 vs 3897.29; uncertainty about ±0.5.",
+  "price_offset_note": "Single DaryaGold price basis (owner t244u, 2026-11-21): DaryaGold = Dukascopy mid + mid_offset_usd (default 0.02, set by /offset or the /calibrate median; bot_state.state.dg_offset). Levels are built on Dukascopy bid bars, so the bid->DaryaGold offset is price_offset_usd = feed_spread_usd/2 + mid_offset_usd (0.175 + 0.02 = 0.195); load_config recomputes it. Older basis (until 2026-11-21): bid + 0.3 for levels, mid + 0.02 for the live price.",
   "risk_per_trade_pct_max": 10,
   "daily_loss_pct_max": 20,
   "max_consecutive_losses": 3,
@@ -81,5 +81,11 @@
     "B"
   ],
   "news_semantics": "Single source of truth for DaryaGold news windows. Effective window = union of the stored data/news_windows.json start/end and event_time minus before_min / plus after_min. For tiers in news_block_tiers (A and B): no new entries and no pending orders from the effective start until the effective end, and any open position must be closed before the effective start. Example: US PPI 17:00 Tehran stored 16:45-17:15 -> no entries from 16:45 (not 16:50) to 17:15, close open trades before 16:45. Tier C is monitor only.",
-  "liquidation_note": "Stop-out at 80% of margin (1U 800,000 / 0.5U 400,000 toman). Owner-confirmed 2026-11-20."
+  "liquidation_note": "Stop-out at 80% of margin (1U 800,000 / 0.5U 400,000 toman). Owner-confirmed 2026-11-20.",
+  "price_basis": "dukascopy_mid",
+  "mid_offset_usd": 0.02,
+  "feed_spread_usd": 0.35,
+  "min_net_rr_note": "min_net_rr is used only by the switched-off legacy Python signal engine and its silent shadow log. The live /setup rule (Edge Function + indicator, owner 2026-11-20/21): net R:R >= setup_min_net_rr (0.6) after the 14,000 toman fee, and blocked when SL distance + M5 ATR > max_sl_plus_atr_usd ($9).",
+  "max_sl_plus_atr_usd": 9,
+  "setup_min_net_rr": 0.6
 }

@@ -1,10 +1,10 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// Xauscalper Map · XAUUSD — {{HDR1}}
+// ZARVA Map · XAUUSD — {{HDR1}}
 // {{HDR2}}
 // {{HDR3}}
 // Generated from tradingview/map/template.pine by tradingview/map/build.py ({{LANG}}). Formulas: docs/decision_map_spec.md
 //@version=6
-indicator("Xauscalper Map · XAUUSD", shorttitle = "XSM", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
+indicator("ZARVA Map · XAUUSD", shorttitle = "ZRV", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
 
 // ───────────────────────── {{G_INPUTS}} ─────────────────────────
 const string GD = "{{G_DISPLAY}}"
@@ -16,16 +16,15 @@ float  nearUsd = input.float(15.0, "{{I_NEAR}}", minval = 2, step = 1, group = G
 const string GP = "{{G_PRICE}}"
 string feedT   = input.string("bid", "{{I_FEED}}", options = ["bid", "mid"], tooltip = "{{T_FEED}}", group = GP)
 float  feedSpr = input.float(0.35, "{{I_FSPR}}", minval = 0, step = 0.05, tooltip = "{{T_FSPR}}", group = GP)
-float  lvlOff  = input.float(0.30, "{{I_OFF}}", step = 0.01, tooltip = "{{T_OFF}}", group = GP)
 float  midOff  = input.float(0.02, "{{I_MOFF}}", step = 0.01, tooltip = "{{T_MOFF}}", group = GP)
 string unitT   = input.string("{{V_1U}}", "{{I_UNIT}}", options = ["{{V_1U}}", "{{V_05U}}"], group = GP)
 float  tpu1    = input.float(80000, "{{I_TPU}}", step = 1000, group = GP)
 float  feeT    = input.float(14000, "{{I_FEE}}", step = 1000, group = GP)
 float  sprd    = input.float(0.25, "{{I_SPR}}", minval = 0, step = 0.05, tooltip = "{{T_SPR}}", group = GP)
-// price frames (assist.js): levels = bid + lvlOff (snapshot frame); live DaryaGold price = mid + midOff
-float bidAdj = feedT == "bid" ? 0.0 : -feedSpr / 2
-float dgOff  = bidAdj + lvlOff                                       // chart → level frame
-float liveOff = (feedT == "bid" ? feedSpr / 2 : 0.0) + midOff        // chart → live DaryaGold price
+// ONE DaryaGold price basis (owner t244u, 2026-11-21; assist.js levelOffset/quoteOf): DaryaGold = mid + midOff for levels,
+// the live price, setups and alerts. A bid chart is moved to mid with half the typical feed spread (bot: 0.35 / 2 = 0.175).
+float liveOff = (feedT == "bid" ? feedSpr / 2 : 0.0) + midOff        // chart → DaryaGold price
+float dgOff   = liveOff                                              // levels use the same basis
 
 const string GS = "{{G_SETUP}}"
 bool   showSet = input.bool(true, "{{I_SHOWSET}}", group = GS)
@@ -873,7 +872,7 @@ f_build(int dir, int iz, float P, float a, float sessF) =>
     bool inside = dir < 0 ? chartP >= lo : chartP <= hi
     float rr = (math.abs(tp1 - mid) * 80000 - 14000) / (math.abs(sl - mid) * 80000 + 14000)
     bool crossed = dir < 0 ? P + sprd >= sl : P <= sl
-    bool ok = not crossed and risk <= 9 and dist <= 4 * a and (tp1 - mid) * dir > 0 and room >= math.max(1.0, 0.5 * math.abs(sl - mid)) and rr >= 0.6
+    bool ok = not crossed and risk + a <= 9 and dist <= 4 * a and (tp1 - mid) * dir > 0 and room >= math.max(1.0, 0.5 * math.abs(sl - mid)) and rr >= 0.6
     // credibility (scoreSetup): trend 25, fill 15, level 15, room 10, rr 15, adr 8, session 7, hunt 5
     float tf = ((tr240 == dir ? 0.3 : tr240 == -dir ? -0.3 : 0.0) + (tr60 == dir ? 0.3 : tr60 == -dir ? -0.3 : 0.0) + (tr15 == dir ? 0.25 : tr15 == -dir ? -0.25 : 0.0) + (tr5 == dir ? 0.15 : tr5 == -dir ? -0.15 : 0.0) + 1) / 2
     float fillF = inside ? 1.0 : f_clamp(1 - dist / (3 * a))

@@ -1,10 +1,10 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// Xauscalper Map · XAUUSD — نقشه‌ی تصمیم برای اسکالپ طلا در دریاگلد، همراه بات Xauscalper
+// ZARVA Map · XAUUSD — نقشه‌ی تصمیم برای اسکالپ طلا در دریاگلد، همراه بات Z A R V A •|• BTV
 // دو سطح بالا و دو سطح پایین (همان سطح‌های بات)، نوار روند ۵ و ۱۵ دقیقه و ۱ و ۴ ساعت، فضای معامله و چراغ وضعیت بازار.
 // ستاپ فقط وقتی معتبر باشد کشیده می‌شود: بازه‌ی ورود، حد ضرر، حد سود ۱ و ۲ با سود و ضرر تومانی بعد از کارمزد، و عدد اعتبار از ۰ تا ۱۰۰.
 // Generated from tradingview/map/template.pine by tradingview/map/build.py (fa). Formulas: docs/decision_map_spec.md
 //@version=6
-indicator("Xauscalper Map · XAUUSD", shorttitle = "XSM", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
+indicator("ZARVA Map · XAUUSD", shorttitle = "ZRV", overlay = true, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 10, max_bars_back = 500)
 
 // ───────────────────────── تنظیمات ─────────────────────────
 const string GD = "۱. نمایش"
@@ -16,16 +16,15 @@ float  nearUsd = input.float(15.0, "گوشی: فقط سطح‌های نزدیک�
 const string GP = "۲. قیمت و هزینه‌ها"
 string feedT   = input.string("bid", "قیمت چارت", options = ["bid", "mid"], tooltip = "bid یعنی چارت قیمت فروش را نشان می‌دهد (OANDA و Dukascopy)، mid یعنی قیمت میانه.", group = GP)
 float  feedSpr = input.float(0.35, "اسپرد معمول فید چارت (دلار)", minval = 0, step = 0.05, tooltip = "فقط برای تبدیل bid به میانه به کار می‌رود (همان ۰٫۳۵ پیش‌فرض بات).", group = GP)
-float  lvlOff  = input.float(0.30, "اختلاف سطح‌ها با bid (دلار)", step = 0.01, tooltip = "سطح‌ها مثل بات به قیمت دریاگلد = bid + این عدد نشان داده می‌شوند (پیش‌فرض ۰٫۳۰، همان عدد بات). اگر با /offset در بات عدد دیگری ثبت کرده‌اید، همان را اینجا هم بگذارید.", group = GP)
-float  midOff  = input.float(0.02, "اختلاف قیمت زنده‌ی دریاگلد با قیمت میانه (دلار)", step = 0.01, tooltip = "بات قیمت زنده‌ی دریاگلد را قیمت میانه به‌اضافه‌ی این عدد می‌گیرد (پیش‌فرض ۰٫۰۲). ستاپ‌ها، فاصله تا ورود و پر شدن سفارش با این قیمت حساب می‌شوند.", group = GP)
+float  midOff  = input.float(0.02, "اختلاف قیمت دریاگلد با قیمت میانه (دلار)", step = 0.01, tooltip = "مثل بات: قیمت دریاگلد = قیمت میانه + این عدد (پیش‌فرض ۰٫۰۲)، برای سطح‌ها، قیمت زنده، ستاپ‌ها و هشدارها. اگر در بات با /offset عدد دیگری ثبت کرده‌اید، همان را اینجا بگذارید.", group = GP)
 string unitT   = input.string("یک واحد", "حجم", options = ["یک واحد", "نیم واحد"], group = GP)
 float  tpu1    = input.float(80000, "تومان به ازای هر دلار حرکت، برای یک واحد", step = 1000, group = GP)
 float  feeT    = input.float(14000, "کارمزد هر معامله (تومان، یک بار)", step = 1000, group = GP)
 float  sprd    = input.float(0.25, "حاشیه‌ی اسپرد (دلار)", minval = 0, step = 0.05, tooltip = "مثل بات: خرید با قیمت خرید (ask) پر می‌شود، پس بازه‌ی ورود خرید و حد ضرر و حد سود فروش به همین اندازه بالاتر گذاشته می‌شوند.", group = GP)
-// price frames (assist.js): levels = bid + lvlOff (snapshot frame); live DaryaGold price = mid + midOff
-float bidAdj = feedT == "bid" ? 0.0 : -feedSpr / 2
-float dgOff  = bidAdj + lvlOff                                       // chart → level frame
-float liveOff = (feedT == "bid" ? feedSpr / 2 : 0.0) + midOff        // chart → live DaryaGold price
+// ONE DaryaGold price basis (owner t244u, 2026-11-21; assist.js levelOffset/quoteOf): DaryaGold = mid + midOff for levels,
+// the live price, setups and alerts. A bid chart is moved to mid with half the typical feed spread (bot: 0.35 / 2 = 0.175).
+float liveOff = (feedT == "bid" ? feedSpr / 2 : 0.0) + midOff        // chart → DaryaGold price
+float dgOff   = liveOff                                              // levels use the same basis
 
 const string GS = "۳. ستاپ‌ها"
 bool   showSet = input.bool(true, "نمایش ستاپ‌ها", group = GS)
@@ -391,8 +390,8 @@ f_kname(int k) =>
         21 => "دو کف هم‌اندازه"
         22 => "عدد رُند"
         23 => "عدد رُند"
-        24 => "برگشت اخیر قیمت"
-        25 => "برگشت اخیر قیمت"
+        24 => "نقطه‌ی برگشت اخیر"
+        25 => "نقطه‌ی برگشت اخیر"
         26 => "سقف این ماه"
         27 => "کف این ماه"
         28 => "سقف ماه قبل"
@@ -873,7 +872,7 @@ f_build(int dir, int iz, float P, float a, float sessF) =>
     bool inside = dir < 0 ? chartP >= lo : chartP <= hi
     float rr = (math.abs(tp1 - mid) * 80000 - 14000) / (math.abs(sl - mid) * 80000 + 14000)
     bool crossed = dir < 0 ? P + sprd >= sl : P <= sl
-    bool ok = not crossed and risk <= 9 and dist <= 4 * a and (tp1 - mid) * dir > 0 and room >= math.max(1.0, 0.5 * math.abs(sl - mid)) and rr >= 0.6
+    bool ok = not crossed and risk + a <= 9 and dist <= 4 * a and (tp1 - mid) * dir > 0 and room >= math.max(1.0, 0.5 * math.abs(sl - mid)) and rr >= 0.6
     // credibility (scoreSetup): trend 25, fill 15, level 15, room 10, rr 15, adr 8, session 7, hunt 5
     float tf = ((tr240 == dir ? 0.3 : tr240 == -dir ? -0.3 : 0.0) + (tr60 == dir ? 0.3 : tr60 == -dir ? -0.3 : 0.0) + (tr15 == dir ? 0.25 : tr15 == -dir ? -0.25 : 0.0) + (tr5 == dir ? 0.15 : tr5 == -dir ? -0.15 : 0.0) + 1) / 2
     float fillF = inside ? 1.0 : f_clamp(1 - dist / (3 * a))

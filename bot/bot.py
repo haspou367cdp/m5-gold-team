@@ -65,8 +65,8 @@ def load_state():
     return s
 
 def apply_offset(state, cfg):
-    """bot_state dg_offset (/offset, or the /calibrate median when enough recent samples exist) overrides the file's
-    price_offset_usd, for this run and brief.py. Without it the file's +0.3 stays and the brief says «کالیبره نشده»."""
+    """bot_state dg_offset = the single DaryaGold basis (Dukascopy mid + dg_offset; /offset or the /calibrate median).
+    It overrides the file's mid_offset_usd (0.02) for this run and brief.py; the bid offset becomes spread/2 + dg_offset."""
     cal = (state.get("calibration") or {}).get("status")
     if cal in ("calibrated", "not_calibrated"):
         cfg["calibration_status"] = cal
@@ -78,7 +78,7 @@ def apply_offset(state, cfg):
         return cfg
     if abs(v) > 5:
         return cfg
-    cfg["price_offset_usd"] = v
+    DG.set_mid_offset(cfg, v)
     os.environ["DG_OFFSET_USD"] = str(v)
     return cfg
 
@@ -112,7 +112,7 @@ def group_enabled(state=None):
     return not state or state.get("group_enabled") is not False
 
 def channel_chat(state=None):
-    """Mirror target from bot_state.channel_id (the BAROBAX group). Empty if unset, disabled, or equal to the owner chat."""
+    """Mirror target from bot_state.channel_id (the «• Z A R V A •» group). Empty if unset, disabled, or equal to the owner chat."""
     if not group_enabled(state):
         return ""
     raw = (state or {}).get("channel_id")
@@ -388,7 +388,7 @@ def px(p):
     if p is None:
         return "—"
     bid = float(p)
-    dg = DG.to_broker(bid, CFG) if CFG else bid + 0.3
+    dg = DG.to_broker(bid, CFG) if CFG else bid + 0.195
     return f"{dg:.2f}".rstrip("0").rstrip(".")
 
 def raw(p):
@@ -459,7 +459,7 @@ def px1(p):
     if p is None:
         return "—"
     bid = float(p)
-    dg = DG.to_broker(bid, CFG) if CFG else bid + 0.3
+    dg = DG.to_broker(bid, CFG) if CFG else bid + 0.195
     return f"{dg:.1f}"
 
 def _hm(x):
@@ -562,7 +562,7 @@ def toman_short(v):
     return f"{v:.0f}"
 
 def p1(bid):
-    dg = DG.to_broker(float(bid), CFG) if CFG else float(bid) + 0.3
+    dg = DG.to_broker(float(bid), CFG) if CFG else float(bid) + 0.195
     return f"{dg:.1f}"
 
 def friday_flag():
@@ -681,8 +681,9 @@ def market_summary(b, state, title):
     # The shared block already names the next (or current) window; list the rest if any remain after it.
     L.append("")
     if len(wins) > 1:
-        L.append("🔔 ساعت‌های خبری باقی‌مانده‌ی امروز (در این ساعت‌ها ستاپی داده نمی‌شود)")
-        L += [f" {a} تا {z}" for a, z in wins]
+        L.append("**🔔 خبرهای باقی‌مانده‌ی امروز**")
+        L += [f"▫️ {a} تا {z}" for a, z in wins]
+        L.append("~~در این ساعت‌ها ستاپی داده نمی‌شود.~~")
     elif not wins:
         L.append("🔔 امروز خبر مهم دیگری در تقویم نیست.")
     L += ["", f"💼 موجودی {toman_short(state['equity_toman'])} تومان"]
@@ -932,7 +933,7 @@ def main():
     apply_offset(state, cfg)
     # /scan, /brief and /levels are queued by the Edge Function; every other command is answered there.
     pending = [x for x in state.get("pending_cmds") or [] if x.get("cmd") in ("/scan", "/brief", "/levels")]
-    # one answer per command; origin "group" = asked by a BAROBAX member: answer only in the group (group variant).
+    # one answer per command; origin "group" = asked by a group member: answer only in the group (group variant).
     # If the owner asked too, the owner's card wins (and is mirrored to the group as usual).
     group_only = {}
     for x in pending:

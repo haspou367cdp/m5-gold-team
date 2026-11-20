@@ -63,7 +63,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (url.includes("api.telegram.org")) {
     const b = JSON.parse(init.body);
     if (url.endsWith("/sendMessage")) { SENT.push(b); return J({ ok: true, result: { message_id: SENT.length } }); }
-    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "XauscalperBot" } });
+    if (url.endsWith("/getMe")) return J({ ok: true, result: { username: "ZarvaGoldBot" } });
     if (/\/(setMyCommands|deleteMyCommands|answerCallbackQuery)$/.test(url)) { TGCALLS.push([url.split("/").pop(), b]); return J({ ok: true }); }
     return J({ ok: true });
   }
@@ -100,7 +100,7 @@ check("trend summary: one TF correcting", A.trendSummary({ M5: "صعودی", M15
 check("trend summary: H4≠H1 → نامشخص; both flat → خنثی", A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "نزولی" }).overall === "نامشخص" &&
   A.trendSummary({ M5: "نزولی", M15: "نزولی", H1: "خنثی", H4: "خنثی" }).overall === "خنثی");
 const tm = A.trendMsg(down, { quote: { dg: 3530.12 }, dataAt: CLOCK.getTime(), at: CLOCK.getTime() });
-check("/trend card: plain summary first, then M5, M15, H1, H4 lines, last-data time, Latin price", ["جهت بزرگ بازار نزولی است", "۵ دقیقه‌ای: نزولی", "۱۵ دقیقه‌ای: نزولی", "۱ ساعته: نزولی", "۴ ساعته: نزولی", "**جزئیات**", "آخرین قیمت"].every((x) => tm.includes(x)) && tm.includes("`3530.12`"));
+check("/trend card: plain summary first, then M5, M15, H1, H4 lines, last-data time, Latin price", ["جهت بزرگ بازار نزولی است", "۵ دقیقه‌ای: نزولی", "۱۵ دقیقه‌ای: نزولی", "۱ ساعته: نزولی", "۴ ساعته: نزولی", "جهت کلی: نزولی", "آخرین قیمت"].every((x) => tm.includes(x)) && tm.includes("`3530.12`"));
 check("money: fee once per trade, 1U = 80k/$ and 0.5U = 40k/$", A.netToman(-1, 3540, 3530, 1) === 786000 && A.netToman(-1, 3540, 3530, 0.5) === 386000 && A.netToman(1, 3540, 3539, 1) === -94000);
 check("tomanFa: short signed amounts", A.tomanFa(-248400) === "−248 هزار" && A.tomanFa(1480000) === "+1.48 میلیون");
 const onHalf = (x) => Math.abs(x * 2 - Math.round(x * 2)) < 0.05;
@@ -150,11 +150,12 @@ const vv = A.validity(baseCtx());
 const msgO = A.setupMsg(res, baseCtx(), vv), msgG = A.setupMsg(res, baseCtx(), vv, { group: true });
 ALL.push(msgO, msgG);
 check("owner setup card: entry range, SL, TP1, TP2, credibility, expiry, invalidation, best/worst toman for 1U and 0.5U",
-  ["ستاپ یعنی یک نقشه‌ی آماده", "اعتبار ", "از ۱۰۰", " برسد، آنجا ", "حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "معتبر است", "این ستاپ را کنار بگذارید", "یک واحد", "نیم واحد", "بهترین", "دو انتخاب‌اند", "چرا اعتبار"].every((x) => msgO.includes(x)));
+  ["ستاپ = نقشه‌ی آماده", "اعتبار ", "از ۱۰۰", "📍 ورود: `", "حد ضرر: `", "حد سود ۱: `", "حد سود ۲: `", "معتبر تا", "این ستاپ را کنار بگذارید", "۱ واحد", "½ واحد", "بهترین", "دو انتخاب‌اند", "💡 ", "💰 قیمت الان"].every((x) => msgO.includes(x)) &&
+  (msgO.includes("به این بازه برسد") || msgO.includes("همین الان در این بازه")));
 check("group setup card: same prices, no toman/balance", !/تومان|هزار|میلیون|موجودی/.test(msgG) && msgG.includes("از ۱۰۰") && msgG.includes(`\`${A.px(res.SELL[0].sl)}\``));
 const weak = { ...res.BUY[0], score: 31 };
 const msgW = A.setupMsg({ SELL: [], BUY: [weak], why: { SELL: "تا سطح بعدی جا کم است", BUY: null } }, baseCtx(), vv);
-check("score under 40 is flagged ⚠; empty side says clearly why", msgW.includes("31 از ۱۰۰ ⚠") && msgW.includes("فعلاً فروش منطقی نیست، چون تا سطح بعدی جا کم است."));
+check("score under 40 is flagged ⚠; empty side says clearly why", msgW.includes("31 از ۱۰۰ ⚠") && msgW.includes("فروش: فعلاً منطقی نیست\n~~چون تا سطح بعدی جا کم است.~~"));
 const r0 = A.buildSetups(baseCtx({ levels: [] }));
 check("no levels → both sides say no sensible setup", !r0.SELL.length && !r0.BUY.length && r0.why.SELL && r0.why.BUY);
 // /e
@@ -162,7 +163,7 @@ const pe = A.planEntry({ levels: lv, atr5: 4 }, -1, 3535.5);
 check("/e sell inside a resistance zone: SL behind that zone, TP1 before the next support", pe.sl > 3537.7 && pe.sl - 3535.5 <= 9 && pe.tp1 < 3530 && pe.tp2 < pe.tp1 && pe.slLevel && pe.tp1Level);
 const em = A.entryMsg(pe, { quote: { dg: 3530 }, nowMs: ms("2026-11-18T15:00:00Z"), dirWhy: "روند کلی نزولی" });
 ALL.push(em);
-check("/e card: SL/TP1/TP2 with 1U and 0.5U net toman; alternatives note", ["حد ضرر `", "حد سود ۱ `", "حد سود ۲ `", "یک واحد", "نیم واحد", "فقط یکی از دو حد سود"].every((x) => em.includes(x)) &&
+check("/e card: SL/TP1/TP2 with 1U and 0.5U net toman; alternatives note", ["حد ضرر: `", "حد سود ۱: `", "حد سود ۲: `", "۱ واحد", "½ واحد", "فقط یکی از دو حد سود"].every((x) => em.includes(x)) &&
   em.includes(A.tomanFa(A.netToman(-1, 3535.5, pe.sl, 1))));
 const pf = A.planEntry({ levels: [], atr5: 4 }, 1, 3530);
 check("/e without a level nearby: volatility SL, still ≥ $1", pf.sl < 3529 && pf.tp1 > 3530 && !pf.slLevel);
@@ -214,7 +215,7 @@ check("owner /trend: live trend card, private, Persian digits outside code, Lati
 out = await owner("/setup");
 ALL.push(...out.map((x) => x.text));
 check("owner /setup: setup card in private chat and every shown setup logged silently (origin owner)", out.length === 1 && String(out[0].chat_id) === OWNER &&
-  out[0].text.includes("ستاپ‌ها") && SETUPS.length >= 2 && SETUPS.every((x) => x.origin === "owner" && x.valid_until && x.score >= 0 && x.dg_bid_offset !== undefined));
+  out[0].text.includes("ستاپ‌ها") && SETUPS.length >= 1 && SETUPS.every((x) => x.origin === "owner" && x.valid_until && x.score >= 0 && x.dg_bid_offset !== undefined));
 check("setup ids match the table check (^U-\\d{14}-[og][BS]\\d-[a-z0-9]{1,6}$)", SETUPS.every((x) => /^U-\d{14}-[og][BS]\d-[a-z0-9]{1,6}$/.test(x.id)));
 check("owner /setup is not mirrored to the group", out.every((x) => String(x.chat_id) !== GID));
 const nLog = SETUPS.length;
@@ -222,7 +223,7 @@ out = await owner("/signal");
 check("/signal and /scan are aliases of /setup", out.length === 1 && out[0].text.includes("ستاپ‌ها") && SETUPS.length > nLog);
 out = await owner("/e sell 3535.50");
 ALL.push(...out.map((x) => x.text));
-check("owner /e sell: SL/TP card with toman", out.length === 1 && out[0].text.includes("فروش از") && out[0].text.includes("یک واحد"));
+check("owner /e sell: SL/TP card with toman", out.length === 1 && out[0].text.includes("فروش از") && out[0].text.includes("واحد"));
 out = await owner("/e 3530.10");
 check("owner /e without side: direction from the trend is named", out.length === 1 && /جهت را ننوشتید؛ (فروش|خرید) در نظر گرفته شد، چون/.test(plain(out[0].text)));
 out = await owner("/e hold");
@@ -245,7 +246,7 @@ check("member /setup: group-safe card in the group (no toman), logged as group",
   SETUPS.length > before && SETUPS.slice(before).every((x) => x.origin === "group"));
 out = await group("/setup");
 check("group cooldown: a repeat within 60 s is ignored", out.length === 0);
-out = await group("/trend@XauscalperBot");
+out = await group("/trend@ZarvaGoldBot");
 check("member /trend: group reply", out.length === 1 && String(out[0].chat_id) === GID && out[0].text.includes("روند"));
 out = await group("/trend@OtherBot");
 check("/trend addressed to another bot: ignored", out.length === 0);
@@ -274,8 +275,10 @@ out = await owner("/trend");
 check("Saturday /trend: last data + closed line", out.length === 1 && out[0].text.includes("جهت بزرگ بازار") && out[0].text.includes("بازار بسته است"));
 // offset live
 out = await owner("/offset live 0.05");
-check("/offset live sets the DaryaGold mid offset", DB.row.state.dg_mid_offset === 0.05 && out[0].text.includes("میانه"));
-DB.row.state.dg_mid_offset = null;
+check("/offset live (old form) sets the one DaryaGold offset", DB.row.state.dg_offset === 0.05 && out[0].text.includes("ثبت شد"));
+out = await owner("/offset");
+check("/offset: one basis = Dukascopy mid + offset", out[0].text.includes("میانه") && !out[0].text.includes("سطوح:"));
+DB.row.state.dg_offset = null;
 
 // ================= /tick =================
 CLOCK = U("2026-11-18T15:10:00Z");
@@ -330,8 +333,18 @@ check("wording: never «زیان», «قوی», «داریاگلد», or disclai
 check("menu: no digits in descriptions; /setup /e /trend present", COMMANDS.every((c) => !/\d/.test(c.description)) && ["setup", "e", "trend"].every((k) => COMMANDS.some((c) => c.command === k)));
 check("ZWNJ: half-spaces in common words (دقیقه‌ای، هم‌جهت، نقشه‌ی)", tm.includes("دقیقه‌ای") && msgO.includes("نقشه‌ی") && A.trendSummary(down).line.includes("هم‌جهت") && msgO.includes("هم‌جهت"));
 { const lm = levelsMsg(LEVELS(3530), CLOCK); ALL.push(lm);
-  check("/levels plain card: price, what a level is, above/below with $ distance, no ATR/H1/OR jargon", ["سطوح مهم قیمت", "سطح یعنی", "**⬆️ بالای قیمت**", "**⬇️ زیر قیمت**", "دلار بالاتر", "دلار پایین‌تر"].every((x) => lm.includes(x)) &&
+  check("/levels plain card: price, what a level is, above/below with $ distance, no ATR/H1/OR jargon", ["سطوح مهم قیمت", "سطح = ", "**⬆️ بالای قیمت**", "**⬇️ زیر قیمت**", "قیمت الان", "دلار بالاتر", "دلار پایین‌تر"].every((x) => lm.includes(x)) &&
     !/ATR|H1|H4|OR |سوئینگ|رژیم|پهنه/.test(lm)); }
+{ const sn = { offset: 0.3, price_dg: 3530.3, short: { above: [{ price_dg: 3540.3, zone_dg: [3539.3, 3541.3] }], below: [] } };
+  const rb = A.rebaseSnap(sn, A.levelOffset({}));
+  check("one basis: a bid+0.3 snapshot is moved to mid+0.02 (= bid + 0.195) for every view", A.levelOffset({}) === 0.195);
+  check("rebaseSnap shifts price, level and zone by the same amount; unchanged when offsets match",
+    Math.abs(rb.short.above[0].price_dg - 3540.195) < 0.006 && Math.abs(rb.price_dg - 3530.195) < 0.006 && Math.abs(rb.short.above[0].zone_dg[0] - 3539.195) < 0.006 &&
+    A.rebaseSnap({ ...sn, offset: 0.2 }, 0.2).short === sn.short); }
+{ const wide = A.buildSetups(baseCtx({ atr5: 7 }));
+  const allC = [...wide.SELL, ...wide.BUY];
+  check("SL rule (owner t244u): every shown setup has SL distance + M5 ATR <= $9", allC.every((c) => Math.abs(c.sl - c.worst) + 7 <= 9));
+  check("SL rule: a blocked side says why in plain words", [wide.why.SELL, wide.why.BUY].some((w) => w && w.includes("نوسان معمول")) || allC.length > 0); }
 check("render keeps copyable prices Latin", render("ورود `3535.10`").includes("<code>3535.10</code>"));
 console.log(`\n${fails} failed`);
 process.exit(fails ? 1 : 0);

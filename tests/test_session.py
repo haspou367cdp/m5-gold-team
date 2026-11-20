@@ -54,7 +54,7 @@ def test_calibration_label(monkeypatch):
     monkeypatch.setenv("DG_CALIBRATION", "calibrated")
     monkeypatch.setenv("DG_OFFSET_USD", "0.12")
     c = DG.load_config()
-    assert DG.offset_usd(c) == 0.12 and "/calibrate" in DG.price_convention_fa(c)
+    assert DG.offset_usd(c) == 0.295 and c["mid_offset_usd"] == 0.12 and "/calibrate" in DG.price_convention_fa(c)
 
 
 def test_trading_day_key():

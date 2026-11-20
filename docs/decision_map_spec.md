@@ -1,4 +1,4 @@
-# Xauscalper Map: formulas shared by the indicator and the bot
+# ZARVA Map (formerly Xauscalper Map): formulas shared by the indicator and the bot
 
 The TradingView indicator `tradingview/xauscalper_map*.pine` (built from `tradingview/map/template.pine`) mirrors:
 - the levels of `tools/levels.py` + `tools/level_view.py` (the snapshot behind `/levels`);
@@ -6,8 +6,10 @@ The TradingView indicator `tradingview/xauscalper_map*.pine` (built from `tradin
   (branch `bot-assistant-v2`, commits f2652cb + 737b446, also on main).
 
 **Price frames (same as the bot).**
-- Levels: DaryaGold = **bid + 0.30** (input «اختلاف سطح‌ها با bid»).
-- Live price for setups, distance to entry and fills: DaryaGold = **mid + 0.02** (input «اختلاف قیمت زنده‌ی دریاگلد با قیمت میانه»).
+- ONE price basis (owner t244u, 2026-11-21): DaryaGold = **Dukascopy mid + 0.02** (input «اختلاف قیمت دریاگلد با قیمت میانه»; bot:
+  `bot_state.dg_offset`, `/offset`, `/calibrate`) for levels, the live price, setups, distance to entry, fills and alerts.
+  Levels are built on bid bars and moved by half the typical feed spread: level = bid + 0.175 + 0.02 = bid + 0.195
+  (bot `assist.levelOffset`, Python `broker_daryagold.set_mid_offset`). Until 2026-11-21 levels were bid + 0.30.
 - The chart feed is bid by default (OANDA or Dukascopy), with mid = bid + spread/2 and a feed spread of 0.35 (the bot's fallback). With a mid feed, choose «mid».
 
 ## 1. Levels (port of levels.compute → level_view.short_view)
@@ -48,7 +50,7 @@ The TradingView indicator `tradingview/xauscalper_map*.pine` (built from `tradin
 - **Direction**: sell when `P < L.lo` or (`P ≤ L.hi` and the level is a resistance), otherwise buy. Keep the best 2 per side by score.
 - **Reject** a setup in any of these cases:
   - price is already past the SL;
-  - risk (SL to worst edge) > $9;
+  - risk (SL to worst edge) + M5 ATR(14) > $9 (stricter rule, owner t244u 2026-11-21; was risk > $9);
   - distance to the range > 4×ATR;
   - TP1 is not beyond mid, or room < max(1, 0.5×|SL−mid|);
   - net R:R (80,000 per $, fee 14,000) < 0.6.

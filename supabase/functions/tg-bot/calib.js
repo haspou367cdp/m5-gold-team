@@ -1,6 +1,7 @@
 // Price calibration (Phase 2): owner-entered DaryaGold prices paired with the Dukascopy feed.
 // Pure helpers; app.js does the network/database work. Basis = DaryaGold price - reference price.
-// The offset the bot applies is DaryaGold = Dukascopy bid + offset, so only reference "dukascopy_bid" feeds it.
+// ONE basis since 2026-11-21 (owner t244u): DaryaGold = Dukascopy mid + offset. New samples are stored against the mid
+// ("dukascopy_mid"); older "dukascopy_bid" samples are converted (basis - half the feed spread, or - 0.175 when unknown).
 export const CAL = {
   WINDOW_DAYS: 7,         // samples used for stats
   MIN_SAMPLES: 5,         // fewer -> not calibrated (keep the current/default offset)
@@ -59,9 +60,17 @@ export function basisStatus(basis, expected, feedOk = true) {
 const median = (v) => { const s = [...v].sort((a, b) => a - b), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
 const std = (v) => { if (v.length < 2) return null; const m = v.reduce((a, b) => a + b, 0) / v.length; return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1)); };
 // rows: {observed_at ISO, basis_usd, reference, session, status}
+const HALF = 0.175;
+const midBasis = (r) => {
+  const b = Number(r.basis_usd);
+  if (r.reference === "dukascopy_mid") return b;
+  const fb = Number(r.feed_bid), fa = Number(r.feed_ask);
+  return r2(b - (Number.isFinite(fb) && Number.isFinite(fa) && fa > fb && r.feed_ask !== null && r.feed_bid !== null ? (fa - fb) / 2 : HALF));
+};
 export function basisStats(rows, nowMs) {
   const since = nowMs - CAL.WINDOW_DAYS * 86400000;
-  const use = rows.filter((r) => r.reference === "dukascopy_bid" && r.status !== "DATA_UNAVAILABLE" && r.basis_usd !== null &&
+  rows = rows.map((r) => (r.reference === "dukascopy_bid" && r.basis_usd !== null && r.basis_usd !== undefined ? { ...r, reference: "dukascopy_mid", basis_usd: midBasis(r) } : r));
+  const use = rows.filter((r) => r.reference === "dukascopy_mid" && r.status !== "DATA_UNAVAILABLE" && r.basis_usd !== null &&
     Number.isFinite(Number(r.basis_usd)) && Date.parse(r.observed_at) >= since && Date.parse(r.observed_at) <= nowMs)
     .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
   const v = use.map((r) => Number(r.basis_usd));
@@ -76,7 +85,7 @@ export function basisStats(rows, nowMs) {
   if (sd !== null && sd > CAL.MAX_STD) why.push("wide");
   if (ageH !== null && ageH > CAL.MAX_LATEST_AGE_H) why.push("old");
   const calibrated = why.length === 0 && v.length >= CAL.MIN_SAMPLES;
-  const other = rows.filter((r) => r.reference !== "dukascopy_bid").length;
+  const other = rows.filter((r) => r.reference !== "dukascopy_mid").length;
   return { count: v.length, median: m === null ? null : r2(m), std: sd === null ? null : Math.round(sd * 1000) / 1000,
     latest: latest ? { basis: Number(latest.basis_usd), observed_at: latest.observed_at } : null,
     latest_age_h: ageH === null ? null : Math.round(ageH * 10) / 10, by_session: bySession,

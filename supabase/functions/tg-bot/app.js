@@ -9,7 +9,7 @@ import { CAL, CAL_HELP, STATUS_FA, basisStats, basisStatus, parseDuka, pickFeed,
 import { sessionDate, offsetOf, CHAT_ID, teh, normalize, handle, send, tg, dispatch, verifyOidc, ANNOUNCE, HELP, menuCalls, MENU_VERSION, weekendClosed, closedLine, channelChat, publicReply, MIRROR_CMDS, GROUP_CMDS, GROUP_COOLDOWN_MS, forexOpen } from "./lib.js";
 import * as A from "./assist.js";
 
-export const BUILD = "2026-11-21-assistant-v4-plain";
+export const BUILD = "2026-11-21-assistant-v5-onebasis";
 const DUKA = (side, ts) => "https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=XAU%2FUSD" +
   `&offer_side=${side}&interval=1MIN&splits=true&stocks=true&limit=30&time_direction=N&timestamp=${ts}&jsonp=_cb`;
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -71,18 +71,19 @@ export function makeApp(cfg) {
     else {
       const f = await feedNow(nowMs);
       const ok = !!f && f.age_s <= CAL.MAX_FEED_AGE_S;
-      const basis = ok ? r2(c.price - f.feed_bid) : null;
+      const ref = f ? (f.feed_ask !== null && f.feed_ask > f.feed_bid ? r2((f.feed_bid + f.feed_ask) / 2) : r2(f.feed_bid + A.FEED_HALF_SPREAD)) : null;
+      const basis = ok ? r2(c.price - ref) : null;   // ONE basis: DaryaGold - Dukascopy mid
       const status = basisStatus(basis, cur, ok);
       const r = await fetch(`${SB}/rest/v1/price_observations`, { method: "POST", headers: { ...hdr, prefer: "return=minimal" },
         body: JSON.stringify({ observed_at: now.toISOString(), source: "telegram_calibrate", darya_price: c.price, darya_ask: c.ask,
-          reference: "dukascopy_bid", feed_bid: f ? f.feed_bid : null, feed_ask: f ? f.feed_ask : null, feed_ref: f ? f.feed_bid : null,
+          reference: "dukascopy_mid", feed_bid: f ? f.feed_bid : null, feed_ask: f ? f.feed_ask : null, feed_ref: ref,
           feed_bar_at: f ? f.bar_at : null, feed_age_s: f ? f.age_s : null, basis_usd: basis, session: sessionOf(t.hm), status }) });
       if (!r.ok) throw new Error(`insert ${r.status}`);
-      L.push("**🎯 قیمت دریاگلد ثبت شد**", `~~${t.hm} · دریاگلد \`${c.price}\`` + (ok ? ` · مرجع \`${f.feed_bid}\`` : "") + "~~", "");
+      L.push("**🎯 قیمت دریاگلد ثبت شد**", `~~${t.hm} · دریاگلد \`${c.price}\`` + (ok ? ` · مرجع \`${ref}\`` : "") + "~~", "");
       L.push(ok ? `اختلاف ${sgn(basis)} دلار · ${STATUS_FA[status]}` : `${STATUS_FA[status]}؛ این نمونه در محاسبه حساب نمی‌شود`);
     }
     const since = new Date(nowMs - CAL.WINDOW_DAYS * 86400000).toISOString();
-    const q = await fetch(`${SB}/rest/v1/price_observations?select=observed_at,basis_usd,reference,session,status&observed_at=gte.${encodeURIComponent(since)}&order=observed_at.asc`, { headers: hdr });
+    const q = await fetch(`${SB}/rest/v1/price_observations?select=observed_at,basis_usd,reference,feed_bid,feed_ask,session,status&observed_at=gte.${encodeURIComponent(since)}&order=observed_at.asc`, { headers: hdr });
     if (!q.ok) throw new Error(`select ${q.status}`);
     const st = basisStats(await q.json(), nowMs);
     let after = cur;
@@ -173,7 +174,7 @@ export function makeApp(cfg) {
       if (!trend) return "**⚠️ داده‌ی قیمت در دسترس نیست**\n~~چند دقیقه‌ی دیگر دوباره بفرستید~~";
       return A.trendMsg(trend, { quote: q, dataAt: live ? q.barAt : A.tehMs(snap.computed_at_tehran), at: nowMs, stale: !live }) + closedTail;
     }
-    const levels = A.snapLevels(snap);
+    const levels = A.snapLevels(A.rebaseSnap(snap, A.levelOffset(s)));
     if (!levels.length) return "**⚠️ داده‌ی سطوح در دسترس نیست**\n~~بعد از بررسی خودکار بعدی دوباره بفرستید~~";
     const age = A.snapAgeMin(snap, nowMs);
     const snapNote = age !== null && age > 30 ? `سطح‌ها مربوط به ساعت ${String(snap.computed_at_tehran).slice(11, 16)} است` : null;
@@ -243,7 +244,7 @@ export function makeApp(cfg) {
     if (snap && age !== null && age < 60 && !(nowMs - (Number(st.level_alert_ms) || 0) < 10 * 60000)) {
       const since = Math.max(Number(st.tick_ms) || 0, nowMs - 10 * 60000) - 60000, o = q.bidOff;
       const bars = mkt.m1B.filter((b) => b[0] >= since).map((b) => [b[0], b[1] + o, b[2] + o, b[3] + o, b[4] + o]);
-      const la = A.levelAlerts(A.snapLevels(snap), bars, { day, sent, snapAtMs: A.tehMs(snap.computed_at_tehran) });
+      const la = A.levelAlerts(A.snapLevels(A.rebaseSnap(snap, A.levelOffset(s))), bars, { day, sent, snapAtMs: A.tehMs(snap.computed_at_tehran) });
       for (const x of la) { msgs.push(x.text); sent[x.key] = nowMs; }
       if (la.length) st.level_alert_ms = nowMs;
     }
@@ -279,7 +280,7 @@ export function makeApp(cfg) {
     const m = u.message || {};
     const chat = m.chat || {};
     const text = (m.text || "").trim();
-    // Groups: only the BAROBAX group (bot_state.channel_id), only GROUP_CMDS, any member, read-only, cooldown per command.
+    // Groups: only the «• Z A R V A •» group (bot_state.channel_id), only GROUP_CMDS, any member, read-only, cooldown per command.
     if (["group", "supergroup"].includes(chat.type)) return await onGroup(env, u, chat, text);
     // Everything else: commands only from the owner's private chat. Never reply anywhere else.
     if (chat.type === "channel") return new Response("ok");
@@ -342,7 +343,7 @@ export function makeApp(cfg) {
     return BOT_USER;
   }
 
-  // Group members (BAROBAX) may run GROUP_CMDS only. Replies are the group variants (publicReply / public_card):
+  // Group members («• Z A R V A •», formerly BAROBAX) may run GROUP_CMDS only. Replies are the group variants (publicReply / public_card):
   // no toman, no balance, no buttons. One answer per command per GROUP_COOLDOWN_MS; repeats are ignored silently.
   async function onGroup(env, u, chat, text) {
     const ok = new Response("ok");

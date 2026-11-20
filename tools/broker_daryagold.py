@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """DaryaGold adapter: config, price offset, unit sizing, news/weekend gates.
 
-Prices from Dukascopy stay in bid space for engines. Display conversion is
-    daryagold ≈ bid + price_offset_usd
-(calibrated; uncertainty is price_offset_uncertainty_usd).
+Prices from Dukascopy stay in bid space for engines. One DaryaGold basis everywhere (owner t244u, 2026-11-21):
+    daryagold = Dukascopy mid + mid_offset_usd            (default 0.02; /offset, /calibrate)
+    daryagold = bid + price_offset_usd, price_offset_usd = feed_spread_usd/2 + mid_offset_usd
+(uncertainty is price_offset_uncertainty_usd).
 Signal-only research. Not financial advice. Never places trades.
 """
 from __future__ import annotations
@@ -34,19 +35,28 @@ def load_config(equity=None):
         cfg = dict(cfg)
         cfg["equity_toman"] = float(equity)
     cfg["equity_toman"] = float(cfg["equity_toman"])
-    off = os.environ.get("DG_OFFSET_USD")   # live recalibration (bot_state dg_offset via bot.py, /offset in Telegram)
-    if off not in (None, ""):
-        try:
-            v = float(off)
-            if abs(v) <= 5:
-                cfg = dict(cfg)
-                cfg["price_offset_usd"] = v
-        except ValueError:
-            pass
+    cfg = set_mid_offset(dict(cfg), os.environ.get("DG_OFFSET_USD"))   # bot_state dg_offset via bot.py (/offset, /calibrate)
     cal = os.environ.get("DG_CALIBRATION")   # "calibrated" | "not_calibrated" (from /calibrate stats via bot.py)
     if cal:
         cfg = dict(cfg)
         cfg["calibration_status"] = cal
+    return cfg
+
+
+def set_mid_offset(cfg, v=None):
+    """Apply the single DaryaGold basis: v (mid offset, |v| <= 5) or the file's mid_offset_usd; recompute the bid offset."""
+    mid = cfg.get("mid_offset_usd", 0.02)
+    if v not in (None, ""):
+        try:
+            x = float(v)
+            if abs(x) <= 5:
+                mid = x
+        except (TypeError, ValueError):
+            pass
+    if mid is None or cfg.get("price_basis") != "dukascopy_mid":
+        return cfg
+    cfg["mid_offset_usd"] = round(float(mid), 4)
+    cfg["price_offset_usd"] = round(float(cfg.get("feed_spread_usd", 0.35)) / 2 + float(mid), 4)
     return cfg
 
 
@@ -126,6 +136,10 @@ def price_convention_fa(cfg):
         cal = "، کالیبره با میانه‌ی نمونه‌های /calibrate"
     elif cfg.get("calibration_status") == "not_calibrated":
         cal = "، کالیبره نشده"
+    mid = cfg.get("mid_offset_usd")
+    if mid is not None and cfg.get("price_basis") == "dukascopy_mid":
+        return (f"قیمت‌های دریاگلد = میانه‌ی دوکاسکوپی + {_n(mid)} دلار، یعنی bid + {_n(off)} ({unc_s}{cal}). "
+                "اعداد داخل پرانتز bid خام هستند.")
     return (f"قیمت‌های دریاگلد = bid دوکاسکوپی + {_n(off)} دلار ({unc_s}{cal}). "
             "اعداد داخل پرانتز bid خام هستند.")
 
@@ -666,7 +680,7 @@ def fa_plan_lines(plan, sizing, cfg):
 if __name__ == "__main__":
     # small self-check (no I/O beyond the config file)
     cfg = load_config()
-    assert cfg["price_offset_usd"] == 0.3
+    assert cfg["price_offset_usd"] == 0.195
     assert cfg["sizes"]["half_unit"]["fee"] == 14000
     assert cfg["sizes"]["full_unit"]["fee"] == 14000
     assert cfg["sizes"]["half_unit"].get("fee_unconfirmed") is False

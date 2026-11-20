@@ -11,7 +11,7 @@ export const OIDC_AUD = "m5-gold-bot";
 const DEFAULT_EQUITY = 2085600;
 export const BOT_KEYS = ["signals_sent", "presession_sent", "last_run_tehran", "last_verdict", "news_fetched_at", "shadow",
   "last_price", "friday_reminder_sent", "levels"];
-export const DEFAULT_OFFSET = 0.3;   // DaryaGold ≈ Dukascopy bid + dg_offset (bot_state.state.dg_offset, set by /offset)
+export const DEFAULT_OFFSET = 0.02;  // ONE basis (owner t244u): DaryaGold = Dukascopy mid + dg_offset (bot_state.state.dg_offset, /offset, /calibrate)
 
 // ---------------- time (Tehran = UTC+3:30, no DST since 2022) ----------------
 export function teh(d = new Date()) {
@@ -52,7 +52,7 @@ export function closedLine(d = new Date()) {
 }
 
 import { parseCalibrate } from "./calib.js";
-import { midOffsetOf } from "./assist.js";
+import { midOffsetOf, rebaseSnap, levelOffset, trendHead } from "./assist.js";
 // ---------------- formatting (port of bot/bot.py) ----------------
 const FA = "۰۱۲۳۴۵۶۷۸۹";
 export function faNum(t) {
@@ -89,23 +89,24 @@ export function parseAmount(args) {
 
 // Owner decision t226u-t232u (2026-11-20): the bot is an assistant. No automatic entry signals, no trade journal.
 // t238u (2026-11-20): the old journal/signal commands are removed entirely (unknown command reply).
+export const BOT_NAME = "Z A R V A •|• BTV", GROUP_NAME = "• Z A R V A •";   // display names (owner t244u/t246u); ids unchanged
 export const HELP = `**🤖 راهنما**
-~~دستیار طلای دریاگلد~~
+~~${BOT_NAME} · دستیار طلای دریاگلد~~
 
 **بازار**
-\`/setup\`  ستاپ‌های خرید و فروش
-\`/e sell 3531.80\`  حد ضرر و حد سود برای یک ورود
-\`/trend\`  روند هر تایم‌فریم
-\`/levels\`  سطوح مهم قیمت
-\`/brief\`  خلاصه‌ی بازار
+\`/setup\`  نقشه‌ی ورود: خرید یا فروش، حد ضرر و سود
+\`/e sell 3531.80\`  حد ضرر و سود برای قیمت ورود
+\`/trend\`  جهت بازار در هر بازه‌ی زمانی
+\`/levels\`  سقف‌ها و کف‌های مهم قیمت
+\`/brief\`  خلاصه‌ی بازار همین الان
 
 **هشدارهای خودکار**
 ~~رسیدن به سطح · تغییر روند ۱۵ دقیقه و ۱ ساعت · خبر مهم · نوسان خیلی زیاد یا خیلی کم · بسته‌شدن دریاگلد~~
 
 **تنظیمات**
-\`/status\`  وضعیت سیستم
-\`/balance 2085600\`  ثبت موجودی
-\`/offset\`  اختلاف قیمت دریاگلد
+\`/status\`  وضعیت بات
+\`/balance 2085600\`  ثبت موجودی حساب
+\`/offset\`  اختلاف قیمت دریاگلد با قیمت مرجع
 \`/calibrate 3569.85\`  تنظیم اختلاف با قیمت دریاگلد
 \`/groupoff\`  قطع موقت ارسال به گروه
 \`/groupon\`  وصل دوباره‌ی ارسال به گروه
@@ -113,12 +114,15 @@ export const HELP = `**🤖 راهنما**
 ~~خلاصه‌ی بازار ساعت‌های ۷، ۱۱:۱۵ و ۱۶:۱۵ · در گروه: /setup، /trend، /levels و /brief~~`;
 // Telegram menus (setMyCommands): short, same wording as /help, no examples.
 // Owner's private chat: the full list. Groups (and everyone else): the four read-only commands members may run.
-const MENU = [["setup", "ستاپ‌های خرید و فروش"], ["e", "حد ضرر و حد سود برای یک ورود"], ["trend", "روند هر تایم‌فریم"],
-  ["levels", "سطوح مهم قیمت"], ["brief", "خلاصه‌ی بازار"], ["status", "وضعیت سیستم"], ["balance", "ثبت موجودی"], ["offset", "اختلاف قیمت دریاگلد"],
-  ["calibrate", "تنظیم اختلاف با قیمت دریاگلد"], ["groupoff", "قطع موقت ارسال به گروه"], ["groupon", "وصل دوباره‌ی ارسال به گروه"], ["help", "راهنما"]];
+const MENU = [["setup", "نقشه‌ی ورود: خرید یا فروش، حد ضرر و سود"], ["e", "حد ضرر و سود برای قیمت ورود"], ["trend", "جهت بازار در هر بازه‌ی زمانی"],
+  ["levels", "سقف‌ها و کف‌های مهم قیمت"], ["brief", "خلاصه‌ی بازار همین الان"], ["status", "وضعیت بات"], ["balance", "ثبت موجودی حساب"],
+  ["offset", "اختلاف قیمت دریاگلد با قیمت مرجع"], ["calibrate", "تنظیم اختلاف با قیمت دریاگلد"], ["groupoff", "قطع موقت ارسال به گروه"],
+  ["groupon", "وصل دوباره‌ی ارسال به گروه"], ["help", "راهنمای دستورها"]];
 export const COMMANDS = MENU.map(([command, description]) => ({ command, description }));
+export const DESCRIPTION = `${BOT_NAME}، دستیار طلای گروه ${GROUP_NAME}.\nسقف‌ها و کف‌های مهم، روند، نقشه‌ی ورود و هشدارهای طلا (XAUUSD) برای دریاگلد، به زبان ساده.\nدستورها: /setup /trend /levels /brief`;
+export const SHORT_DESCRIPTION = `دستیار طلای گروه ${GROUP_NAME}: سطح‌ها، روند و نقشه‌ی ورود به زبان ساده`;
 export const GROUP_MENU = COMMANDS.filter((c) => ["setup", "trend", "levels", "brief"].includes(c.command));
-export const MENU_VERSION = "2026-11-20-t238u";
+export const MENU_VERSION = "2026-11-21-t246u";
 // Telegram calls that make the menus exactly this (narrow scopes first are cleared, then set)
 export function menuCalls() {
   return [
@@ -127,6 +131,9 @@ export function menuCalls() {
     ["setMyCommands", { commands: GROUP_MENU }],                                            // default scope
     ["setMyCommands", { commands: GROUP_MENU, scope: { type: "all_group_chats" } }],
     ["setMyCommands", { commands: COMMANDS, scope: { type: "chat", chat_id: Number(CHAT_ID) } }],   // owner
+    ...["", "fa"].flatMap((lc) => [   // profile texts (the display name itself is set by the owner in BotFather)
+      ["setMyDescription", { description: DESCRIPTION, ...(lc ? { language_code: lc } : {}) }],
+      ["setMyShortDescription", { short_description: SHORT_DESCRIPTION, ...(lc ? { language_code: lc } : {}) }]]),
   ];
 }
 export const ASSIST_CMDS = { "/setup": "setup", "/signal": "setup", "/scan": "setup", "/trend": "trend", "/e": "e" };
@@ -162,7 +169,7 @@ export function statusMsg(s) {
     "⏱ بررسی خودکار دوشنبه تا جمعه، `07:00` تا `00:30`"].join("\n");
 }
 const digits = (t) => String(t).replace(/[۰-۹٠-٩٫]/g, (c) => String(DIGIN[c]));
-export const offsetOf = (s) => (Number.isFinite(Number(s.dg_offset)) && s.dg_offset !== null && s.dg_offset !== "" ? Number(s.dg_offset) : DEFAULT_OFFSET);
+export const offsetOf = (s) => midOffsetOf(s);
 
 
 // ---------------- shared levels snapshot (computed in Python; never recomputed here) ----------------
@@ -210,29 +217,30 @@ export function levelsMsg(snap, at = new Date()) {
     lines.push(snap && snap.block ? snap.block : "داده‌ی سطوح در دسترس نیست");
     return lines.join("\n");
   }
+  // Phone ladder (owner t246u): levels above (far -> near), the current price, levels below (near -> far).
   const P = Number(snap.price_dg);
-  if (Number.isFinite(P)) lines.push(`قیمت دریاگلد: \`${P.toFixed(1)}\``);
   if (!levelsFresh(snap, at)) {
     const age = levelsAgeMin(snap, at);
     if (age != null && age >= 0) lines.push(`~~این عددها مربوط به ${Math.round(age)} دقیقه پیش است.~~`);
   }
-  lines.push("~~سطح یعنی قیمتی که بازار قبلاً آنجا ایستاده یا برگشته است؛ نزدیک این قیمت‌ها احتمال توقف یا برگشت قیمت بیشتر است.~~");
   const tr = snap.trend || {};
-  if (tr.H4 || tr.H1) {
-    const t = Object.fromEntries(["M5", "M15", "H1", "H4"].map((tf) => [tf, (tr[tf] || {}).trend || "خنثی"]));
-    lines.push("", `روند: ${trendSummary(t).line}`);
-  }
+  if (tr.H4 || tr.H1) lines.push(trendHead(Object.fromEntries(["M5", "M15", "H1", "H4"].map((tf) => [tf, (tr[tf] || {}).trend || "خنثی"]))));
   const row = (r, up) => {
-    const d = Math.abs(Number(r.distance ?? (Number(r.price_dg) - P)));
+    const d = Math.abs(Number(r.price_dg) - P);
     const lab = plainLabel({ kinds: r.kinds || [], price: Number(r.price_dg), label: r.label_fa || "" });
-    return [`▸ \`${Number(r.price_dg).toFixed(1)}\`، ${String(Math.round(d * 10) / 10)} دلار ${up ? "بالاتر" : "پایین‌تر"}`, ...(lab ? [`   ${lab}`] : [])];
+    return [`${up ? "🔺" : "🔻"} \`${Number(r.price_dg).toFixed(1)}\` · ${String(Math.round(d * 10) / 10)} دلار ${up ? "بالاتر" : "پایین‌تر"}`,
+      ...(lab ? [`~~      ${lab}~~`] : [])];
   };
-  lines.push("", "**⬆️ بالای قیمت**", "~~اگر قیمت بالا برود، ممکن است اینجا متوقف شود یا برگردد~~");
-  lines.push(...((short.above || []).length ? short.above.flatMap((r) => row(r, true)) : ["—"]));
-  lines.push("", "**⬇️ زیر قیمت**", "~~اگر قیمت پایین بیاید، ممکن است اینجا متوقف شود یا برگردد~~");
-  lines.push(...((short.below || []).length ? short.below.flatMap((r) => row(r, false)) : ["—"]));
+  const above = [...(short.above || [])].sort((a, b) => Number(b.price_dg) - Number(a.price_dg));
+  const below = [...(short.below || [])].sort((a, b) => Number(b.price_dg) - Number(a.price_dg));
+  lines.push("", "**⬆️ بالای قیمت**");
+  lines.push(...(above.length ? above.flatMap((r) => row(r, true)) : ["—"]));
+  lines.push("", Number.isFinite(P) ? `**💰 قیمت الان: \`${P.toFixed(1)}\`**` : "**💰 قیمت الان: —**", "");
+  lines.push("**⬇️ زیر قیمت**");
+  lines.push(...(below.length ? below.flatMap((r) => row(r, false)) : ["—"]));
+  lines.push("", "~~سطح = قیمتی که بازار قبلاً آنجا ایستاده یا برگشته؛ نزدیک سطح‌ها قیمت ممکن است بایستد یا برگردد.~~");
   const atr = Number(snap.atr_m5);
-  if (atr > 0) lines.push("", `~~قیمت معمولاً در هر ۵ دقیقه حدود ${String(Math.round(atr * 10) / 10)} دلار بالا و پایین می‌رود.~~`);
+  if (atr > 0) lines.push(`~~قیمت معمولاً در هر ۵ دقیقه حدود ${String(Math.round(atr * 10) / 10)} دلار بالا و پایین می‌رود.~~`);
   return lines.join("\n");
 }
 
@@ -246,8 +254,8 @@ export function handle(s, text, now = teh(), at = new Date()) {
   if (c === "/brief") return weekendClosed(at) ? { reply: closedLine(at) } : { queue: c };
   if (c === "/levels") {
     if (weekendClosed(at))
-      return { reply: (s.levels && s.levels.block) ? levelsMsg(s.levels, at) : closedLine(at) };
-    if (levelsFresh(s.levels, at)) return { reply: levelsMsg(s.levels, at) };
+      return { reply: (s.levels && s.levels.block) ? levelsMsg(rebaseSnap(s.levels, levelOffset(s)), at) : closedLine(at) };
+    if (levelsFresh(s.levels, at)) return { reply: levelsMsg(rebaseSnap(s.levels, levelOffset(s)), at) };
     return { queue: c };
   }
   if (c === "/calibrate") {   // private chat only (onTelegram drops groups); never mirrored
@@ -255,25 +263,18 @@ export function handle(s, text, now = teh(), at = new Date()) {
     try { return { calibrate: parseCalibrate(args) }; }
     catch { return { reply: "**⚠️ ثبت نشد**\n~~قیمت دریاگلد را با نقطه بنویسید، مثل:~~ `/calibrate 3569.85`" }; }
   }
-  if (c === "/offset") {
+  if (c === "/offset") {   // ONE basis (owner t244u): DaryaGold = Dukascopy mid + offset, for levels, live price, /e, /setup, alerts
     const cur = offsetOf(s);
-    if (args.length === 2 && args[0].toLowerCase() === "live") {
-      const t2 = digits(args[1]).replace(/[−–]/g, "-");
-      const v2 = /^[-+]?\d+(\.\d+)?$/.test(t2) ? Math.round(parseFloat(t2) * 100) / 100 : NaN;
-      if (!(Math.abs(v2) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset live 0.02`" };
-      const old = midOffsetOf(s);
-      s.dg_mid_offset = v2; s.dg_mid_offset_at = now.full;
-      return { reply: `**🎚 اختلاف قیمت زنده ثبت شد**\n~~قیمت زنده‌ی دریاگلد = میانه‌ی Dukascopy + ${v2} دلار (قبلاً ${old})~~` };
-    }
-    if (!args.length)
-      return { reply: `**🎚 اختلاف قیمت دریاگلد**\n~~سطوح: قیمت مرجع + ${cur} دلار · قیمت زنده: میانه + ${midOffsetOf(s)} دلار~~\n\nبرای تغییر: \`/offset 0.4\` یا \`/offset live 0.02\`` };
-    const t = digits(args.join("")).replace(/[−–]/g, "-");
+    const a2 = args.length === 2 && args[0].toLowerCase() === "live" ? args.slice(1) : args;   // old «/offset live x» = same
+    if (!a2.length)
+      return { reply: `**🎚 اختلاف قیمت دریاگلد**\n~~قیمت دریاگلد = میانه‌ی Dukascopy + ${cur} دلار (برای سطح‌ها، قیمت زنده، ستاپ‌ها و هشدارها)~~\n\nبرای تغییر: \`/offset 0.05\`` };
+    const t = digits(a2.join("")).replace(/[−–]/g, "-");
     const v = /^[-+]?\d+(\.\d+)?$/.test(t) ? Math.round(parseFloat(t) * 100) / 100 : NaN;
-    if (!(Math.abs(v) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset 0.4`" };
+    if (!(Math.abs(v) <= 5)) return { reply: "**⚠️ ثبت نشد**\n~~عددی بین منفی ۵ و ۵ دلار بنویسید، مثل:~~ `/offset 0.05`" };
     s.dg_offset = v;
     s.dg_offset_at = now.full;
     s.dg_offset_source = "manual";
-    return { reply: `**🎚 اختلاف قیمت ثبت شد**\n~~از ${cur} به ${v} دلار؛ از بررسی بعدی اعمال می‌شود~~` };
+    return { reply: `**🎚 اختلاف قیمت ثبت شد**\n~~از ${cur} به ${v} دلار؛ همین الان برای همه‌ی دستورها اعمال می‌شود~~` };
   }
   if (c === "/groupoff") { s.group_enabled = false; return { reply: "**⏸ ارسال به گروه موقتاً قطع شد.**" }; }
   if (c === "/groupon") { s.group_enabled = true; return { reply: "**▶️ ارسال به گروه دوباره وصل شد.**" }; }
