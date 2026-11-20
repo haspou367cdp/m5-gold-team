@@ -1,19 +1,20 @@
-# One-off, read-only: prints the bot's display name/username and the group's title. The token is never printed.
-import json, os, urllib.request
+# One-off, read-only Telegram health probe: getMe and getWebhookInfo (no token, no webhook secret printed). Sends nothing.
+import json, os, time, urllib.request
 T = os.environ["TG"].strip()
-import time
-def call(m, d):
-    for i in range(8):
+def call(m, d, tries=3):
+    for i in range(tries):
+        t0 = time.time()
         try:
             r = urllib.request.Request(f"https://api.telegram.org/bot{T}/{m}", data=json.dumps(d).encode(), headers={"content-type": "application/json"})
-            return json.load(urllib.request.urlopen(r, timeout=30))
+            out = json.load(urllib.request.urlopen(r, timeout=15))
+            print(m, "ok in", round(time.time() - t0, 1), "s", flush=True)
+            return out
         except Exception as e:
-            print(m, "retry", type(e).__name__, flush=True); time.sleep(4 * (i + 1))
+            print(m, "attempt", i + 1, type(e).__name__, "after", round(time.time() - t0, 1), "s", flush=True); time.sleep(3)
     return {}
 me = call("getMe", {}).get("result", {})
-print("BOT first_name:", me.get("first_name"), "| username:", me.get("username"), "| id:", me.get("id"))
-ch = call("getChat", {"chat_id": -1001958445009}).get("result", {})
-print("GROUP title:", ch.get("title"), "| username:", ch.get("username"), "| type:", ch.get("type"))
-for k in ("getMyName", "getMyDescription", "getMyShortDescription"):
-    try: print(k, json.dumps(call(k, {}).get("result"), ensure_ascii=False))
-    except Exception as e: print(k, "n/a", type(e).__name__)
+print("BOT first_name:", me.get("first_name"), "| username:", me.get("username"))
+w = call("getWebhookInfo", {}).get("result", {})
+u = w.get("url") or ""
+print("WEBHOOK host:", u.split("/")[2] if u.count("/") > 2 else u, "| path_ok:", u.endswith("/tg-bot/tg"), "| pending:", w.get("pending_update_count"),
+      "| last_error:", w.get("last_error_message"), "| last_error_date:", w.get("last_error_date"))
